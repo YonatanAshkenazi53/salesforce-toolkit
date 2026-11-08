@@ -6028,6 +6028,14 @@ body.sftk-dark .fc-badge-del { background: #4a1b1f; color: #ffb4b0; border-color
   padding: 3px 6px; background: rgba(194,57,52,.08); border-radius: 4px;
 }
 
+/* the scan's progress under the cat (2026-11-08): one segment per leg */
+.fc-scan-prog { max-width: 520px; margin: 12px auto 0; }
+.fc-scan-steps { display: flex; gap: 3px; }
+.fc-scan-step { flex: 1; height: 6px; border-radius: 3px; background: var(--border); transition: background .3s; }
+.fc-scan-step.done { background: var(--brand); }
+.fc-scan-step.now { background: var(--brand); animation: fcScanPulse 1s ease-in-out infinite alternate; }
+@keyframes fcScanPulse { from { opacity: .35; } to { opacity: 1; } }
+.fc-scan-line { margin-top: 7px; font-size: 11.5px; color: var(--subtext); text-align: center; }
 .fc-delete-zone {
   margin: 4px 0 10px; padding: 10px 12px;
   background: rgba(194,57,52,.05); border: 1px solid rgba(194,57,52,.18);

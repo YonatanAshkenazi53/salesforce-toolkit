@@ -142,6 +142,18 @@ describe('the wiring in Field Cleaner', () => {
   });
 });
 
+describe('the scan’s progress (user 2026-11-08: "can we show a progress bar with estimation?")', () => {
+  it('one segment per leg of the scope, the step and the time left under the cat, the places found so far', () => {
+    expect(FC).toContain("eid('fcResults').innerHTML = sftkCat('Scanning dependencies…') + _scanProgHtml(fcScopeLegs(_scope, _selObj.api));");
+    expect(FC).toContain("return all.filter(([k]) => k === 'index' || L[k]).map(([key, label, weight]) => ({ key, label, weight }));");
+    expect(FC).toContain('const eta = p.doneW >= 3 && p.doneMs > 0 ? Math.max(1, Math.round((p.doneMs / p.doneW) * left / 1000 - (Date.now() - p.legAt) / 1000)) : null;');
+    expect(FC).toContain('const msg = _scanMsg;');
+    expect(FC).not.toContain("const msg = t => { const el = eid('fcResults')?.querySelector('.lp-robot-msg'); if (el) el.textContent = t; };");
+    expect(FC).toContain('if (_scanProg) _scanProgFound(_scanProg.found + 1);');
+    expect(CSS).toContain('.fc-scan-step.now { background: var(--brand); animation: fcScanPulse 1s ease-in-out infinite alternate; }');
+  });
+});
+
 describe('⏻ Flow switches: the whole chain', () => {
   it('a second chip names every flow down (or up) the chain when it goes deeper than one level, and ticks them all', () => {
     expect(DEP).toContain('const chainOf = (start, map) => {');

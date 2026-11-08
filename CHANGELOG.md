@@ -103,6 +103,12 @@ extensions containing root files that start with `_`).
   PII outside the fields the policy fabricates.
 
 ### Toolkit
+- **Field Cleaner: the scan has a progress bar with the time left** (2026-11-08: "can we show a progress bar with
+  estimation?"). Under the cat, one segment per leg of the scope (the index, Lightning pages, report types, list
+  views… up to 17), filled as each leg ends, the current one pulsing; under it "Step 6 of 17 · quick actions ·
+  about 17 s left · 20 places so far" — the time left from the legs already done and a weight per leg, said once
+  two legs are behind. The "Act on everything" fold and the "How each item is fixed" fold are gone ("we dont need
+  this one", "i dont think we need the act on everything").
 - **Field Cleaner: the 👀 mentions get the ways too, the confirm is editable, the gate sits on top** (2026-11-08, the
   owner's hand test: "why here we can't do anything? i want also email alerts, lightning email templates and classic
   email templates", "we can't edit here", "the remove all & replace all button … on top of the card", "maybe it

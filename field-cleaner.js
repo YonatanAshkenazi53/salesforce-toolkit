@@ -1443,6 +1443,52 @@ const FieldCleaner = (() => {
     }).catch(() => { /* the meter is optional; the estimate already shows */ });
   }
 
+  // ── Scan progress (user 2026-11-08: "can we show a progress bar with estimation?") ──
+  // The scan is a fixed order of legs, each gated by the scope: one segment per leg, filled when it is done, the
+  // current one pulsing; under it the step, the leg, the time left — from the legs already done and a weight per leg
+  // (its usual number of calls) — and the places found so far.
+  let _scanProg = null;
+  function _scanLegsOf(L) {
+    const all = [
+      ['index', 'the dependency index', 3], ['flexiPages', 'Lightning pages', 10], ['reportTypes', 'report types', 2], ['listViews', 'list views', 3],
+      ['compactLayouts', 'compact layouts', 2], ['quickActions', 'quick actions', 3], ['matchingRules', 'matching rules', 1], ['workflowFieldUpdates', 'workflow field updates', 1],
+      ['workflow', 'workflow rules', 2], ['approvals', 'approval processes', 2], ['sharingRules', 'sharing rules', 1], ['duplicateRules', 'duplicate rules', 1],
+      ['lwc', 'Lightning web components', 2], ['customMetadata', 'custom metadata records', 2], ['leadMapping', 'lead field mappings', 1], ['objectRules', 'assignment, auto-response and escalation rules', 1],
+      ['paths', 'Paths', 1], ['validationRulesOff', 'inactive validation rules', 1],
+    ];
+    return all.filter(([k]) => k === 'index' || L[k]).map(([key, label, weight]) => ({ key, label, weight }));
+  }
+  function _scanProgHtml(L) {
+    _scanProg = { legs: _scanLegsOf(L), idx: 0, startedAt: Date.now(), legAt: Date.now(), doneMs: 0, doneW: 0, found: 0 };
+    return `<div class="fc-scan-prog" id="fcScanProg"><div class="fc-scan-steps">${_scanProg.legs.map((l, i) => `<span class="fc-scan-step${i === 0 ? ' now' : ''}" data-i="${i}" title="${esc(l.label)}"></span>`).join('')}</div><div class="fc-scan-line" id="fcScanLine"></div></div>`;
+  }
+  // the leg named by a scan message ("Scanning list views… 5/12") — the legs before it are done
+  function _scanProgLeg(text) {
+    const p = _scanProg; if (!p) return;
+    const t = String(text || '').toLowerCase();
+    const i = p.legs.findIndex(l => t.includes(l.label.toLowerCase()));
+    if (i < 0 || i === p.idx) return;
+    const now = Date.now();
+    for (let k = p.idx; k < i; k++) p.doneW += p.legs[k].weight;
+    p.doneMs += now - p.legAt; p.legAt = now; p.idx = i;
+    _scanProgPaint();
+  }
+  function _scanProgPaint() {
+    const p = _scanProg, box = eid('fcScanProg'); if (!p || !box) return;
+    box.querySelectorAll('.fc-scan-step').forEach((el, i) => { el.classList.toggle('done', i < p.idx); el.classList.toggle('now', i === p.idx); });
+    const leg = p.legs[p.idx];
+    const left = p.legs.slice(p.idx).reduce((n, l) => n + l.weight, 0);
+    // the time left: the legs done so far say how long a unit of weight takes; nothing is said before two legs are done
+    const eta = p.doneW >= 3 && p.doneMs > 0 ? Math.max(1, Math.round((p.doneMs / p.doneW) * left / 1000 - (Date.now() - p.legAt) / 1000)) : null;
+    const line = eid('fcScanLine');
+    if (line) line.textContent = `Step ${p.idx + 1} of ${p.legs.length} · ${leg ? leg.label : ''}${eta != null ? ` · about ${eta < 60 ? `${eta} s` : `${Math.round(eta / 60)} min`} left` : ' · estimating…'}${p.found ? ` · ${p.found.toLocaleString()} place${p.found === 1 ? '' : 's'} so far` : ''}`;
+  }
+  // one message setter for every leg: the text under the cat, and the progress with it
+  function _scanMsg(t) {
+    const el = eid('fcResults')?.querySelector('.lp-robot-msg'); if (el) el.textContent = t;
+    _scanProgLeg(t);
+  }
+  function _scanProgFound(n) { if (_scanProg) { _scanProg.found = n; _scanProgPaint(); } }
   // ── Scan ───────────────────────────────────────────────────
   async function runScan() {
     if (!_selObj || !_selField) return;
@@ -1450,7 +1496,9 @@ const FieldCleaner = (() => {
     const btn = eid('fcScanBtn');
     if (btn) { btn.disabled = true; btn.textContent = '🔍 Scanning…'; }
 
-    eid('fcResults').innerHTML = sftkCat('Scanning dependencies…');
+    eid('fcResults').innerHTML = sftkCat('Scanning dependencies…') + _scanProgHtml(fcScopeLegs(_scope, _selObj.api));
+    // the seconds tick while a leg runs; the timer ends with the progress box
+    const progTimer = setInterval(() => { if (!eid('fcScanProg')) { clearInterval(progTimer); _scanProg = null; return; } _scanProgPaint(); }, 1000);
 
     try {
       // ── 1. Resolve CustomField tooling ID ─────────────────
@@ -1511,8 +1559,8 @@ const FieldCleaner = (() => {
       // (incl. Dynamic Forms field sections) are never missed. Live 2026-11-06:
       // a page that holds the field (a field component or a visibility rule)
       // makes Salesforce REFUSE the delete, so this leg runs in every scope.
-      const msgEl = eid('fcResults')?.querySelector('.lp-robot-msg');
-      if (msgEl) msgEl.textContent = 'Scanning Lightning Pages…';
+      _scanProgFound(deps.length);
+      _scanMsg('Scanning Lightning pages…');
       const scope = _scope, L = fcScopeLegs(scope, _selObj.api);
       let flexiHits = [];
       try {
@@ -1645,7 +1693,7 @@ const FieldCleaner = (() => {
   // id is the type's developer name — that is how the fix reads it back.
   async function scanReportTypes(existingDeps) {
     const hits = [];
-    const msg = t => { const el = eid('fcResults')?.querySelector('.lp-robot-msg'); if (el) el.textContent = t; };
+    const msg = _scanMsg;
     msg('Scanning report types…');
     const listed = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType: 'ReportType', _suppressError: true });
     if (!listed || listed.error) throw new Error(listed?.error || 'the report types could not be listed');
@@ -1694,8 +1742,9 @@ const FieldCleaner = (() => {
         RefMetadataComponentId: null, RefMetadataComponentName: _selField.api,
         _supplemental: true
       });
+      if (_scanProg) _scanProgFound(_scanProg.found + 1);
     };
-    const msg = t => { const el = eid('fcResults')?.querySelector('.lp-robot-msg'); if (el) el.textContent = t; };
+    const msg = _scanMsg;
     const re      = _fieldTokenRe();
     const obj     = _selObj.api;
     const fieldLc = _selField.api.toLowerCase();
