@@ -700,6 +700,66 @@ function _sftkMdSwapToken(text, objApi, fieldApi, newField) {
   const out = String(text || '').replace(re, (m, pre, ob) => { n++; return newField ? pre + ob + newField : m; });
   return { text: out, n };
 }
+// ✂ on a formula, as a SUGGESTION (user 2026-11-10, on a validation rule's confirm: "why can't we just remove the
+// field reference instead of deactivation?" — "we need to let the user to edit it and suggest what to remove. if its
+// the only field ref we can suggest to turn it off"). The formula is read as conditions joined by && / || / AND(…) /
+// OR(…), nested as deep as they go; every condition that names the field is taken out whole, the others stay as
+// written. What is left is a proposal — which conditions go changes when the rule fires, so the caller shows the
+// diff and lets the user edit it. Text in quotes and comments is skipped when the brackets are counted.
+//   → { mode: 'operand', text, n }   n conditions taken out, `text` is the formula that is left
+//     { mode: 'whole', n }           every condition names the field: nothing would be left
+//     { mode: 'none' }               the formula does not name the field
+function sftkFormulaDropField(formula, objApi, fieldApi) {
+  // the field named in the formula's own text — a comment or a quoted string that holds its name does not count
+  const names = t => _sftkMdSwapToken(String(t).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""'), objApi, fieldApi, null).n > 0;
+  // walk t outside quotes and comments; at(i, depth) may return a new index to jump to
+  const scan = (t, at) => {
+    let depth = 0, q = null;
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
+      if (c === '"' || c === "'") { q = c; continue; }
+      if (c === '/' && t[i + 1] === '*') { const j = t.indexOf('*/', i + 2); i = j < 0 ? t.length : j + 1; continue; }
+      if (c === '(') { depth++; continue; }
+      if (c === ')') { depth--; if (at(i, depth, true) === false) return; continue; }
+      const j = at(i, depth, false);
+      if (j === false) return;
+      if (typeof j === 'number') i = j;
+    }
+  };
+  const split = (t, op) => {
+    const parts = []; let start = 0;
+    scan(t, (i, depth, close) => { if (!close && depth === 0 && t.startsWith(op, i)) { parts.push(t.slice(start, i)); start = i + op.length; return start - 1; } });
+    parts.push(t.slice(start));
+    return parts;
+  };
+  // does the bracket opened at `open` close at the very end of t?
+  const wraps = (t, open) => { let end = -1; scan(t.slice(open), (i, depth, close) => { if (close && depth === 0) { end = open + i; return false; } }); return end === t.length - 1; };
+  let n = 0;
+  const some = (parts, op) => { const kept = parts.map(drop).filter(x => x != null); return kept.length ? kept.join(op) : null; };
+  const drop = expr => {
+    const t = String(expr).trim();
+    if (!names(t)) return t;
+    const ors = split(t, '||');
+    if (ors.length > 1) return some(ors, ' || ');
+    const ands = split(t, '&&');
+    if (ands.length > 1) return some(ands, ' && ');
+    const fn = /^(AND|OR)\s*\(/i.exec(t);
+    if (fn && wraps(t, fn[0].length - 1)) {
+      const kept = split(t.slice(fn[0].length, -1), ',').map(drop).filter(x => x != null);
+      if (!kept.length) return null;
+      if (kept.length > 1) return `${fn[1]}(${kept.join(', ')})`;
+      return (split(kept[0], '||').length > 1 || split(kept[0], '&&').length > 1) ? `(${kept[0]})` : kept[0];
+    }
+    if (t[0] === '(' && wraps(t, 0)) { const r = drop(t.slice(1, -1)); return r == null ? null : `(${r})`; }
+    n++;
+    return null;   // one condition that uses the field
+  };
+  const src = String(formula || '');
+  if (!names(src)) return { mode: 'none' };
+  const text = drop(src);
+  return text == null ? { mode: 'whole', n } : { mode: 'operand', text, n };
+}
 // Does a filter's logic (booleanFilter "1 AND (2 OR 3)") number its items?
 // Taking an item out of a numbered filter would silently change its meaning.
 function _sftkMdHasLogic(xml) {
@@ -710,7 +770,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   const before = String(innerXml || '');
   const nf = newField ? String(newField) : null;
   const how = [];
-  let xml = before, refused = null;
+  let xml = before, refused = null, off = false, suggested = false;
   const refuse = why => { if (!refused) refused = why; };
   const plural = (n, w, ws) => `${n} ${n === 1 ? w : (ws || `${w}s`)}`;
   const verb = nf ? `now ${nf}` : 'removed';
@@ -755,8 +815,19 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       if (nf) { xml = f.xml; how.push(`formula: ${plural(f.n, 'reference')} ${verb}`); break; }
       const act = sftkMdFindElement(xml, 'active', 0);
       if (!act || xml.slice(act.bodyStart, act.bodyEnd).trim() !== 'true') { refuse('the rule is already inactive — an inactive rule does not block the delete; re-scan'); break; }
+      // ✂ suggests the formula without the conditions that use the field; the rule stays on (user 2026-11-10)
+      const fe = sftkMdFindElement(xml, 'errorConditionFormula', 0);
+      const d = fe ? sftkFormulaDropField(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), objApi, fieldApi) : { mode: 'none' };
+      if (d.mode === 'operand') {
+        xml = xml.slice(0, fe.bodyStart) + sftkMdEscape(d.text) + xml.slice(fe.bodyEnd);
+        suggested = true;
+        how.push(`suggested: ${plural(d.n, 'condition')} that use${d.n === 1 ? 's' : ''} the field taken out of the formula — the rule stays active`);
+        break;
+      }
+      // every condition uses the field: nothing would be left of the formula, so the suggestion is to switch it off
       xml = xml.slice(0, act.bodyStart) + 'false' + xml.slice(act.bodyEnd);
-      how.push('switched off — a formula cannot lose a reference, and an inactive rule does not block the delete (its formula still names the field)');
+      off = true;
+      how.push('suggested: switch the rule off — every condition of its formula uses the field, so nothing would be left');
       break;
     }
     case 'CustomField': {
@@ -978,7 +1049,8 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       refuse('this kind is not edited here — 🗑 delete it, or edit it in Setup');
   }
   if (refused) return { xml: before, changed: false, how: [], refused };
-  return { xml, changed: xml !== before, how, refused: null };
+  // off: the edit switches a validation rule off; suggested: the edit is a proposal the user should read and may edit
+  return { xml, changed: xml !== before, how, refused: null, off, suggested };
 }
 // Which ways a kind has: ✂ remove and/or ⇄ replace. Formula-ish kinds are
 // Replace only; the rest can take the field out of their structure. null =
@@ -1078,6 +1150,7 @@ function sftkMdLineDiff(a, b) {
 
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkMdEditField = sftkMdEditField;
+  globalThis.sftkFormulaDropField = sftkFormulaDropField;
   globalThis.sftkMdEditWays  = sftkMdEditWays;
   globalThis.sftkMdPretty    = sftkMdPretty;
   globalThis.sftkMdLineDiff  = sftkMdLineDiff;

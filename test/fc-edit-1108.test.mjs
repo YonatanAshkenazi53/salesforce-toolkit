@@ -8,7 +8,7 @@ import { extractFunctions } from './extract.mjs';
 
 const FC = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8');
 const CSS = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
-const M = extractFunctions('sftk-mdapi.js', ['sftkMdEditField', 'sftkMdEditWays', 'sftkMdPretty', 'sftkMdLineDiff', '_sftkMdFieldIs', '_sftkMdRenameVal', '_sftkMdWalk',
+const M = extractFunctions('sftk-mdapi.js', ['sftkMdEditField', 'sftkFormulaDropField', 'sftkMdEditWays', 'sftkMdPretty', 'sftkMdLineDiff', '_sftkMdFieldIs', '_sftkMdRenameVal', '_sftkMdWalk',
   '_sftkMdSwapToken', '_sftkMdHasLogic', 'sftkMdFindElement', 'sftkMdUnescape', 'sftkMdEscape', 'sftkMdChildText', 'sftkMdLeadMappingRemove', 'sftkMdMentionsField', 'sftkMdPackageFiles',
   'sftkMdDeleteSpec', '_sftkMdDeleteTable', '_sftkPkgXml', 'sftkMdRecordFileXml']);
 const X = n => readFileSync(new URL(`./fixtures/md-edit/${n}.xml`, import.meta.url), 'utf8');
@@ -22,12 +22,19 @@ const swapped = (before, after) => {
 };
 
 describe('every kind of the demo field, ✂ and ⇄', () => {
-  it('validation rule: ✂ switches it off (a formula cannot lose a reference), ⇄ swaps the token — on the object and across a relationship', () => {
+  it('validation rule: ✂ suggests the formula without the condition that uses the field (switch-off only when nothing is left), ⇄ swaps the token — on the object and across a relationship', () => {
     const vr = X('ValidationRule.Account.SFTK_Live_VR');
     const r = rm('ValidationRule', vr);
     expect(r.refused).toBeNull();
-    expect(r.xml).toBe(vr.replace('<active>true</active>', '<active>false</active>'));
-    expect(r.how[0]).toMatch(/^switched off/);
+    // ISBLANK(field) && FALSE → FALSE; the rule stays active
+    expect(r.xml).toBe(vr.replace('ISBLANK(SFTK_Live_Blk__c) &amp;&amp; FALSE', 'FALSE'));
+    expect(r.suggested).toBe(true); expect(r.off).toBe(false);
+    expect(r.how[0]).toMatch(/^suggested: 1 condition that uses the field taken out/);
+    // the field in every condition: the suggestion is to switch the rule off, the formula untouched
+    const only = vr.replace('ISBLANK(SFTK_Live_Blk__c) &amp;&amp; FALSE', 'ISBLANK(SFTK_Live_Blk__c)');
+    const o = rm('ValidationRule', only);
+    expect(o.xml).toBe(only.replace('<active>true</active>', '<active>false</active>'));
+    expect(o.off).toBe(true); expect(o.how[0]).toMatch(/^suggested: switch the rule off/);
     swapped(vr, rp('ValidationRule', vr).xml);
     const x = X('ValidationRule.Contact.SFTK_Live_XVR');
     expect(rp('ValidationRule', x).xml).toContain('Account.SFTK_Live_Blk2__c = &apos;never@sftk.invalid&apos;');

@@ -5859,7 +5859,7 @@ const FieldCleaner = (() => {
     const o = opts || {};
     const pretty = o.xml ? sftkMdPretty(proposed) : String(proposed == null ? '' : proposed).replace(/\r\n?/g, '\n');
     let ta = null;
-    const html = `<details class="fc-cf-edit" id="${esc(id)}"><summary>✎ Edit ${o.what || 'the text'} before deploying</summary>
+    const html = `<details class="fc-cf-edit" id="${esc(id)}"${o.open ? ' open' : ''}><summary>✎ Edit ${o.what || 'the text'} before deploying</summary>
       <textarea class="fc-xml-ta fc-cf-ta" spellcheck="false" wrap="off" aria-label="${esc(o.what || 'the text')} as it will be deployed"></textarea>
       <div class="fc-cf-edit-state ds-subtext"></div></details>`;
     const onRender = () => {
@@ -5907,19 +5907,26 @@ const FieldCleaner = (() => {
     }
     const pkgType = type === 'LookupFilter' ? 'CustomField' : type;
     const files = sftkMdPackageFiles(pkgType, fullName, rec.innerXml);
-    const vrOff0 = !nf && type === 'ValidationRule';
+    // ✂ on a validation rule is a SUGGESTION (user 2026-11-10: "we need to let the user to edit it and suggest what to
+    // remove. if its the only field ref we can suggest to turn it off"): the formula without the conditions that use
+    // the field, or — when nothing would be left — the rule switched off. The edit box is open: what it holds is deployed.
+    const vrOff0 = !!ed.off;
+    const sug = !!(ed.off || ed.suggested);
     const gate = await sftkOrgWriteGate(_orgUrl);
     const inBox = !!_RULE_CONTAINERS[type];
-    const cfEdit = _cfEditBlock('fcCfEdit', ed.xml, { xml: true, what: 'the XML', name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName });
+    const cfEdit = _cfEditBlock('fcCfEdit', ed.xml, { xml: true, what: 'the XML', open: sug, name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName });
+    const sugNote = ed.off
+      ? 'An inactive rule does not block the delete. To keep it running, write the formula you want in the box below.'
+      : ed.suggested ? 'Read the formula that is left — it changes when the rule fires. Edit it in the box below if it is not what you mean.' : '';
     const sure = await sftkConfirmDestructive({
-      title: `${verb} the field in the ${spec.what} — ${cfg.label || type}`,
-      icon: ico,
+      title: ed.off ? `Switch the ${spec.what} off — ${cfg.label || type}` : `${verb} the field in the ${spec.what} — ${cfg.label || type}`,
+      icon: ed.off ? '⏻' : ico,
       items: [{ label: componentName, sub: spec.what }],
       // an edit with a restore point is not "permanent": the badge says where the way back is
-      revOverride: { html: `${ico} <strong>${esc(ed.how.join('; '))}.</strong> Only the field’s own places change — everything else in the ${esc(spec.what)} is deployed back exactly as Salesforce returned it. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in History (or ↩ Restore points, under the results) deploys it back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+      revOverride: { html: `${ed.off ? '⏻' : ico} <strong>${esc(ed.how.join('; '))}.</strong> ${sug ? `${sugNote} A <strong>restore point</strong> is kept: ↩ Undo in History puts the rule back.` : `Only the field’s own places change — everything else in the ${esc(spec.what)} is deployed back exactly as Salesforce returned it. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in History (or ↩ Restore points, under the results) deploys it back.`}`, needsCheckbox: false, cls: 'sftk-rev-newver' },
       undoHint: 'Undo in History',
       extraHtml: `<div class="fc-xml-diff-hd">The XML — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>${_xmlDiffHtml(rec.innerXml, ed.xml)}${cfEdit.html}`,
-      confirmLabel: `${ico} ${verb} in the ${spec.what}`,
+      confirmLabel: ed.off ? '⏻ Switch the rule off' : `${ico} ${verb} in the ${spec.what}`,
       production: gate.production ? { label: gate.label } : null,
       onRender: cfEdit.onRender,
     });
