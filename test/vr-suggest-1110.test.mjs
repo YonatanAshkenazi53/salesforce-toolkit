@@ -65,3 +65,23 @@ describe('the confirm of ✂ on a validation rule offers three ways', () => {
     expect(FC).not.toContain('open: sug,');
   });
 });
+
+describe('a hand edit is done only when it worked', () => {
+  it('the re-read checks the lines the edit took out as well as the ones it put in', () => {
+    expect(FC).toContain("const handRemoved = handXml != null ?");
+    expect(FC).toContain('_lineCount(after, l) <= _lineCount(finalXml, l)');
+  });
+  it('deployed but still naming the field (a validation rule: and still active) is NOT marked done', () => {
+    expect(FC).toContain('const stillOpen = !!handAdded && _editStillNames(type, after || finalXml, field)');
+    expect(FC).toContain('if (stillOpen) throw new Error(');
+    expect(FC).toContain('it still stops the delete');
+  });
+  it('the gate row is counted down once, and only when the item is done', () => {
+    const i = FC.indexOf('if (stillOpen) throw new Error(');
+    const part = FC.slice(i, FC.indexOf('return { label, detailHtml', i));
+    expect(part.split('_afterDelete(type)').length - 1).toBe(1);
+  });
+  it('a new attempt clears the message of the last one', () => {
+    expect(FC).toContain("querySelectorAll('.fc-item-err').forEach(e => e.remove());");
+  });
+});

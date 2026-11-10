@@ -4095,6 +4095,8 @@ const FieldCleaner = (() => {
     // its version may be gone): never run a fix on it again.
     if (eid(`fcItem_${componentId}`)?.classList.contains('fc-item-fixed')) return;
     if (_fixSwap !== null) return;
+    // a new attempt starts clean: the message of the last one would read as this one's result (seen live 2026-11-10)
+    eid(`fcItem_${componentId}`)?.querySelectorAll('.fc-item-err').forEach(e => e.remove());
     _fixSwap = !!swap && _replOn();
     _fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code') ? way : '';
     // 'cancel' = the user said no in the dialog (a bulk walk stops there)
@@ -5966,6 +5968,11 @@ const FieldCleaner = (() => {
     if (vrChoice && vrMode === 'edit' && handXml == null) return 'cancel';
     const finalXml = handXml != null ? handXml : (vrChoice && vrMode === 'off' ? vrOffXml : ed.xml);
     const handAdded = handXml != null ? sftkMdLineDiff(sftkMdPretty(rec.innerXml), sftkMdPretty(finalXml)).filter(x => x.op === '+').map(x => x.line.trim()).filter(Boolean) : null;
+    // …and the lines it took out: after the deploy the org must hold no more of each than the text that was sent
+    // (user 2026-11-10: "deploy my edit, צריך לבדוק שזה באמת עבד לפני שעובר לפריט הבא" — an edit that only DELETES
+    // lines used to pass the re-read with nothing checked)
+    const handRemoved = handXml != null ? sftkMdLineDiff(sftkMdPretty(rec.innerXml), sftkMdPretty(finalXml)).filter(x => x.op === '-').map(x => x.line.trim()).filter(Boolean) : null;
+    const _lineCount = (xml, line) => sftkMdPretty(xml).split('\n').filter(l => l.trim() === line).length;
     const vrOff = vrChoice && vrMode === 'off';
     const howDone = vrOff ? ['switched off — chosen in the dialog'] : handXml != null ? ['edited by hand in the dialog'] : ed.how;
     const deployFiles = sftkMdPackageFiles(pkgType, fullName, finalXml);
@@ -5993,7 +6000,7 @@ const FieldCleaner = (() => {
             const a = await _mdReadOne(type, fullName, spec.mdType);
             if (a && a.rec) {
               after = a.rec.innerXml;
-              const ok = handAdded ? (() => { const now = new Set(sftkMdPretty(after).split('\n').map(l => l.trim())); return handAdded.every(l => now.has(l)); })()
+              const ok = handAdded ? (() => { const now = new Set(sftkMdPretty(after).split('\n').map(l => l.trim())); return handAdded.every(l => now.has(l)) && [...new Set(handRemoved)].every(l => _lineCount(after, l) <= _lineCount(finalXml, l)); })()
                 : vrOff ? /<active>false<\/active>/i.test(after)
                 : !_editStillNames(type, after, field) && (!nf || _editStillNames(type, after, nf));
               if (ok) return { ok: true, text: null };
@@ -6004,16 +6011,23 @@ const FieldCleaner = (() => {
         },
       });
       if (wr.accepted && wr.ok) {
+        // A hand edit is in the org as written — but is the item DONE? Not while it still names the field (for a
+        // validation rule: names it and is still active). Then the row stays open with its buttons and says so; a
+        // walk goes on to the next item with this one still counted.
+        const isVr = type === 'ValidationRule' || type === 'ValidationRuleInactive';
+        const stillOpen = !!handAdded && _editStillNames(type, after || finalXml, field) && !(isVr && /<active>\s*false\s*<\/active>/i.test(after || finalXml));
+        if (stillOpen) throw new Error(`Your edit of "${componentName}" was deployed and is in the org (verified by re-reading it), but the ${spec.what} still names ${field}${isVr ? ' and is active' : ''} — it still stops the delete. Press ✂ again to finish it, or ↩ Undo in History to take the edit back.`);
         _afterDelete(type);
         const label = handAdded
-          ? `✅ Deployed as you edited it in the dialog — every line you changed is in the org, verified by re-reading it${_editStillNames(type, after || finalXml, field) ? ' (it still names the field)' : ''}`
+          ? `✅ Deployed as you edited it in the dialog — every line you changed is in the org and ${isVr && _editStillNames(type, after || finalXml, field) ? 'the rule is inactive' : `nothing in it names ${field} any more`}, verified by re-reading it`
           : vrOff
           ? `✅ Switched off — the rule is inactive, so it no longer blocks the delete (its formula still names the field) — verified by re-reading the org`
           : `✅ ${nf ? 'Replaced' : 'Removed'} — ${ed.how.join('; ')} — verified by re-reading the org`;
-        if (handAdded && _editStillNames(type, after || finalXml, field)) { /* the gate's count stays: the field is still named */ } else if (handAdded) _afterDelete(type);
         return { label, detailHtml: `<details class="fc-xml-done"><summary>The XML that was deployed</summary>${_xmlDiffHtml(rec.innerXml, after || finalXml)}</details>` };
       }
-      if (wr.accepted) throw new Error(`"${componentName}" — the deploy was accepted, but on re-read the ${spec.what} still names ${field}. Re-scan, and check it in Setup.`);
+      if (wr.accepted) throw new Error(handAdded
+        ? `"${componentName}" — the deploy was accepted, but on re-read the ${spec.what} does not hold your edit (three reads). It is NOT counted as done. Open 🔍 to see what the org holds, then try again.`
+        : `"${componentName}" — the deploy was accepted, but on re-read the ${spec.what} still names ${field}. Re-scan, and check it in Setup.`);
       throw new Error(`Salesforce refused the edited ${spec.what} "${componentName}": ${_feText(String((wr.raw && wr.raw.error) || 'refused'))}. Nothing was changed — 🗑 delete it, or edit it in Setup.`);
     } finally {
       await sftkHistoryEnd(j, { undo: wr && wr.accepted
