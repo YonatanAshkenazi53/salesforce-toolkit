@@ -4076,7 +4076,12 @@ const FieldCleaner = (() => {
         else n = removeFieldFromFlexiPage(after, obj, field);
         if (!n) return '';
         const xml = m => type === 'Layout' ? buildLayoutXml(m) : ['<FlexiPage>', ...Object.keys(m).sort().flatMap(k => _lxValueToLines(k, m[k], '    ')), '</FlexiPage>'].join('\n');
-        return hd('The XML') + _textDiffHtml(xml(res.Metadata), xml(after));
+        // a visibility rule that loses a criterion loses its numbered logic with it (the numbers would point at the
+        // wrong criteria): what is left is joined by AND — said before the confirm, not found out after
+        const logicN = m => (JSON.stringify(m).match(/"booleanFilter":"[^"]+"/g) || []).length;
+        const lost = type === 'FlexiPage' ? logicN(res.Metadata) - logicN(after) : 0;
+        const warn = lost > 0 ? `<div class="fc-prev-logic">⚠ ${lost} visibility rule${lost === 1 ? ' loses' : 's lose'} ${lost === 1 ? 'its' : 'their'} filter logic (like “1 AND (2 OR 3)”) together with the field’s criterion: the criteria that are left are joined by AND. If the logic had an OR or brackets in it, the component will show in different cases than before — check it in App Builder afterwards.</div>` : '';
+        return warn + hd('The XML') + _textDiffHtml(xml(res.Metadata), xml(after));
       }
       if (type === 'EmailTemplate') {
         const rec = await _tplRead(componentId);

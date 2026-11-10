@@ -4289,6 +4289,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 }
 .fp-panel-title  { flex: 1; }
 .fp-panel-count  { color: var(--brand); }
+.fp-flow-note { padding: 6px 10px; border-top: 1px solid var(--border); font-size: 11px; line-height: 1.4; color: var(--subtext); }
 .fp-mini-btn {
   background: var(--brand-bg);
   border: 1px solid var(--c-brand-border);
@@ -7255,6 +7256,7 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-xml-diff-hd { margin: 10px 0 4px; font-size: 11.5px; font-weight: 600; color: var(--text); }
 .sftk-cf-extra .fc-xml-pre { border: 1px solid var(--border); border-radius: 6px; max-height: 240px; }
 /* ✂ on a validation rule: the three ways, chosen in the confirm (2026-11-10) */
+.fc-prev-logic { margin: 2px 0 8px; padding: 7px 10px; border: 1px solid var(--warning); border-radius: 8px; font-size: 12px; line-height: 1.45; color: var(--text); }
 .fc-vr-ways { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px; }
 .fc-vr-way { display: flex; align-items: flex-start; gap: 9px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
 .fc-vr-way input { margin: 3px 0 0; flex: 0 0 auto; }

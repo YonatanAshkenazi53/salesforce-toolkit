@@ -1,3 +1,12 @@
+// PURE. Can a person be given this flow? A screen flow, or an autolaunched flow that has no trigger of its own.
+// Anything with a trigger (record, schedule, platform event, and whatever Salesforce adds next) starts by itself.
+function sftkFlowIsAssignable(r) {
+  if (!r) return false;
+  if (r.ProcessType === 'Flow') return true;
+  return r.ProcessType === 'AutoLaunchedFlow' && !String(r.TriggerType || '').trim();
+}
+if (typeof globalThis !== 'undefined') globalThis.sftkFlowIsAssignable = sftkFlowIsAssignable;
+
 'use strict';
 /* ============================================================
    Flow Permissions — bulk-assign Screen Flows to Permission Sets
@@ -115,6 +124,7 @@ const FlowPermissions = (() => {
                 <input type="text" class="fp-panel-search-input" id="fpFlowSearch" placeholder="🔍 Search flows…">
               </div>
               <div id="fpFlowList" class="fp-list"></div>
+              <div id="fpFlowNote" class="fp-flow-note" hidden></div>
             </div>
 
             <!-- Right: Permission Sets -->
@@ -182,13 +192,12 @@ const FlowPermissions = (() => {
       });
       if (fdvRes.error) throw new Error('Could not load flows: ' + fdvRes.error);
 
-      const BLOCKED_TRIGGERS = new Set([
-        'RecordBeforeSave', 'RecordAfterSave', 'Scheduled', 'PlatformEvent', 'DataCloudDataChange'
-      ]);
-      const assignable = (fdvRes.records || []).filter(r =>
-        r.ProcessType === 'Flow' ||
-        (r.ProcessType === 'AutoLaunchedFlow' && !BLOCKED_TRIGGERS.has(r.TriggerType || ''))
-      );
+      // A flow somebody can be GIVEN is one somebody starts: a screen flow, or an autolaunched flow with NO trigger.
+      // The test is "has no trigger", not a list of known triggers (2026-11-10, the lesson of the colleague's missing
+      // flows: a list of kinds goes stale — the old blocklist let a before-delete record-triggered flow through as
+      // assignable). What starts by itself is counted and said under the list, never silently left out.
+      const assignable = (fdvRes.records || []).filter(r => sftkFlowIsAssignable(r));
+      _selfRunning = (fdvRes.records || []).length - assignable.length;
 
       // ── Step 2: FlowDefinition (Tooling) — Id ────────────────────────────
       // Id is the only thing we need from FlowDefinition: it's the
@@ -402,10 +411,16 @@ const FlowPermissions = (() => {
     return { label: pt || 'Flow', cls: 'fp-ft-auto' };
   }
 
+  let _selfRunning = 0;   // active flows left out because they start by themselves
   function renderFlows() {
     const list    = document.getElementById('fpFlowList');
     const countEl = document.getElementById('fpFlowCount');
     if (!list) return;
+    const note = document.getElementById('fpFlowNote');
+    if (note) {
+      note.hidden = !_selfRunning;
+      note.textContent = _selfRunning ? `${_selfRunning} more active flow${_selfRunning === 1 ? ' is' : 's are'} not listed: record-triggered, scheduled and event flows start by themselves, so nobody is given access to them. Inactive flows are not listed either.` : '';
+    }
 
     const search   = (document.getElementById('fpFlowSearch')?.value || '').toLowerCase().trim();
     const filtered = search

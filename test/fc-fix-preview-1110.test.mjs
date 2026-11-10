@@ -28,4 +28,8 @@ describe('the row confirm carries a diff', () => {
     expect(FC).toContain("previewHtml = await _fixPreviewHtml(type, componentId, componentName, swap);");
     expect(FC).toMatch(/: ''\}` : previewHtml,/);
   });
+  it('a Lightning page whose visibility rule loses its numbered logic says so before the confirm', () => {
+    expect(fn).toContain("const lost = type === 'FlexiPage' ? logicN(res.Metadata) - logicN(after) : 0;");
+    expect(fn).toContain('the criteria that are left are joined by AND');
+  });
 });
