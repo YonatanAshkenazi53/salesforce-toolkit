@@ -45,8 +45,8 @@ describe('sftkFormulaDropField', () => {
 });
 
 describe('the confirm of a suggestion', () => {
-  it('opens the edit box, says it is a suggestion, and names a switch-off as a switch-off', () => {
-    expect(FC).toContain("open: sug,");
+  it('keeps the edit box folded (editing is optional), says to read what is left, and names a switch-off as a switch-off', () => {
+    expect(FC).not.toContain("open: sug,");
     expect(FC).toContain('Read the formula that is left');
     expect(FC).toContain("confirmLabel: ed.off ? '⏻ Switch the rule off'");
     expect(FC).toContain('const vrOff0 = !!ed.off;');

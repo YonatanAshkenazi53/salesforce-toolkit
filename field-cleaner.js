@@ -5909,15 +5909,15 @@ const FieldCleaner = (() => {
     const files = sftkMdPackageFiles(pkgType, fullName, rec.innerXml);
     // ✂ on a validation rule is a SUGGESTION (user 2026-11-10: "we need to let the user to edit it and suggest what to
     // remove. if its the only field ref we can suggest to turn it off"): the formula without the conditions that use
-    // the field, or — when nothing would be left — the rule switched off. The edit box is open: what it holds is deployed.
+    // the field, or — when nothing would be left — the rule switched off. The ✎ edit box stays folded — editing is optional (user 2026-11-10: "the XML edit should be optional").
     const vrOff0 = !!ed.off;
     const sug = !!(ed.off || ed.suggested);
     const gate = await sftkOrgWriteGate(_orgUrl);
     const inBox = !!_RULE_CONTAINERS[type];
-    const cfEdit = _cfEditBlock('fcCfEdit', ed.xml, { xml: true, what: 'the XML', open: sug, name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName });
+    const cfEdit = _cfEditBlock('fcCfEdit', ed.xml, { xml: true, what: 'the XML', name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName });
     const sugNote = ed.off
-      ? 'An inactive rule does not block the delete. To keep it running, write the formula you want in the box below.'
-      : ed.suggested ? 'Read the formula that is left — it changes when the rule fires. Edit it in the box below if it is not what you mean.' : '';
+      ? 'An inactive rule does not block the delete. To keep it running instead, open ✎ Edit below and write the formula you want.'
+      : ed.suggested ? 'Read the formula that is left — it changes when the rule fires. ✎ Edit below is there if it is not what you mean.' : '';
     const sure = await sftkConfirmDestructive({
       title: ed.off ? `Switch the ${spec.what} off — ${cfg.label || type}` : `${verb} the field in the ${spec.what} — ${cfg.label || type}`,
       icon: ed.off ? '⏻' : ico,
