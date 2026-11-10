@@ -2486,7 +2486,7 @@ async function bldOpenPiiSuggestModal(opts) {
 
   const secHtml = sections.map(sec => {
     if (sec.error) return `<div class="ds-pii-sug-obj"><div class="ds-pii-sug-obj-hd">${esc(sec.obj)}</div><div class="ds-pii-sug-empty">⚠ ${esc(sec.error)}</div></div>`;
-    const head = `<div class="ds-pii-sug-obj-hd">${esc(sec.obj)} <span class="ds-pii-sug-count">${sec.sugg.length} candidate(s)${sec.sampled ? ` · ${sec.sampled} row(s) read` : ' · no rows read'}</span></div>`;
+    const head = `<div class="ds-pii-sug-obj-hd"><span class="ds-pii-sug-obj-name">${esc(sec.obj)}</span><span class="ds-pii-sug-count">${sec.sugg.length} field${sec.sugg.length === 1 ? '' : 's'}${sec.sampled ? ` · ${sec.sampled.toLocaleString()} record${sec.sampled === 1 ? '' : 's'} read` : ' · no records read'}</span>${sec.sugg.length > 1 ? `<span class="ds-pii-sug-objpick"><button class="ds-linkbtn" data-pii-objall="${esc(sec.obj)}" title="Tick every field of ${esc(sec.obj)}">all</button> · <button class="ds-linkbtn" data-pii-objnone="${esc(sec.obj)}" title="Untick every field of ${esc(sec.obj)}">none</button></span>` : ''}</div>`;
     if (!sec.sugg.length) return `<div class="ds-pii-sug-obj">${head}<div class="ds-pii-sug-empty">no likely-PII fields found${sec.sampled ? ' in the field names or the values' : ''}</div></div>`;
     return `<div class="ds-pii-sug-obj">${head}
       ${sec.sugg.map(s => {
@@ -2496,11 +2496,12 @@ async function bldOpenPiiSuggestModal(opts) {
         const options = bldPiiTreatmentOptions(ftype);
         const proposed = existing ? bldPiiTreatmentOfRule(existing) : (s.treatment && s.treatment.strategy === 'pattern' ? s.treatment.pattern : 'hash');
         const current = options.some(o => o.value === proposed) ? proposed : (options[0] ? options[0].value : 'null');
-        return `<div class="ds-pii-sug-row${existing ? ' ds-pii-sug-covered' : ''}">
-          <label class="ds-pii-sug-pick"><input type="checkbox" data-pii-key="${esc(key)}" ${existing ? '' : (s.sure ? 'checked' : '')} title="${existing ? 'Already covered — tick to change its treatment' : 'Tick to apply the treatment on the right'}"></label>
-          <span class="ds-pii-sug-field"><strong>${esc(sec.obj)}</strong>.${esc(s.field)}</span>
-          <span class="ds-pii-sug-type">${esc(ftype || '?')}</span>
-          <span class="ds-pii-sug-reason">${esc(s.reason)}${existing ? ` · <em>now: ${esc(bldPiiRuleWords(existing))}</em>` : ''}</span>
+        // one row = tick · the field and why it is here · what it is written as; the examples under it. The object
+        // is the section's header, not repeated per row (user 2026-11-10: the window "צריך להשתפר מבחינת ui")
+        return `<div class="ds-pii-sug-row${existing ? ' ds-pii-sug-covered' : ''}" data-pii-obj="${esc(sec.obj)}">
+          <label class="ds-pii-sug-pick"><input type="checkbox" data-pii-key="${esc(key)}" data-pii-sure="${s.sure ? '1' : ''}" ${existing ? '' : (s.sure ? 'checked' : '')} title="${existing ? 'Already covered — tick to change its treatment' : 'Tick to apply the treatment on the right'}"></label>
+          <span class="ds-pii-sug-field" title="${esc(key)} · ${esc(ftype || '?')}"><strong>${esc(s.field)}</strong>
+            <span class="ds-pii-sug-reason">${esc(s.reason)}${existing ? ` · <em>now: ${esc(bldPiiRuleWords(existing))}</em>` : ''}</span></span>
           <select class="ds-select ds-select-sm ds-pii-sug-treat" data-pii-treat="${esc(key)}" title="What this field is written as">
             ${options.map(o => `<option value="${esc(o.value)}" title="${esc(o.title)}" ${o.value === current ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
           </select>
@@ -2513,17 +2514,42 @@ async function bldOpenPiiSuggestModal(opts) {
   showModal(`
     <div class="ds-modal-header">🎭 Suggest PII treatments — ${esc(o.scope || p.name)}</div>
     <div class="ds-modal-body ds-pii-sug-body">
-      <div class="ds-pii-sug-honesty"><strong>Fabricated, not erased.</strong> Every treatment derives from a hash of the real value with a key kept on this PC: the same value always becomes the same fake (joins, match keys and re-seeds survive), a record's name parts and e-mail agree, the Contacts of one Account share a domain. E-mails land on <code>.invalid</code> domains that cannot receive mail. A fake that is shape-valid can still coincide with someone's real number where a country reserves no test range — each treatment's hover text says so.</div>
-      ${anySamples ? '' : '<div class="ds-pii-sug-note-line">No rows could be read from the source org — suggestions come from field types, names, labels and classification only; previews are empty.</div>'}
-      ${anyCompliance ? '' : '<div class="ds-pii-sug-note-line">This org has no compliance classification on these objects (FieldDefinition.ComplianceGroup is empty or unreadable).</div>'}
+      <div class="ds-pii-sug-top">
+        <div class="ds-pii-sug-lead"><strong>Tick the fields to disguise.</strong> A ticked field is never written as it is — the target gets a look-alike fake.</div>
+        <details class="ds-pii-sug-more"><summary>How the fakes are made</summary>
+          <div class="ds-pii-sug-honesty"><strong>Fabricated, not erased.</strong> Every treatment derives from a hash of the real value with a key kept on this PC: the same value always becomes the same fake (joins, match keys and re-seeds survive), a record's name parts and e-mail agree, the Contacts of one Account share a domain. E-mails land on <code>.invalid</code> domains that cannot receive mail. A fake that is shape-valid can still coincide with someone's real number where a country reserves no test range — each treatment's hover text says so.</div>
+          <div class="ds-pii-sug-note-line">Pre-ticked = a strong signal: the values themselves, the field type, a name part, the label or a compliance group. Each field shows two real values and what they become.</div>
+          ${anyCompliance ? '' : '<div class="ds-pii-sug-note-line">This org has no compliance classification on these objects (FieldDefinition.ComplianceGroup is empty or unreadable).</div>'}
+        </details>
+      </div>
+      ${anySamples ? '' : '<div class="ds-pii-sug-warn">⚠ No records could be read from the source org — the suggestions come from field types, names and labels only, and there are no examples.</div>'}
+      <div class="ds-pii-sug-bar"><span id="dsPiiSugCount" class="ds-pii-sug-barn"></span><span class="ds-dep-sp"></span><button class="ds-btn ds-btn-xs" id="dsPiiSugSure" title="Tick exactly the fields with a strong signal — the way the window opened">✓ Suggested</button><button class="ds-btn ds-btn-xs" id="dsPiiSugAll">All</button><button class="ds-btn ds-btn-xs" id="dsPiiSugNone">None</button></div>
       ${secHtml || '<div class="ds-picker-empty">No objects in the tree.</div>'}
     </div>
     <div class="ds-modal-footer">
-      <span class="ds-pii-sug-legend">pre-ticked = a strong signal (the values, the field type, a name part, the label, a compliance group) · each row shows two real values and what they become</span>
+      <span class="ds-dep-sp"></span>
       <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ds-btn-primary" id="dsPiiSugApply">✓ Apply to the ticked fields</button>
+      <button class="ds-btn ds-btn-primary" id="dsPiiSugApply">✓ Apply</button>
     </div>`);
 
+  // the count of ticked fields, on the bar and on the Apply button; the all / none / suggested shortcuts
+  const piiBoxes = () => [...document.querySelectorAll('#dsModalBox [data-pii-key]')];
+  const piiCount = () => {
+    const all = piiBoxes(), n = all.filter(cb => cb.checked).length;
+    const c = eid('dsPiiSugCount'); if (c) c.innerHTML = `<strong>${n}</strong> of ${all.length} field${all.length === 1 ? '' : 's'} ticked`;
+    const b = eid('dsPiiSugApply'); if (b) { b.textContent = n ? `✓ Apply to ${n} field${n === 1 ? '' : 's'}` : '✓ Apply'; b.disabled = !n; }
+    all.forEach(cb => cb.closest('.ds-pii-sug-row')?.classList.toggle('ds-pii-sug-on', cb.checked));
+  };
+  const piiSet = (list, on) => { list.forEach(cb => { cb.checked = typeof on === 'function' ? on(cb) : on; }); piiCount(); };
+  document.querySelector('#dsModalBox .ds-pii-sug-body')?.addEventListener('change', e => { if (e.target?.matches?.('[data-pii-key]')) piiCount(); });
+  eid('dsPiiSugAll')?.addEventListener('click', () => piiSet(piiBoxes(), true));
+  eid('dsPiiSugNone')?.addEventListener('click', () => piiSet(piiBoxes(), false));
+  eid('dsPiiSugSure')?.addEventListener('click', () => piiSet(piiBoxes(), cb => cb.dataset.piiSure === '1' && !cb.closest('.ds-pii-sug-covered')));
+  document.querySelectorAll('#dsModalBox [data-pii-objall], #dsModalBox [data-pii-objnone]').forEach(b => b.addEventListener('click', () => {
+    const obj = b.dataset.piiObjall || b.dataset.piiObjnone;
+    piiSet(piiBoxes().filter(cb => cb.closest('.ds-pii-sug-row')?.dataset.piiObj === obj), !!b.dataset.piiObjall);
+  }));
+  piiCount();
   // previews land as they are computed; a changed treatment re-computes its row
   bldPiiFillPreviews(p, sections);
   document.querySelectorAll('#dsModalBox [data-pii-treat]').forEach(sel => sel.addEventListener('change', async () => {
@@ -2532,7 +2558,7 @@ async function bldOpenPiiSuggestModal(opts) {
     const field = key.slice(dot + 1);
     const cell = document.querySelector(`#dsModalBox [data-pii-prev="${CSS.escape(key)}"]`);
     const cb = document.querySelector(`#dsModalBox [data-pii-key="${CSS.escape(key)}"]`);
-    if (cb) cb.checked = true;   // changing the treatment means "apply it"
+    if (cb) { cb.checked = true; piiCount(); }   // changing the treatment means "apply it"
     if (!sec || !cell) return;
     cell.innerHTML = bldPiiPreviewHtml(await bldPiiPreviewPairs(p, sec.obj, field, sec.descByField[field], bldPiiRuleFromTreatment(sel.value), sec.records, 2));
   }));

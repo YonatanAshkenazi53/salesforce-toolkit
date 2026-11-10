@@ -6143,6 +6143,36 @@ button.ds-badge-masked:hover { filter: brightness(1.1); }
 .ds-pii-prev-from { text-decoration: line-through; opacity: .75; }
 .ds-pii-prev-to { color: var(--text); font-weight: 600; }
 .ds-pii-prev-none { opacity: .6; }
+/* 🎭 the suggestion window, 2026-11-10 ("זרוק שם המון טקסט למעלה שאף אחד לא יקרא"): one line on top, the long
+   explanation folded, a count bar, and a row = tick · field + why · treatment, the examples under it */
+.ds-modal-box:has(.ds-pii-sug-body) { max-width: 820px; width: min(820px, 94vw); }
+.ds-pii-sug-body { max-height: 66vh; padding-top: 12px; }
+.ds-pii-sug-top { margin-bottom: 10px; }
+.ds-pii-sug-lead { font-size: 13px; }
+.ds-pii-sug-more { margin-top: 4px; font-size: 12px; }
+.ds-pii-sug-more > summary { cursor: pointer; color: var(--accent, #2563eb); width: fit-content; user-select: none; }
+.ds-pii-sug-more[open] > summary { margin-bottom: 6px; }
+.ds-pii-sug-more .ds-pii-sug-note-line { margin: 6px 0 0; }
+.ds-pii-sug-warn { font-size: 12px; background: #fef3c7; color: #92400e; border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; }
+.ds-dark .ds-pii-sug-warn { background: #3a2e10; color: #fcd34d; }
+.ds-pii-sug-bar { position: sticky; top: -12px; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 7px 0; margin-bottom: 8px; background: var(--surface, #fff); border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.ds-pii-sug-obj { margin-bottom: 14px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.ds-pii-sug-obj-hd { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 7px 12px; background: var(--surface2); font-size: 13px; }
+.ds-pii-sug-count { margin-left: 0; }
+.ds-pii-sug-objpick { margin-left: auto; font-size: 11.5px; font-weight: 400; color: var(--subtext); }
+.ds-pii-sug-objpick .ds-linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent, #2563eb); cursor: pointer; }
+.ds-pii-sug-objpick .ds-linkbtn:hover { text-decoration: underline; }
+.ds-pii-sug-obj .ds-pii-sug-empty { padding: 8px 12px; }
+.ds-pii-sug-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) 270px; column-gap: 10px; row-gap: 3px; align-items: center; padding: 8px 12px; border-radius: 0; border-top: 1px solid var(--border); cursor: default; }
+.ds-pii-sug-row.ds-pii-sug-on { background: color-mix(in srgb, var(--accent, #2563eb) 6%, transparent); }
+.ds-pii-sug-row .ds-pii-sug-field { display: flex; flex-direction: column; min-width: 0; font-size: 12.5px; }
+.ds-pii-sug-row .ds-pii-sug-field strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-pii-sug-row .ds-pii-sug-reason { padding-left: 0; font-size: 11px; }
+.ds-pii-sug-row .ds-pii-sug-treat { margin-left: 0; width: 100%; min-width: 0; }
+.ds-pii-sug-row .ds-pii-sug-prev { grid-column: 2 / 4; padding-left: 0; gap: 2px 18px; }
+.ds-pii-sug-row:not(.ds-pii-sug-on) .ds-pii-sug-prev { opacity: .55; }
+.ds-pii-prev-pair { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .ds-pii-sug-row { grid-template-columns: 20px minmax(0, 1fr); } .ds-pii-sug-row .ds-pii-sug-treat, .ds-pii-sug-row .ds-pii-sug-prev { grid-column: 2; } }
 .ds-pii-field-treat { display: flex; align-items: center; gap: 10px; font-size: 12.5px; margin: 8px 0 4px; }
 .ds-pii-field-caveat { font-size: 11.5px; color: var(--subtext); margin-bottom: 10px; }
 .ds-pii-field-prev-hd { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--subtext); margin-bottom: 4px; }
