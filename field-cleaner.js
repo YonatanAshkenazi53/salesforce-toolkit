@@ -1070,6 +1070,7 @@ const FieldCleaner = (() => {
   // button (user 2026-10-05: "if i want to replace only one of them it will
   // replace them all. some i want to be able to delete and some to replace").
   let _fixSwap = null;
+  let _flowDropOutcomes = false;   // the confirm's third way for a flow: outcomes that rest on the field go as a whole
   let _fixWay = '';   // a flow card's own decision: 'keep' (new active version) | 'off' (delete the active one too) | '' (not made: a bulk walk)
   function _swapOn() { return _fixSwap === true && _replOn(); }
   // One card per flow (the index lists a flow once per version that mentions
@@ -4189,7 +4190,12 @@ const FieldCleaner = (() => {
     // new version, 🗑 deletes the active version too, and ⇄ always keeps it
     // running on the new field (user 2026-10-05). Only a walk over many items
     // arrives without one — then the dialog asks, as it always did.
-    const preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';
+    let preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';
+    // The third way (user 2026-11-10): an outcome that rests on the field alone can go as a whole. When the flow has
+    // such outcomes the card's ✂ no longer decides by itself — the dialog shows the ways, this one among them.
+    const pvO = hasChoice && !swap ? (flowPlan.previewOutcomes || null) : null;
+    let dropOutcomes = false;
+    if (pvO && preset === 'replace') preset = '';   // activeMode keeps its default: the plain way when it can take something out, else nothing chosen
     if (preset === 'replace' && !canReplace) {
       const vN = `the active v${flowPlan.plan.active.num} of "${componentName}"`;
       const left = pv ? pv.remaining.length : 0;
@@ -4257,7 +4263,7 @@ const FieldCleaner = (() => {
             go.disabled = !(ack && ack.checked && activeMode);
           }
         };
-        document.querySelectorAll('input[name="fcActiveMode"]').forEach(r => r.addEventListener('change', () => { if (r.checked) { activeMode = r.value; sync(); } }));
+        document.querySelectorAll('input[name="fcActiveMode"]').forEach(r => r.addEventListener('change', () => { if (r.checked) { activeMode = r.value; dropOutcomes = r.dataset.outcomes === '1'; sync(); } }));
         ack?.addEventListener('change', sync);
         sync();
       } : null,
@@ -4284,8 +4290,10 @@ const FieldCleaner = (() => {
         const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: moving ? `⇄ Flow — ${componentName} (${_selObj.api}.${_selField.api} → ${swapTo})` : `✂ Flow — ${componentName} (${_selObj.api}.${_selField.api} removed)`, orgUrl: _orgUrl });
         let r;
         try {
+          _flowDropOutcomes = dropOutcomes && activeMode === 'replace';
           r = await fixFlowExecute(chosen, { backup: wantBackup, journal: j });
         } finally {
+          _flowDropOutcomes = false;
           await sftkHistoryEnd(j, { undo: (r && r.undo) || { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
         }
         const bits = [];
@@ -4713,7 +4721,7 @@ const FieldCleaner = (() => {
       ${pv.removed.length ? `<div class="fc-prev-sec fc-prev-ok"><b>✂ Comes out automatically (${pv.removed.length})</b>${list(pv.removed, 'what')}</div>`
         : `<div class="fc-prev-sec fc-prev-bad"><b>✂ Nothing can be taken out automatically.</b></div>`}
       ${pv.remaining.length ? `<div class="fc-prev-sec fc-prev-bad"><b>✋ Cannot be removed automatically (${pv.remaining.length}) — these KEEP the field locked</b>
-        <div class="fc-prev-note">A decision outcome loses the field’s condition when it has other conditions to stand on, and a yes/no formula loses the field’s part when the rest still tests something. What is listed here could not be done that way: an outcome that rests on the field alone (taking it out would delete a path of the flow), a numbered condition logic, or a formula that is not a plain yes/no test. Until these are changed by hand, Salesforce will still refuse to delete the field.</div>${list(pv.remaining, 'value')}</div>` : ''}
+        <div class="fc-prev-note">A decision outcome loses the field’s condition when it has other conditions to stand on, and a yes/no formula loses the field’s part when the rest still tests something. What is listed here could not be done that way: an outcome that rests on the field alone (it can go as a whole — the option for that is below), a numbered condition logic, or a formula that is not a plain yes/no test. Until these are changed by hand, Salesforce will still refuse to delete the field.</div>${list(pv.remaining, 'value')}</div>` : ''}
       ${pv.emptied.length ? `<div class="fc-prev-sec fc-prev-warn"><b>⚠ Left empty by the fix (${pv.emptied.length}) — Salesforce is likely to refuse the new version</b>${list(pv.emptied, '')}
         <div class="fc-prev-note">An element with nothing left to do is invalid. If the deploy is refused, nothing is deleted and the message says so.</div></div>` : ''}
       <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); change or remove the reference, reconnect anything you delete, then Save As a new version and Activate. Run ✂ Remove here again afterwards — it will find the active version clean and only remove the old versions.</div>
@@ -4722,6 +4730,15 @@ const FieldCleaner = (() => {
       <label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? (pv.emptied.length ? '' : 'checked') : 'disabled'}>
         <span><b>Keep the flow running</b> — deploy a new active v${fp.plan.expectNew} without what comes out above, verify it is active, then delete v${act.num}.
         ${canReplace && pv.emptied.length ? `<em>Likely refused: ${pv.emptied.length} element(s) would be left empty. Pick this only if you will fix them in Flow Builder; otherwise choose delete.</em> ` : ''}${canReplace ? (pv.remaining.length ? `<em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : '') : '<em>Not available: there is nothing the automatic fix can take out of this version.</em>'}</span></label>
+      ${fp.previewOutcomes ? (() => {
+        const po = fp.previewOutcomes;
+        const outs = po.outcomes.map(o => `“${esc(o.outcomeLabel)}” of ${esc(o.decisionLabel)}${o.decisionGone ? ' (its last outcome — the decision goes too)' : ` → ${esc(o.defaultLabel)}`}`).join('; ');
+        if (po.empty) return `<label class="fc-prev-opt fc-prev-opt-off"><input type="radio" name="fcActiveMode" value="replace" data-outcomes="1" disabled>
+        <span><b>Keep the flow running, without the outcome that rests on the field</b> — ${outs}. <em>Not available: that decision is all this flow does. Without it nothing is connected to Start, and Salesforce refuses a flow like that. Switch the flow off below, or change it in Flow Builder.</em></span></label>`;
+        return `<label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="replace" data-outcomes="1">
+        <span><b>Keep the flow running, without the outcome${po.outcomes.length === 1 ? '' : 's'} that rest${po.outcomes.length === 1 ? 's' : ''} on the field</b> — ${outs}. What went down ${po.outcomes.length === 1 ? 'it' : 'them'} takes the default outcome instead; a new active v${fp.plan.expectNew} is deployed and verified, then v${act.num} is deleted.
+        <em>${po.disconnected.length ? `No longer reached, so ${po.disconnected.length === 1 ? 'it stops' : 'they stop'} running: ${po.disconnected.slice(0, 8).map(n => `<code>${esc(n)}</code>`).join(', ')}${po.disconnected.length > 8 ? ` … +${po.disconnected.length - 8} more` : ''}.` : 'Every other element is still reached.'}${po.remaining.length ? ` The field stays locked until you also fix the ${po.remaining.length} manual place(s) left.` : ''}</em></span></label>`;
+      })() : ''}
       <label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="delete">
         <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>`}
     </div>`;
@@ -4795,7 +4812,7 @@ const FieldCleaner = (() => {
     // The other way to deal with an ACTIVE version (same versions go, so the
     // same interviews apply), and a preview of the automatic fix made by the
     // REAL remover on a clone — it cannot disagree with the run.
-    let planDelete = null, preview = null;
+    let planDelete = null, preview = null, previewOutcomes = null;
     if (plan.mode === 'active') {
       planDelete = sftkFlowSurgeryPlan(versions, referencing, { activeMode: 'delete' });
       try {
@@ -4814,11 +4831,22 @@ const FieldCleaner = (() => {
         } else {
           removeFieldRefs(after, _selObj.api, _selField.api);
           preview = sftkFlowRefPreview(before, after, _fieldStringTester());
+          // the third way: the outcomes that rest on the field alone taken out as well (offered only when there are any)
+          const afterO = JSON.parse(JSON.stringify(before)), outcomes = [];
+          removeFieldRefs(afterO, _selObj.api, _selField.api, { dropOutcomes: true, out: outcomes });
+          if (outcomes.length) {
+            const was = sftkFlowReachable(before), now = sftkFlowReachable(afterO);
+            const goneNames = new Set(outcomes.filter(o => o.decisionGone).map(o => o.decision));
+            previewOutcomes = { ...sftkFlowRefPreview(before, afterO, _fieldStringTester()), outcomes,
+              disconnected: [...was].filter(n => !now.has(n) && !goneNames.has(n)),
+              // nothing left after Start: Salesforce refuses a flow like that (live 2026-11-10) — said, not offered
+              empty: was.size > 0 && now.size === 0 };
+          }
         }
       } catch (_) { preview = null; }   // no preview is a missing convenience, never a wrong one
     }
     return { flowId, flowName, defId, versions, maxNum, metaById, plan, interviews, interviewCheckError,
-      planDelete, preview, builderUrl: plan.active ? _flowBuilderUrl(plan.active.id) : null,
+      planDelete, preview, previewOutcomes, builderUrl: plan.active ? _flowBuilderUrl(plan.active.id) : null,
       lines: sftkFlowSurgeryLines(plan, kinds, interviewCheckError, _swapOn() ? { swapTo: _replField.api } : null),
       linesDelete: planDelete ? sftkFlowSurgeryLines(planDelete, kinds, interviewCheckError) : null,
       rows: sftkFlowPlanRows(plan, kinds, interviewCheckError, _swapOn() ? { swapTo: _replField.api } : null),
@@ -4876,7 +4904,7 @@ const FieldCleaner = (() => {
       const swapping = _swapOn();
       const changes = swapping
         ? (await _flowSwap(metadata)).changed.reduce((n, c) => n + c.n, 0)
-        : removeFieldRefs(metadata, _selObj.api, _selField.api);
+        : removeFieldRefs(metadata, _selObj.api, _selField.api, _flowDropOutcomes ? { dropOutcomes: true } : null);
       if (swapping) out.swapped = changes;
       if (changes === 0 && swapping) {
         const err = new Error(
@@ -5091,7 +5119,7 @@ const FieldCleaner = (() => {
   // Returns the number of references removed. Decisions and formula text are
   // intentionally skipped — changing branching logic or formulas automatically
   // is too risky; the user has to remove those by hand in Flow Builder.
-  function removeFieldRefs(metadata, objApi, fieldApi) {
+  function removeFieldRefs(metadata, objApi, fieldApi, opts) {
     let changes = 0;
     const fl       = fieldApi.toLowerCase();
     const full     = `${objApi}.${fieldApi}`.toLowerCase();
@@ -5203,6 +5231,40 @@ const FieldCleaner = (() => {
         if (!/^(and|or)$/i.test(String(rule.conditionLogic || 'and').trim())) continue;
         rule.conditions = rule.conditions.filter(c => !condIsRef(c));
         changes += hit;
+      }
+    }
+
+    // ── decisions, the outcome itself — ONLY when the user chose it in the confirm (user 2026-11-10: "1." — an
+    // outcome that rests on the field alone can go as a whole: what went down it goes to the default outcome, and
+    // the flow keeps running on a new version). A decision left with no outcome at all goes too, and whatever
+    // pointed at it points at where its default outcome led. opts.out collects what was taken out, for the dialog.
+    if (opts && opts.dropOutcomes) {
+      const goneDecisions = [];
+      for (const el of (metadata.decisions || [])) {
+        const keep = [];
+        for (const rule of (el.rules || [])) {
+          const cs = Array.isArray(rule.conditions) ? rule.conditions : [];
+          if (cs.length && cs.every(condIsRef)) {
+            changes += cs.length;
+            if (opts.out) opts.out.push({ decision: el.name, decisionLabel: el.label || el.name, outcome: rule.name, outcomeLabel: rule.label || rule.name, led: (rule.connector && rule.connector.targetReference) || '', defaultLabel: el.defaultConnectorLabel || 'Default outcome' });
+          } else keep.push(rule);
+        }
+        if (keep.length !== (el.rules || []).length) { el.rules = keep; if (!keep.length) goneDecisions.push(el); }
+      }
+      for (const d of goneDecisions) {
+        const to = (d.defaultConnector && d.defaultConnector.targetReference) || '';
+        (function walk(x) {
+          if (!x || typeof x !== 'object') return;
+          if (Array.isArray(x)) { x.forEach(walk); return; }
+          for (const k of Object.keys(x)) {
+            const v = x[k];
+            if (v && typeof v === 'object' && !Array.isArray(v) && v.targetReference === d.name) { if (to) v.targetReference = to; else delete x[k]; }
+            else walk(v);
+          }
+        })(metadata);
+        if (metadata.startElementReference === d.name) { if (to) metadata.startElementReference = to; else delete metadata.startElementReference; }
+        metadata.decisions = metadata.decisions.filter(x => x !== d);
+        if (opts.out) opts.out.filter(o => o.decision === d.name).forEach(o => { o.decisionGone = true; });
       }
     }
 

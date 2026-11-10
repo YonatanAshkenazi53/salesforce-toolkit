@@ -108,7 +108,7 @@ function sftkFlowRefWhere(root, path) {
   const n = i => (typeof i === 'number' ? i + 1 : '?');
   let where = '';
   const k = rest[0];
-  if (k === 'rules') { const r = (el.rules || [])[rest[1]] || {}; where = `outcome “${r.label || r.name || n(rest[1])}” → condition ${n(rest[3])}`; }
+  if (k === 'rules') { const r = (el.rules || [])[rest[1]] || {}; where = rest.length <= 2 ? `the whole outcome “${r.label || r.name || n(rest[1])}”` : `outcome “${r.label || r.name || n(rest[1])}” → condition ${n(rest[3])}`; }
   else if (k === 'conditions') where = `condition ${n(rest[1])}`;
   else if (k === 'filters') where = `filter condition ${n(rest[1])}`;
   else if (k === 'inputAssignments') where = `field value ${n(rest[1])}`;
@@ -124,6 +124,24 @@ function sftkFlowRefWhere(root, path) {
   else if (k === 'waitEvents') where = `pause event ${n(rest[1])}`;
   else where = rest.filter(x => typeof x === 'string').join(' → ') || 'itself';
   return { kind: SFTK_FLOW_EL_NAMES[top] || String(top), name: el.name || '', label: el.label || el.name || (top === 'start' ? 'Start' : ''), where, part: typeof k === 'string' ? k : '' };
+}
+
+// PURE. The names of the elements a run can reach from Start, following every connector. Used to say which
+// elements stop running when an outcome is taken out of a decision (2026-11-10).
+function sftkFlowReachable(metadata) {
+  const m = metadata || {};
+  const byName = new Map();
+  for (const k of Object.keys(m)) if (Array.isArray(m[k])) for (const el of m[k]) if (el && typeof el === 'object' && typeof el.name === 'string' && el.name) byName.set(el.name, el);
+  const targets = v => { const out = []; (function walk(x) { if (!x || typeof x !== 'object') return; if (Array.isArray(x)) { x.forEach(walk); return; } if (typeof x.targetReference === 'string' && x.targetReference) out.push(x.targetReference); for (const k of Object.keys(x)) walk(x[k]); })(v); return out; };
+  const seen = new Set();
+  const queue = [...targets(m.start), ...(typeof m.startElementReference === 'string' && m.startElementReference ? [m.startElementReference] : [])];
+  while (queue.length) {
+    const n = queue.shift();
+    if (seen.has(n) || !byName.has(n)) continue;
+    seen.add(n);
+    queue.push(...targets(byName.get(n)));
+  }
+  return seen;
 }
 
 // PURE. The preview of an automatic fix. `before` is the active version's
@@ -344,6 +362,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkFlowInterviewKinds = sftkFlowInterviewKinds;
   globalThis.sftkFlowRefScan = sftkFlowRefScan;
   globalThis.sftkFlowRefWhere = sftkFlowRefWhere;
+  globalThis.sftkFlowReachable = sftkFlowReachable;
   globalThis.sftkFlowRefPreview = sftkFlowRefPreview;
   globalThis.sftkFlowInterviewWords = sftkFlowInterviewWords;
   globalThis.sftkFlowSurgeryLines = sftkFlowSurgeryLines;

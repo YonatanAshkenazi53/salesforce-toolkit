@@ -587,7 +587,7 @@ describe('a flow that runs on the field — the decision is made on its card', (
   });
   it('the button pressed is the way: nothing is asked again in the dialog', () => {
     expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code') ? way : '';");   // +delete 2026-11-07, +edit and +code 2026-11-08
-    expect(FC).toContain("const preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';");
+    expect(FC).toContain("let preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';");
     expect(FC).toContain('if (preset) activeMode = preset;');
     expect(FC).toContain('const asks = hasChoice && !preset;');
     expect(FC).toContain('if (!asks) return;');
