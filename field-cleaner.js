@@ -5870,7 +5870,7 @@ const FieldCleaner = (() => {
         const changed = ta.value !== pretty;
         let bad = null;
         if (changed && o.xml) { bad = sftkMdWellFormed(ta.value); if (!bad && o.name != null && sftkMdChildText(ta.value, 'fullName') !== o.name) bad = `the <fullName> must stay “${o.name}”`; }
-        state.textContent = !changed ? 'As proposed — change anything here and the deploy sends your text instead.' : bad ? `⚠ ${bad}` : (() => { const ops = sftkMdLineDiff(pretty, ta.value); const n = Math.max(ops.filter(x => x.op === '+').length, ops.filter(x => x.op === '-').length); return `${n} line${n === 1 ? '' : 's'} differ${n === 1 ? 's' : ''} from the proposal — your text is what will be deployed.`; })();
+        state.textContent = !changed ? (o.idle || 'As proposed — change anything here and the deploy sends your text instead.') : bad ? `⚠ ${bad}` : (() => { const ops = sftkMdLineDiff(pretty, ta.value); const n = Math.max(ops.filter(x => x.op === '+').length, ops.filter(x => x.op === '-').length); return `${n} line${n === 1 ? '' : 's'} differ${n === 1 ? 's' : ''} from the proposal — your text is what will be deployed.`; })();
         state.classList.toggle('fc-cf-edit-bad', !!bad);
         if (go) go.disabled = !!bad;
       };
@@ -5907,39 +5907,71 @@ const FieldCleaner = (() => {
     }
     const pkgType = type === 'LookupFilter' ? 'CustomField' : type;
     const files = sftkMdPackageFiles(pkgType, fullName, rec.innerXml);
-    // ✂ on a validation rule is a SUGGESTION (user 2026-11-10: "we need to let the user to edit it and suggest what to
-    // remove. if its the only field ref we can suggest to turn it off"): the formula without the conditions that use
-    // the field, or — when nothing would be left — the rule switched off. The ✎ edit box stays folded — editing is optional (user 2026-11-10: "the XML edit should be optional").
-    const vrOff0 = !!ed.off;
-    const sug = !!(ed.off || ed.suggested);
+    // ✂ on a validation rule: the user chooses IN THE DIALOG (user 2026-11-10: "אנחנו צריכים לתת למשתמש גם אפשרות
+    // בחלון לכבות את הולידציה. או למחוק את השורות המוצעות. או לתת למשתמש לערוך בעצמו") — ✂ take the suggested
+    // conditions out (offered when the rule can work without the field), ⏻ switch the rule off, or ✎ edit it by hand.
+    // The suggestion is preselected when there is one, else the switch-off; the diff and the button follow the choice.
+    const vrChoice = !nf && type === 'ValidationRule';
+    const vrOffXml = vrChoice ? (() => { const el = sftkMdFindElement(rec.innerXml, 'active', 0); return el ? rec.innerXml.slice(0, el.bodyStart) + 'false' + rec.innerXml.slice(el.bodyEnd) : ed.xml; })() : null;
+    let vrMode = vrChoice ? (ed.suggested ? 'remove' : 'off') : '';
     const gate = await sftkOrgWriteGate(_orgUrl);
     const inBox = !!_RULE_CONTAINERS[type];
-    const cfEdit = _cfEditBlock('fcCfEdit', ed.xml, { xml: true, what: 'the XML', name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName });
-    const sugNote = ed.off
-      ? 'An inactive rule does not block the delete. To keep it running instead, open ✎ Edit below and write the formula you want.'
-      : ed.suggested ? 'Read the formula that is left — it changes when the rule fires. ✎ Edit below is there if it is not what you mean.' : '';
+    const cfEdit = _cfEditBlock('fcCfEdit', vrChoice ? rec.innerXml : ed.xml, { xml: true, what: 'the XML', name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName,
+      idle: vrChoice ? 'The rule as it is now — change it here. What this box holds is what is deployed.' : '' });
+    const diffHd = '<div class="fc-xml-diff-hd">The XML — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>';
+    const vrDiff = m => diffHd + _xmlDiffHtml(rec.innerXml, m === 'off' ? vrOffXml : ed.xml);
+    const vrGo = { remove: '✂ Remove the conditions', off: '⏻ Switch the rule off', edit: '⬆ Deploy my edit' };
+    const vrWay = (v, title, sub, off) => `<label class="fc-vr-way${off ? ' fc-vr-way-na' : ''}"><input type="radio" name="fcVrWay" value="${v}"${off ? ' disabled' : ''}${vrMode === v ? ' checked' : ''}><span><b>${title}</b><small>${esc(sub)}</small></span></label>`;
+    const vrWays = vrChoice ? `<div class="fc-vr-ways" role="radiogroup" aria-label="What to do with the rule">
+      ${vrWay('remove', '✂ Remove the field’s conditions', ed.suggested ? `${ed.how[0]}. Read the formula that is left — it changes when the rule fires.` : `Not possible: ${String(ed.how[0] || '').replace(/ — so it has to be switched off$/, '')}.`, !ed.suggested)}
+      ${vrWay('off', '⏻ Switch the rule off', 'The formula stays as it is. An inactive rule does not block the delete, but it cannot be switched on again until its formula is fixed.')}
+      ${vrWay('edit', '✎ Edit the rule myself', 'Change the formula by hand — exactly your text is deployed.')}
+    </div><div id="fcVrDiff">${vrDiff(vrMode)}</div>` : '';
     const sure = await sftkConfirmDestructive({
-      title: ed.off ? `Switch the ${spec.what} off — ${cfg.label || type}` : `${verb} the field in the ${spec.what} — ${cfg.label || type}`,
-      icon: ed.off ? '⏻' : ico,
+      title: vrChoice ? `The field in the ${spec.what} — ${cfg.label || type}` : `${verb} the field in the ${spec.what} — ${cfg.label || type}`,
+      icon: ico,
       items: [{ label: componentName, sub: spec.what }],
       // an edit with a restore point is not "permanent": the badge says where the way back is
-      revOverride: { html: `${ed.off ? '⏻' : ico} <strong>${esc(ed.how.join('; '))}.</strong> ${sug ? `${sugNote} A <strong>restore point</strong> is kept: ↩ Undo in History puts the rule back.` : `Only the field’s own places change — everything else in the ${esc(spec.what)} is deployed back exactly as Salesforce returned it. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in History (or ↩ Restore points, under the results) deploys it back.`}`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+      revOverride: { html: vrChoice
+        ? `${ico} <strong>Choose what happens to the rule.</strong> The rule as it is now is kept as a <strong>restore point</strong>: ↩ Undo in History puts it back.`
+        : `${ico} <strong>${esc(ed.how.join('; '))}.</strong> Only the field’s own places change — everything else in the ${esc(spec.what)} is deployed back exactly as Salesforce returned it. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in History (or ↩ Restore points, under the results) deploys it back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
       undoHint: 'Undo in History',
-      extraHtml: `<div class="fc-xml-diff-hd">The XML — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>${_xmlDiffHtml(rec.innerXml, ed.xml)}${cfEdit.html}`,
-      confirmLabel: ed.off ? '⏻ Switch the rule off' : `${ico} ${verb} in the ${spec.what}`,
+      extraHtml: vrChoice ? `${vrWays}${cfEdit.html}` : `${diffHd}${_xmlDiffHtml(rec.innerXml, ed.xml)}${cfEdit.html}`,
+      confirmLabel: vrChoice ? vrGo[vrMode] : `${ico} ${verb} in the ${spec.what}`,
       production: gate.production ? { label: gate.label } : null,
-      onRender: cfEdit.onRender,
+      onRender: () => {
+        cfEdit.onRender();
+        if (!vrChoice) return;
+        const go = document.getElementById('sftkConfirmGo'), box = document.getElementById('fcCfEdit'), diff = document.getElementById('fcVrDiff');
+        const ta = box && box.querySelector('.fc-cf-ta');
+        if (!go || !box || !diff || !ta) return;
+        // ✎ needs a change to deploy: an untouched box is the rule as it is
+        ta.addEventListener('input', () => { if (vrMode === 'edit' && cfEdit.value() == null) go.disabled = true; });
+        const sync = () => {
+          const edit = vrMode === 'edit';
+          box.style.display = edit ? '' : 'none'; if (edit) box.open = true;
+          diff.style.display = edit ? 'none' : '';
+          if (!edit) { diff.innerHTML = vrDiff(vrMode); go.disabled = false; }
+          go.textContent = vrGo[vrMode];
+          if (edit) { ta.dispatchEvent(new Event('input')); ta.focus(); }
+        };
+        document.querySelectorAll('input[name="fcVrWay"]').forEach(r => r.addEventListener('change', () => { if (r.checked) { vrMode = r.value; sync(); } }));
+        sync();
+      },
     });
     if (!sure) return 'cancel';
-    // a hand edit in the dialog is what gets deployed (user 2026-11-08: "we can't edit here")
-    const handXml = cfEdit.value();
-    const finalXml = handXml != null ? handXml : ed.xml;
+    // a hand edit in the dialog is what gets deployed (user 2026-11-08: "we can't edit here"); on a validation rule
+    // only when ✎ is the way that was chosen
+    const handXml = vrChoice ? (vrMode === 'edit' ? cfEdit.value() : null) : cfEdit.value();
+    if (vrChoice && vrMode === 'edit' && handXml == null) return 'cancel';
+    const finalXml = handXml != null ? handXml : (vrChoice && vrMode === 'off' ? vrOffXml : ed.xml);
     const handAdded = handXml != null ? sftkMdLineDiff(sftkMdPretty(rec.innerXml), sftkMdPretty(finalXml)).filter(x => x.op === '+').map(x => x.line.trim()).filter(Boolean) : null;
-    const vrOff = vrOff0 && handXml == null;
+    const vrOff = vrChoice && vrMode === 'off';
+    const howDone = vrOff ? ['switched off — chosen in the dialog'] : handXml != null ? ['edited by hand in the dialog'] : ed.how;
     const deployFiles = sftkMdPackageFiles(pkgType, fullName, finalXml);
     const readMsg = _mdReadMsg(type, fullName, spec.mdType);
     const backPattern = vrOff ? '<active>true</active>' : _rxEsc(field);
-    await _snapshotFix('MdEdit', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, swapTo: nf, how: ed.how, files, verify: { msg: readMsg, pattern: backPattern, flags: 'i', retries: 3 } });
+    await _snapshotFix('MdEdit', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, swapTo: nf, how: howDone, files, verify: { msg: readMsg, pattern: backPattern, flags: 'i', retries: 3 } });
     _rowBusy(componentId, nf ? '⏳ replacing…' : '⏳ removing…');
     const zipBack = _zipOf(files), zipEdit = _zipOf(deployFiles);
     const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `${ico} ${cfg.label || type} — "${componentName}" (${obj}.${field}${nf ? ` → ${nf}` : ' removed'})`, orgUrl: _orgUrl });

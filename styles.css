@@ -7254,6 +7254,16 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-xml-refused { font-weight: 500; color: var(--danger); }
 .fc-xml-diff-hd { margin: 10px 0 4px; font-size: 11.5px; font-weight: 600; color: var(--text); }
 .sftk-cf-extra .fc-xml-pre { border: 1px solid var(--border); border-radius: 6px; max-height: 240px; }
+/* ✂ on a validation rule: the three ways, chosen in the confirm (2026-11-10) */
+.fc-vr-ways { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px; }
+.fc-vr-way { display: flex; align-items: flex-start; gap: 9px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.fc-vr-way input { margin: 3px 0 0; flex: 0 0 auto; }
+.fc-vr-way span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fc-vr-way b { font-size: 12.5px; color: var(--text); }
+.fc-vr-way small { font-size: 11.5px; line-height: 1.4; color: var(--subtext); }
+.fc-vr-way:has(input:checked) { border-color: var(--brand); background: var(--brand-bg); }
+.fc-vr-way-na { cursor: not-allowed; opacity: .6; }
+.fc-vr-ways ~ .fc-cf-edit > summary { display: none; }   /* the ✎ way opens the box; its own fold line would repeat it */
 .fc-item:has(> .fc-xml-done) { flex-wrap: wrap; }
 .fc-xml-done { flex-basis: 100%; margin: 2px 0 2px; font-size: 11px; }
 .fc-xml-done summary { cursor: pointer; color: var(--subtext); }

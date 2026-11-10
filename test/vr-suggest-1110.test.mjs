@@ -44,11 +44,24 @@ describe('sftkFormulaDropField', () => {
   });
 });
 
-describe('the confirm of a suggestion', () => {
-  it('keeps the edit box folded (editing is optional), says to read what is left, and names a switch-off as a switch-off', () => {
-    expect(FC).not.toContain("open: sug,");
-    expect(FC).toContain('Read the formula that is left');
-    expect(FC).toContain("confirmLabel: ed.off ? '⏻ Switch the rule off'");
-    expect(FC).toContain('const vrOff0 = !!ed.off;');
+describe('the confirm of ✂ on a validation rule offers three ways', () => {
+  it('remove the suggested conditions, switch the rule off, or edit by hand — chosen in the dialog', () => {
+    for (const v of ["vrWay('remove'", "vrWay('off'", "vrWay('edit'"]) expect(FC).toContain(v);
+    expect(FC).toContain("let vrMode = vrChoice ? (ed.suggested ? 'remove' : 'off') : '';");
+    expect(FC).toContain("remove: '✂ Remove the conditions', off: '⏻ Switch the rule off', edit: '⬆ Deploy my edit'");
+  });
+  it('remove is not offered when the rule cannot work without the field, and says why', () => {
+    const line = FC.split('\n').find(l => l.includes("vrWay('remove'")) || '';
+    expect(line).toContain('Not possible: ');
+    expect(line).toContain('!ed.suggested)');
+  });
+  it('what is deployed follows the way: the suggestion, the switch-off, or the hand edit only when ✎ was chosen', () => {
+    expect(FC).toContain("const handXml = vrChoice ? (vrMode === 'edit' ? cfEdit.value() : null) : cfEdit.value();");
+    expect(FC).toContain("const finalXml = handXml != null ? handXml : (vrChoice && vrMode === 'off' ? vrOffXml : ed.xml);");
+    expect(FC).toContain("const vrOff = vrChoice && vrMode === 'off';");
+    expect(FC).toContain("if (vrMode === 'edit' && cfEdit.value() == null) go.disabled = true;");
+  });
+  it('the edit box is folded for every other kind (editing is optional)', () => {
+    expect(FC).not.toContain('open: sug,');
   });
 });
