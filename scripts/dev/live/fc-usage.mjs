@@ -19,7 +19,7 @@ export default async function (h) {
   for (const f of ['SFTK_Live_Blk__c', 'Active__c', 'SFTK_Dbg_Count__c', 'CustomerPriority__c', 'SLAExpirationDate__c']) {
     if (!fields.includes(f)) { h.log(f, '— not offered, skipped'); continue; }
     await pick(h, '#fcFieldInput', '#fcFieldDrop', f);
-    await h.eval(`document.querySelector('#fcScope [data-scope="mentions"]').click()`); await h.sleep(300);
+    await h.eval(`document.querySelector('#fcScope [data-scope="mentions"]')?.click()`); await h.sleep(300);
     await h.eval(`document.querySelector('#fcScanBtn').click()`);
     h.log(`${f} →`, await verdict(h));
     await h.waitFor("!document.querySelector('#fcScanBtn')?.disabled", 600000, 1000);

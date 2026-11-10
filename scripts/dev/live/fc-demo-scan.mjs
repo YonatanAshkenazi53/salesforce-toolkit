@@ -28,7 +28,7 @@ export default async function (h) {
   await h.waitFor("!!document.querySelector('#fcObjInput')", 60000, 500);
   await pick(h, '#fcObjInput', '#fcObjDrop', 'Account');
   await pick(h, '#fcFieldInput', '#fcFieldDrop', 'SFTK_Live_Blk__c');
-  await h.eval(`document.querySelector('#fcScope [data-scope="both"]').click()`); await h.sleep(600);
+  await h.eval(`document.querySelector('#fcScope [data-scope="both"]')?.click()`); await h.sleep(600);
   await scan(h, 'demo fixture: everything');
   h.log('fix buttons:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-group')].map(g => g.querySelector('.fc-group-label').textContent + ' → ' + [...new Set([...g.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean))].join(' / '))`)));
   await h.shot(h.shots + '/demo-1.png');

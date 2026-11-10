@@ -8,7 +8,7 @@ const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(
 const ctx = (h, api, itemId) => h.eval(`(() => { const n = document.querySelector('.dep-node[data-api-name=' + JSON.stringify(${JSON.stringify(api)}) + ']'); if (!n) return 'no node'; n.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 })); const it = document.getElementById(${JSON.stringify(itemId)}); if (!it) return 'no menu item'; it.click(); return 'clicked'; })()`);
 export default async function (h) {
   await h.login('npc');
-  await h.popup('dependencies');
+  await h.popup('flows'); await h.eval("setFlowView('deps')");   // Dependencies is a view of the Flows tab since the one-page Flows (2026-11)
   await h.watchErrors();
   await h.waitFor("!!document.querySelector('#depExportBtn') && document.querySelectorAll('.dep-node').length > 0", 300000, 1000);
   await h.sleep(1500);
