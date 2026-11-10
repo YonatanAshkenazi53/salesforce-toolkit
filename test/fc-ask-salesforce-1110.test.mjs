@@ -23,8 +23,7 @@ describe('fcAskVerdict', () => {
   it('a refusal the scan has no blocker for says so and points at the full text scan', () => {
     const v = F.fcAskVerdict({ success: false, failures: [{ problem: REF + 'Aura Component Bundle "c:x" - COMPONENT - x.' }] }, 0);
     expect(v.lines).toEqual(['Aura Component Bundle "c:x" - COMPONENT - x']);
-    expect(v.foot).toContain('The scan does not list this');
-    expect(v.foot).toContain('Full metadata text scan');
+    expect(v.foot).toContain('added to the list below');
   });
   it('another kind of refusal is given in Salesforce\'s own words', () => {
     const v = F.fcAskVerdict({ success: false, failures: [{ problem: 'Cannot delete a field in a managed package' }] }, 0);
@@ -61,18 +60,33 @@ describe('the check-only deploy writes nothing', () => {
   });
 });
 
-// "We need to run it every scan" (user 2026-11-10)
-describe('the check rides every scan', () => {
-  const A = extractFunctions('field-cleaner.js', ['fcAskAuraBundles']);
-  it('reads the Aura bundles a refusal names (the only kind Salesforce names one by one)', () => {
-    expect(A.fcAskAuraBundles(['Aura Component Bundle "c:sftkLiveAura" - COMPONENT - sftkLiveAura', 'Aura Component Bundle "c:sftkLiveAura" - CONTROLLER - sftkLiveAura', 'Field Updates', 'Aura Component Bundle "ns:Other" - HELPER - Other']))
-      .toEqual([{ ns: 'c', name: 'sftkLiveAura' }, { ns: 'ns', name: 'Other' }]);
-    expect(A.fcAskAuraBundles(['Workflow Rules'])).toEqual([]);
+// "We need to run it every scan" + "If the scan continue missing it will be a problem for us" (user 2026-11-10)
+describe('the check rides every scan, and what it names joins the list', () => {
+  const A = extractFunctions('field-cleaner.js', ['fcAskNamed', 'fcAskKindListed']);
+  it('reads each component in Salesforce\'s own wording (live 2026-11-10)', () => {
+    const n = A.fcAskNamed(['Visualforce Page - SFTK_Live_VF', 'Apex Trigger - SFTK_Live_Trg', 'Apex Class - SFTK_Live_Cls',
+      'Aura Component Bundle "c:sftkLiveAura" - COMPONENT - sftkLiveAura', 'Aura Component Bundle "c:sftkLiveAura" - CONTROLLER - sftkLiveAura',
+      'Field Updates', 'Apex Class - dlrs__RollupService', 'Something New - With Words']);
+    expect(n.map(x => [x.type, x.ns, x.name])).toEqual([
+      ['ApexPage', 'c', 'SFTK_Live_VF'], ['ApexTrigger', 'c', 'SFTK_Live_Trg'], ['ApexClass', 'c', 'SFTK_Live_Cls'],
+      ['AuraDefinitionBundle', 'c', 'sftkLiveAura'], ['', 'c', ''], ['ApexClass', 'dlrs', 'RollupService'], ['', 'c', '']]);
+    expect(n[4].line).toBe('Field Updates');
+    expect(A.fcAskNamed([])).toEqual([]);
   });
-  it('runs once per scan, not for a mentions-only scope; a named bundle joins the list; a refusal locks the delete', () => {
+  it('a name that is not a plain identifier is never put into a query', () => {
+    expect(A.fcAskNamed(["Apex Class - x' OR Name != '"])[0].type).toBe('');
+  });
+  it('a kind-only line is covered when the list has that group, and is listed when it has not', () => {
+    expect(A.fcAskKindListed('Field Updates', ['Workflow Field Updates', 'Flows'])).toBe(true);
+    expect(A.fcAskKindListed('Workflow Rules', ['Workflow Rules'])).toBe(true);
+    expect(A.fcAskKindListed('Workflow Rules', ['Flows', 'Page Layouts'])).toBe(false);
+    expect(A.fcAskKindListed('Territory Rules', ['Workflow Rules'])).toBe(false);
+  });
+  it('runs once per scan, not for a mentions-only scope; named components join the list; the rest is listed in Salesforce\'s words; a refusal locks the delete', () => {
     expect(FC).toContain("if (_lastScan.ask) { _paintAsk(_lastScan.ask); return; }");
     expect(FC).toContain("if (fcScopeNorm(_lastScan.scope) === 'mentions') return;");
-    expect(FC).toContain("scan.deps.push({ MetadataComponentType: 'AuraDefinitionBundle', MetadataComponentId: b.Id, MetadataComponentName: b.DeveloperName, _tag:");
+    expect(FC).toContain("scan.deps.push({ MetadataComponentType: type, MetadataComponentId: row.Id,");
+    expect(FC).toContain("scan.deps.push({ MetadataComponentType: 'AskNamed', MetadataComponentId: id, MetadataComponentName: u.line });");
     expect(FC).toContain("for (const id of ['fcDelBtn', 'fcDelFreeBtn']) { const d = eid(id); if (d) d.disabled = true; }");
     expect(FC).toContain("let now = 2 + (fcScopeNorm(scope) === 'mentions' ? 0 : 2) + [L.flexiPages,");
   });

@@ -302,17 +302,44 @@ function fcAskVerdict(r, listedBlockers) {
   return { kind: 'blocked', head: ref && ref === (r.failures || []).length ? '🔒 Salesforce refuses the delete — the field is referenced by:' : '🔒 Salesforce refuses the delete — in its own words:', lines,
     foot: listedBlockers > 0
       ? 'Salesforce names only some of what blocks. Clear the blockers listed — it is asked again when the list is clear.'
-      : 'The scan does not list this: Salesforce’s index did not return it. Fix it in Setup, or run 🧭 Full metadata text scan below — it finds such references and adds them to the list.' };
+      : 'The scan did not find this — it is added to the list below as Salesforce names it.' };
 }
-// The Aura bundles a refusal names — live 2026-11-10: `Aura Component Bundle "c:sftkLiveAura" - COMPONENT - sftkLiveAura`.
-// The other kinds seen come without a name ("Field Updates", "Workflow Rules"), so only these can become rows.
-function fcAskAuraBundles(lines) {
+// What a refusal names, line by line (user 2026-11-10: "If the scan continue missing it will be a problem for us").
+// Salesforce's own wording, seen live on npc 2026-11-10:
+//   Apex Class - SFTK_Live_Cls · Apex Trigger - SFTK_Live_Trg · Visualforce Page - SFTK_Live_VF
+//   Aura Component Bundle "c:sftkLiveAura" - COMPONENT - sftkLiveAura
+//   Field Updates · Workflow Rules                      (a kind only, no name)
+// → [{ line, type, name, ns }] — type/name set when the line names ONE component of a kind the list can hold
+//   (ns 'c' = the org's own); a line that names only a kind, or reads in words not seen yet, keeps type ''.
+function fcAskNamed(lines) {
+  const KINDS = [[/^Apex Class - (.+)$/i, 'ApexClass'], [/^Apex Trigger - (.+)$/i, 'ApexTrigger'],
+    [/^Visualforce Page - (.+)$/i, 'ApexPage'], [/^Visualforce Component - (.+)$/i, 'ApexComponent']];
   const out = [];
-  for (const l of (lines || [])) {
-    const m = /^Aura Component Bundle "(?:([A-Za-z0-9_]+):)?([A-Za-z0-9_]+)"/.exec(String(l || '').trim());
-    if (m && !out.some(o => o.name === m[2] && o.ns === (m[1] || 'c'))) out.push({ ns: m[1] || 'c', name: m[2] });
+  for (const raw of (lines || [])) {
+    const line = String(raw || '').trim();
+    if (!line) continue;
+    let type = '', name = '', ns = 'c';
+    const au = /^Aura Component Bundle "(?:([A-Za-z0-9_]+):)?([A-Za-z0-9_]+)"/.exec(line);
+    if (au) { type = 'AuraDefinitionBundle'; ns = au[1] || 'c'; name = au[2]; }
+    else for (const [re, t] of KINDS) {
+      const m = re.exec(line);
+      if (!m) continue;
+      const full = m[1].trim(), k = full.indexOf('__');
+      // a packaged component reads "ns__Name"; an org's own name never holds a double underscore
+      if (/^[A-Za-z][A-Za-z0-9_]*$/.test(full)) { type = t; if (k > 0) { ns = full.slice(0, k); name = full.slice(k + 2); } else name = full; }
+      break;
+    }
+    if (type && out.some(o => o.type === type && o.name === name && o.ns === ns)) continue;   // an Aura bundle is named once per file
+    out.push({ line, type, name, ns });
   }
   return out;
+}
+// Is a kind-only line ("Field Updates") already a group of the list ("Workflow Field Updates")?
+function fcAskKindListed(line, groupLabels) {
+  const norm = x => String(x || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim().replace(/s$/, '');
+  const l = norm(line);
+  if (!l) return true;
+  return (groupLabels || []).some(g => { const n = norm(g); return !!n && (n === l || ` ${n} `.includes(` ${l} `) || ` ${l} `.includes(` ${n} `)); });   // whole words: "workflow rule" is not "flow"
 }
 function fcFieldNamespace(api) {
   const m = /^([A-Za-z](?:[A-Za-z0-9]|_(?!_))*)__[A-Za-z0-9_]+?__c$/.exec(String(api || '').trim());
@@ -2354,6 +2381,8 @@ const FieldCleaner = (() => {
                       note: 'The rule’s record filter names the field — active or not, Salesforce refuses the delete. ✂ / ⇄ / ✎ edit the filter here (the diff shown first, a restore point kept), 🗑 delete the rule, or edit it in Setup → Duplicate Management. Nothing switches a duplicate rule off or edits one behind a deployment.' },
     LightningComponentBundle: { icon: '⚡', label: 'Lightning Web Components', fixable: false, sev: 'blocker',
                       note: 'The component imports the field’s schema (@salesforce/schema). Remove the import in the code and deploy. A field named only in the HTML does not block — and is not listed.' },
+    AskNamed:       { icon: '🩺', label: 'Named by Salesforce', fixable: false, sev: 'blocker',
+                      note: 'Salesforce refuses the delete over this, in its own words, and the scan did not find it. Clear it in Setup; Salesforce is asked again when the list is clear.' },
     AuraDefinitionBundle: { icon: '⚡', label: 'Aura Components', fixable: false, sev: 'blocker',
                       note: 'The component’s markup or JavaScript names the field. Salesforce refused a delete over an Aura expression that reads the field (live-tested); a plain text mention may not block — its own answer in the delete box says which. Found by reading every Aura source in the org, not through Salesforce’s index.' },
     CustomMetadataRecord: { icon: '🗂', label: 'Custom Metadata Records', fixable: false, sev: 'blocker',
@@ -4621,6 +4650,11 @@ const FieldCleaner = (() => {
       delBtn.disabled = true;
       const note = eid('fcDeleteNote');
       if (note) note.textContent = `🔒 Auto-fixes done, but ${blockerTotal} manual blocker(s) remain — clear them in Setup and re-scan.`;
+    } else {
+      // some are fixed, some are open: the count follows without a re-scan (backlog 2026-11-02)
+      const open = new Set([...remaining].map(b => b.dataset.id)).size;
+      const note = eid('fcDeleteNote');
+      if (note && /^⚠ Fix the /.test(note.textContent.trim())) note.textContent = `⚠ Fix the ${open} fixable item${open === 1 ? '' : 's'} below first.`;
     }
   }
 
@@ -6950,7 +6984,7 @@ const FieldCleaner = (() => {
     if (!_selField || _selField.api !== field || _lastScan !== scan) return;   // another field or another scan meanwhile
     const ask = { r, at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
     if (scan) scan.ask = ask;
-    // an Aura bundle Salesforce names and the list lacks becomes a row of the list (its index did not return it)
+    // whatever Salesforce names and the list lacks becomes a row of the list
     let joined = 0;
     if (scan && r && !r.error && !r.success) {
       try { joined = await _askJoin(scan, fcAskVerdict(r, 1).lines); } catch (_) { /* the box still names them */ }
@@ -6960,15 +6994,36 @@ const FieldCleaner = (() => {
     _paintAsk(ask);
   }
   async function _askJoin(scan, lines) {
-    const want = fcAskAuraBundles(lines);
-    if (!want.length) return 0;
-    const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
-      query: `SELECT Id, DeveloperName, NamespacePrefix FROM AuraDefinitionBundle WHERE DeveloperName IN (${want.map(w => `'${w.name}'`).join(',')})` });
+    const named = fcAskNamed(lines);
+    if (!named.length) return 0;
+    const TAG = '🩺 named by Salesforce — its index did not return it';
+    const has15 = id => scan.deps.some(d => String(d.MetadataComponentId).slice(0, 15) === String(id).slice(0, 15));
+    const SPEC = { ApexClass: 'Name', ApexTrigger: 'Name', ApexPage: 'Name', ApexComponent: 'Name', AuraDefinitionBundle: 'DeveloperName' };
     let n = 0;
-    for (const b of ((q && q.records) || [])) {
-      if (!want.some(w => w.name === b.DeveloperName && (w.ns === 'c' ? !b.NamespacePrefix : w.ns === b.NamespacePrefix))) continue;
-      if (scan.deps.some(d => String(d.MetadataComponentId).slice(0, 15) === String(b.Id).slice(0, 15))) continue;
-      scan.deps.push({ MetadataComponentType: 'AuraDefinitionBundle', MetadataComponentId: b.Id, MetadataComponentName: b.DeveloperName, _tag: '🩺 named by Salesforce — its index did not return it' });
+    const unresolved = named.filter(x => !x.type);
+    for (const type of Object.keys(SPEC)) {
+      const want = named.filter(x => x.type === type);
+      if (!want.length) continue;
+      const col = SPEC[type];
+      const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+        query: `SELECT Id, ${col}, NamespacePrefix FROM ${type} WHERE ${col} IN (${[...new Set(want.map(w => `'${w.name}'`))].join(',')})` });
+      for (const w of want) {
+        const row = ((q && q.records) || []).find(b => b[col] === w.name && (w.ns === 'c' ? !b.NamespacePrefix : w.ns === b.NamespacePrefix));
+        if (!row) { unresolved.push(w); continue; }
+        if (has15(row.Id)) continue;                                  // the list has it already
+        scan.deps.push({ MetadataComponentType: type, MetadataComponentId: row.Id, MetadataComponentName: (w.ns === 'c' ? '' : `${w.ns}__`) + row[col], _tag: TAG });
+        n++;
+      }
+    }
+    // A line that names a kind the list already shows is covered by that group. Anything else — words not seen
+    // yet, a component that could not be found — is listed in Salesforce's own words, so the list is never short
+    // of something Salesforce refuses over.
+    const labels = [...new Set(scan.deps.map(d => (TYPE_CFG[d.MetadataComponentType] || TYPE_CFG_DEFAULT).label))];
+    for (const u of unresolved) {
+      if (!u.type && fcAskKindListed(u.line, labels)) continue;
+      const id = 'ask_' + u.line.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 60);
+      if (scan.deps.some(d => d.MetadataComponentId === id)) continue;
+      scan.deps.push({ MetadataComponentType: 'AskNamed', MetadataComponentId: id, MetadataComponentName: u.line });
       n++;
     }
     return n;

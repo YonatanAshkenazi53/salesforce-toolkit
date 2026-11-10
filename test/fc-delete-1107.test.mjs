@@ -14,7 +14,7 @@ const M = extractFunctions('sftk-mdapi.js', ['sftkMdDeleteSpec', 'sftkMdDestruct
 describe('the type table', () => {
   it('every blocker kind the scan can list has a delete spec, except the ones kept by hand on purpose', () => {
     const sevBlocker = [...FC.matchAll(/^\s*([A-Za-z]+):\s*\{[^\n]*?sev: 'blocker'/gm)].map(m => m[1]);
-    const byHand = new Set(['LookupFilter', 'Flow', 'Layout']);   // 2026-11-07: a duplicate rule, the lead mapping and a Process Builder process joined the table; a lookup filter has a path of its own
+    const byHand = new Set(['LookupFilter', 'Flow', 'Layout', 'AskNamed']);   // AskNamed (2026-11-10): Salesforce's own words for something the scan could not resolve — nothing to delete by name;   // 2026-11-07: a duplicate rule, the lead mapping and a Process Builder process joined the table; a lookup filter has a path of its own
     for (const t of sevBlocker) {
       if (byHand.has(t)) expect(M.sftkMdDeleteSpec(t), t).toBeNull();
       else expect(M.sftkMdDeleteSpec(t), t).not.toBeNull();

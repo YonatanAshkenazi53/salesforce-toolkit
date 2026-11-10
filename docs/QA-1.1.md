@@ -75,3 +75,36 @@ after the Deploy-page changes `value-edit.mjs` NOWRITE=1, `ve-rt.mjs`, `deploy-t
 ### Live fact, 2026-11-10: a report and a report type do NOT block a field delete
 
 Asked by the owner ("חשבתי שדוח וסוג דוח כן מונע מחיקה"). On npc: a throwaway text field on Account, a custom report type with its column, a tabular report on the standard Accounts type with the field as a column AND a filter, and a report on the custom type with the column. The Metadata API delete of the field **succeeded**. Re-read: both reports lost the column, the filter was dropped silently, the report type lost its column. So both stay under "Might break". Everything was removed afterwards.
+
+## Release gate for 1.1.0 (2026-11-10)
+
+Nothing goes to the store until all four are green. Results are written under each when it is run.
+
+1. **Unit gate** — `npm run verify` (lint, 3,900+ tests, pack check).
+2. **Live regression on the PACKED build** (`dist/store-staging`, the files the store gets), trial orgs only:
+   `node scripts/dev/qa/run.mjs qa1025 release-smoke`, then the batches `toolkit`, `toolkit2`, `studio`, `studio2`.
+   One harness at a time. Logs in `dist/qa/<batch>/`.
+3. **Upgrade test** — `node scripts/dev/qa/upgrade.mjs`: the 1.0.0 store zip is used on one browser profile, its
+   folder is replaced with 1.1.0, and the same profile opens it again. Passes when the licence is not asked again,
+   no stored key and no deployment is lost, and every page and tool opens with no exception.
+4. **The owner's hand pass** — what a script cannot judge. In the real Chrome, on the unpacked 1.1.0 folder:
+
+   | # | Do | Expect |
+   |---|---|---|
+   | 1 | Flows → ⏻ Switches and ⚙ API versions on the work org | every flow kind is listed (scheduled, autolaunched, screen, record-triggered, on packaged objects); the filter box is there |
+   | 2 | Field Cleaner → scan a field you know is used in Apex or a flow | the list matches what you know; the Salesforce answer under Delete Field agrees |
+   | 3 | Field Cleaner → scan a field nothing uses | "Salesforce would accept the delete", Delete Field open — do NOT press it on a real org |
+   | 4 | Field Cleaner → ✂ on a validation rule (trial org) | three ways offered; the diff is shown; the row is verified before the next one |
+   | 5 | Copy Permissions → a source user with licence-based permission sets | all of them are listed; the licence-based ones say "needs a seat" |
+   | 6 | Lightning Pages, Flow Access | lists look complete against Setup |
+   | 7 | Data Studio → Data Deployment → a dry run between two trial orgs | counts and the plan read right; nothing is written |
+   | 8 | Dark mode on every page | no white panel, no unreadable button |
+   | 9 | Hebrew labels / RTL text anywhere they show | direction is right |
+
+   Anything odd: screenshot + the tool's name is enough.
+
+### What is deliberately NOT in 1.1.0 (kept for after the release, so the release stays small)
+
+Related-list columns on parent layouts; a text read of Apex / Visualforce (the check-only delete at the end of every
+scan catches a miss); the unverified research leads; splitting custom-metadata text values from relationship values;
+✎ edit for flows / layouts / Lightning pages; a composite key for a parent outside the deployment; 1.1 video chapters.
