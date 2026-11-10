@@ -1827,6 +1827,7 @@ const FieldCleaner = (() => {
         return t === 'create' || t === 'update';
       });
       const BATCH = 5;
+      const qaHits = [];
       for (let i = 0; i < qas.length; i += BATCH) {
         const slice = qas.slice(i, i + BATCH);
         const rs = await Promise.allSettled(slice.map(qa => bg({
@@ -1843,8 +1844,17 @@ const FieldCleaner = (() => {
           // a token-boundary search over the JSON catches every placement.
           let blob = '';
           try { blob = JSON.stringify({ l: d.layout, dv: d.defaultValues }); } catch (_) {}
-          if (blob && re.test(blob)) add('QuickAction', qa.name, qa.label || qa.name);
+          if (blob && re.test(blob)) qaHits.push(qa);
         });
+      }
+      // The REST list and describe above are CACHED by Salesforce: an action deleted a minute ago is still served
+      // (user 2026-11-10, screenshot: "appeared on rescan although it was removed" — then "was not found in the
+      // org"). The hits are checked against the Tooling list, which is live; an unanswered check keeps them.
+      if (qaHits.length) {
+        const live = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+          query: `SELECT DeveloperName FROM QuickActionDefinition WHERE SobjectType = '${obj}'` });
+        const have = live && !live.error ? new Set((live.records || []).map(r => String(r.DeveloperName || '').toLowerCase())) : null;
+        for (const qa of qaHits) if (!have || have.has(bare(qa.name).toLowerCase())) add('QuickAction', qa.name, qa.label || qa.name);
       }
     } catch (_) {/* non-fatal */}
 
@@ -2268,8 +2278,10 @@ const FieldCleaner = (() => {
                       note: 'The alert sends to this field. Change its recipient in Setup (Workflow Actions → Email Alerts) or delete the alert.' },
     EmailAlertViaTemplate: { icon: '📨', label: 'Email Alerts (send a template that uses the field)', fixable: false, sev: 'silent',
                       note: 'The alert itself does not name the field — it sends an email template that does. Deleting the field goes through; the alert keeps sending, with that merge field empty. Fix the template (under Email Templates) and the alert needs nothing.' },
-    SearchLayout:   { icon: '🔎', label: 'Search Layouts', fixable: false, sev: 'silent',
-                      note: 'The object’s search layout lists the field as a column. The delete goes through and the column goes with it. Take it out in Object Manager → Search Layouts, or leave it.' },
+    SearchLayout:   { icon: '🔎', label: 'Search Layouts', fixable: true, sev: 'silent',
+                      note: 'The object’s search layout lists the field as a column. The delete goes through and the column goes with it; ✂ takes it out now.',
+                      doneLabel: '✅ Search layout updated',
+                      replNote: '{new} takes the field’s place in the layout (when it is already a column there, the old one just goes).' },
     WorkflowOutboundMessage: { icon: '📡', label: 'Outbound Messages', fixable: false, sev: 'blocker',
                       note: 'The message sends this field. Take it out of the message’s fields in Setup (Workflow Actions → Outbound Messages) or delete the message.' },
     SharingCriteriaRule: { icon: '🔐', label: 'Sharing Rules (criteria)', fixable: false, sev: 'blocker',
@@ -4144,6 +4156,10 @@ const FieldCleaner = (() => {
         if (!res.changed) return '';
         return hd('The report’s definition (JSON, as the Analytics API holds it)') + _textDiffHtml(JSON.stringify(d.reportMetadata, null, 2), JSON.stringify(res.meta, null, 2));
       }
+      if (type === 'SearchLayout') {
+        const ed = await _searchLayoutRead(componentId, nf);
+        return ed && ed.n ? hd('The XML') + _xmlDiffHtml(ed.before, ed.after) : '';
+      }
       if (type === 'ReportType') {
         const row = (_lastScan?.deps || []).find(d => d.MetadataComponentType === 'ReportType' && d.MetadataComponentId === componentId);
         const fullName = (row && row._fullName) || (/^070/.test(String(componentId)) ? null : componentId);
@@ -4285,7 +4301,7 @@ const FieldCleaner = (() => {
       revOverride: {
         html: type === 'Flow'
           ? `⚠ <strong>Flow versions that mention the field are deleted</strong> — Salesforce locks the field per version. A restore point of each is kept first: ↩ Undo in History puts the version that was active back as the active version, and ↩ Restore points below the results hold every deleted version.${_flowPlanBoxHtml(asks && !activeMode ? null : activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : { rows: flowPlan.rows, lines: flowPlan.lines })}`
-          : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${['Report', 'ReportType', 'Layout', 'FlexiPage'].includes(type)
+          : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${type === 'SearchLayout' ? 'The layout as it is now is kept: ↩ Undo in History puts it back.' : ['Report', 'ReportType', 'Layout', 'FlexiPage'].includes(type)
               ? 'A <strong>restore point</strong> is saved first — ↩ Restore points, under the results, can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
         needsCheckbox: type === 'Flow',
@@ -4374,6 +4390,7 @@ const FieldCleaner = (() => {
       if (type === 'FlexiPage') label = (await fixFlexiPage(componentId, componentName)) || label;
       if (type === 'Report')    label = await fixReport(componentId, componentName);
       if (type === 'ReportType') label = (await fixReportType(componentId, componentName)) || label;
+      if (type === 'SearchLayout') label = (await fixSearchLayout(componentId, componentName)) || label;
       if (type === 'EmailTemplate') label = (await fixEmailTemplate(componentId, componentName, swap)) || label;
       markFixed(componentId, label, doneLinks, doneHtml);
     } catch (e) {
@@ -5699,6 +5716,72 @@ const FieldCleaner = (() => {
     const rec = sftkMdExtractRecords(r.text).records.find(x => x.fullName === fullName);
     if (!rec) throw new Error(`Report type "${fullName}" was not found in the org.`);
     return rec.innerXml;
+  }
+  // One search layout of the selected object, read and edited (nothing written). componentId = "sl_<Object>_<tag>".
+  async function _searchLayoutRead(componentId, newField) {
+    const obj = _selObj.api, tag = String(componentId).slice(`sl_${obj}_`.length);
+    const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'CustomObject', fullNames: [obj], _suppressError: true });
+    if (!r || r.error) throw new Error(`the object could not be read (${_feText((r && r.error) || 'no answer')})`);
+    const rec = sftkMdExtractRecords(r.text).records.find(x => x.fullName === obj);
+    if (!rec) throw new Error(`${obj} was not found in the org`);
+    return { ...sftkSearchLayoutEdit(rec.innerXml, obj, _selField.api, tag, newField || null), tag, obj, inner: rec.innerXml };
+  }
+  // ✂ / ⇄ on a search layout (2026-11-10): the object's file is deployed with the layout changed, re-read to verify,
+  // and the layout as it was goes into History's undo.
+  async function fixSearchLayout(componentId, componentName) {
+    const obj = _selObj.api, field = _selField.api;
+    const setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/setup/ObjectManager/${encodeURIComponent(obj)}/SearchLayouts/view`;
+    const fail = text => { const e = new Error(text); e.setupUrl = setupUrl; return e; };
+    if (fcFieldNamespace(obj)) throw fail(`${obj} belongs to a package — its search layouts are edited in Setup → Object Manager → Search Layouts.`);
+    const swap = _swapOn(), swapTo = swap ? _replField.api : '';
+    const ed = await _searchLayoutRead(componentId, swapTo);
+    if (!ed.n) throw fail(`The “${componentName}” search layout of ${obj} no longer lists ${field} — re-scan.`);
+    const pkg = '<?xml version="1.0" encoding="UTF-8"?>\n<Package xmlns="http://soap.sforce.com/2006/04/metadata"><types><members>' + obj + '</members><name>CustomObject</name></types><version>62.0</version></Package>';
+    const zipAfter = _zipOf([{ name: 'package.xml', text: pkg }, { name: `objects/${obj}.object`, text: ed.file }]);
+    const back = sftkSearchLayoutEdit(ed.inner, obj, '__sftk_none__', ed.tag, null);   // the file as it is now: nothing matches, nothing changes
+    const zipBefore = _zipOf([{ name: 'package.xml', text: pkg }, { name: `objects/${obj}.object`, text: back.file }]);
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `🔎 Search layout — ${obj} “${componentName}” (${obj}.${field} ${swap ? `→ ${swapTo}` : 'removed'})`, orgUrl: _orgUrl });
+    let wr;
+    try {
+      // confirmed-by: fixOne's sftkConfirmDestructive (the only caller)
+      // The write discipline (sftk-write.js): the deploy is the write; the verify re-reads the object — the layout
+      // must not list the field any more (and, on a swap, must list the new one).
+      wr = await sftkWriteVerified({
+        describe: `${obj} search layout “${componentName}”`,
+        journal: j,
+        write: async () => {
+          const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64: zipAfter, _suppressError: true });
+          return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
+        },
+        verify: async () => {
+          for (let i = 0; i < 3; i++) {
+            try {
+              const now = await _searchLayoutRead(componentId, null);
+              const gone = !sftkSearchLayoutHits(now.inner, obj, field).some(h => h.tag === ed.tag);
+              const hasNew = !swap || sftkSearchLayoutHits(now.inner, obj, swapTo).some(h => h.tag === ed.tag);
+              if (gone && hasNew) return { ok: true, text: null };
+            } catch (_) { /* read again */ }
+            await new Promise(res => setTimeout(res, 1200));
+          }
+          return { ok: false, text: null };
+        },
+      });
+      if (wr.accepted && wr.ok) return `✅ Search layout updated · ${swap ? (ed.newAlreadyThere ? `${swapTo} was already a column, so the old one was removed` : `${swapTo} now sits where ${field} was`) : 'the column is removed'} — verified by re-reading the org`;
+      if (wr.accepted) throw fail(`The deploy was accepted, but on re-read the “${componentName}” search layout still lists ${field} — check it in Setup.`);
+      throw fail(`Salesforce won't accept the search layout update (${_feText(String((wr.raw && wr.raw.error) || 'refused'))}). Nothing was changed — take the column out in Setup.`);
+    } finally {
+      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+        ? { steps: [{
+            describe: `Put the “${componentName}” search layout of ${obj} back the way it was`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the SOAP re-read below
+            msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBefore },
+            verify: { msg: { type: 'SF_MD_READ', mdType: 'CustomObject', fullNames: [obj] },
+              pattern: `<${ed.tag}>(?:${_rxEsc(obj)}\\.)?${_rxEsc(field)}</${ed.tag}>`, flags: 'i', retries: 3,
+              text: { ok: `The “${componentName}” search layout lists ${field} again — verified by re-reading the org`,
+                      bad: `The deploy was accepted, but on re-read the search layout does not list ${field} yet` } },
+          }] }
+        : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
+    }
   }
   async function fixReportType(componentId, componentName) {
     const row = (_lastScan?.deps || []).find(d => d.MetadataComponentType === 'ReportType' && d.MetadataComponentId === componentId);

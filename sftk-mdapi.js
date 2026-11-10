@@ -795,6 +795,35 @@ function sftkSearchLayoutHits(objectInnerXml, objApi, fieldApi) {
   }
   return hits;
 }
+// ✂ / ⇄ on one search layout (2026-11-10). The field's entry in <tag> goes (✂) or names newField (⇄; when the new
+// field is already listed there, the old entry just goes — a column appears once). Returns the <searchLayouts>
+// element before and after, and the object FILE to deploy: a standard object takes its search layouts alone, a
+// custom object must come with its own top-level properties (Salesforce: "Must specify a non-empty label"), so the
+// file carries everything the read returned EXCEPT the child components, which deploy on their own and are left out.
+//   → { n, before, after, file } — n = 0 when the layout does not list the field
+function sftkSearchLayoutEdit(objectInnerXml, objApi, fieldApi, tag, newField) {
+  const CHILDREN = ['fields', 'validationRules', 'listViews', 'webLinks', 'recordTypes', 'compactLayouts', 'fieldSets', 'businessProcesses', 'sharingReasons', 'indexes', 'fullName'];
+  const src = String(objectInnerXml || '');
+  const box = sftkMdFindElement(src, 'searchLayouts', 0);
+  if (!box) return { n: 0, before: '', after: '', file: '' };
+  const body = src.slice(box.bodyStart, box.bodyEnd);
+  const nf = newField ? String(newField) : null;
+  let hasNew = false;
+  if (nf) for (let c = 0; ;) { const el = sftkMdFindElement(body, tag, c); if (!el) break; if (_sftkMdFieldIs(sftkMdUnescape(body.slice(el.bodyStart, el.bodyEnd)), objApi, nf)) hasNew = true; c = el.end; }
+  let n = 0;
+  const w = _sftkMdWalk(body, tag, inner => {
+    if (!_sftkMdFieldIs(sftkMdUnescape(inner), objApi, fieldApi)) return 'keep';
+    n++;
+    return (nf && !hasNew) ? { body: sftkMdEscape(nf) } : 'drop';
+  });
+  const before = src.slice(box.start, box.end);
+  const after = src.slice(box.start, box.bodyStart) + w.xml + src.slice(box.bodyEnd, box.end);
+  let rest = src.slice(0, box.start) + after + src.slice(box.end);
+  for (const t of CHILDREN) rest = _sftkMdWalk(rest, t, () => 'drop').xml;
+  const custom = /__c$/i.test(String(objApi || ''));
+  const file = '<?xml version="1.0" encoding="UTF-8"?>\n<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">' + (custom ? rest : after) + '</CustomObject>';
+  return { n, before, after, file, swapped: !!(nf && !hasNew), newAlreadyThere: hasNew };
+}
 // Does a filter's logic (booleanFilter "1 AND (2 OR 3)") number its items?
 // Taking an item out of a numbered filter would silently change its meaning.
 function _sftkMdHasLogic(xml) {
@@ -1189,6 +1218,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkMdEditField = sftkMdEditField;
   globalThis.sftkFormulaDropField = sftkFormulaDropField;
   globalThis.sftkSearchLayoutHits = sftkSearchLayoutHits;
+  globalThis.sftkSearchLayoutEdit = sftkSearchLayoutEdit;
   globalThis.sftkMdEditWays  = sftkMdEditWays;
   globalThis.sftkMdPretty    = sftkMdPretty;
   globalThis.sftkMdLineDiff  = sftkMdLineDiff;
