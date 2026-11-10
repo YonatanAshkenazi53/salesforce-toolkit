@@ -271,6 +271,14 @@ function fcPickerSummary(state) {
 //                and quick-action reads. The index answers both kinds in one
 //                call, so the blockers it returns are still COUNTED for the
 //                delete gate — hidden from the list, never from the decision.
+// The namespace of a PACKAGED field ("dlrs__Color__c" → "dlrs"; "My_Field__c" → ""). A field's own name cannot
+// hold a double underscore, so two of them before the suffix always mean a namespace prefix. A packaged field
+// cannot be deleted from the org, and the package's own components are not readable — the scan must never call
+// such a field "safe to delete" (user 2026-11-10: "ברחו לנו מלא מטאדאטה חבילתי … לוודא שגם האובייקטים החבילתיים נסרקים").
+function fcFieldNamespace(api) {
+  const m = /^([A-Za-z](?:[A-Za-z0-9]|_(?!_))*)__[A-Za-z0-9_]+?__c$/.exec(String(api || '').trim());
+  return m ? m[1] : '';
+}
 function fcScopeNorm(s) { return (s === 'blockers' || s === 'mentions') ? s : 'both'; }
 function fcScopeKeeps(scope, sev) {
   const sc = fcScopeNorm(scope);
@@ -2415,13 +2423,17 @@ const FieldCleaner = (() => {
     const sevOf = t => (TYPE_CFG[t] || TYPE_CFG_DEFAULT).sev;
     const deps = (allDeps || []).slice();
 
+    const pkgNs = fcFieldNamespace(_selField && _selField.api);
     if (!deps.length) {
       results.innerHTML = `
         <div class="fc-clean">
-          <div class="fc-clean-icon">✅</div>
+          ${pkgNs ? `<div class="fc-clean-icon">📦</div>
+          <div class="fc-clean-title">Nothing in this org’s own metadata uses the field</div>
+          <div class="fc-clean-sub"><code>${esc(_selField.api)}</code> belongs to the package <b>${esc(pkgNs)}</b>. A packaged field cannot be deleted here — it goes only with the package (or with a package upgrade). The package’s own code, flows and rules are not readable, so they were not scanned: this is not “unused”.</div>`
+          : `<div class="fc-clean-icon">✅</div>
           <div class="fc-clean-title">No dependencies found</div>
           <div class="fc-clean-sub">This field can be safely deleted.</div>
-          <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>
+          <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>`}
         </div>
         <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
         <div id="fcCopyVals"></div>
@@ -2430,7 +2442,7 @@ const FieldCleaner = (() => {
         ${_unscannedNoteHtml()}
         <div id="fcRptScan"></div>
         <div id="fcOrgSweep"></div>`;
-      eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);
+      if (eid('fcDelFreeBtn')) eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);   // a packaged field has no delete button
       runDataUsage();
       renderDeprecationZone(fieldId);
       renderFlsPanel();
@@ -2591,6 +2603,7 @@ const FieldCleaner = (() => {
     html = html.replace('<!--FC_GATE-->', () => gateHtml);
 
     results.innerHTML = html;
+    if (pkgNs) checkEnableDelete();   // a packaged field: the delete stays locked and the note says why
     _wireFolds(results);
     _paintFilter();
     _refreshFixEvery();   // the ⚡ row's two counts come from the rows as drawn (⇄ and ✂ differ: a formula has no ✂)
@@ -4439,6 +4452,14 @@ const FieldCleaner = (() => {
     const remaining = document.querySelectorAll('.fc-fix-btn:not([disabled])');
     const delBtn    = eid('fcDelBtn');
     if (!delBtn) return;
+    // a packaged field is never deletable from here, whatever is cleared
+    const pkgNs = fcFieldNamespace(_selField && _selField.api);
+    if (pkgNs) {
+      delBtn.disabled = true;
+      const note = eid('fcDeleteNote');
+      if (note) note.textContent = `📦 ${_selField.api} belongs to the package ${pkgNs} — a packaged field cannot be deleted here. What is listed above is what THIS org built on it; the package’s own components are not readable.`;
+      return;
+    }
     const blockerTotal = (_manualBlockers || []).reduce((n, b) => n + b.count, 0);
     // F2: even with every auto-fix done, manual blockers still make Salesforce
     // reject the delete — keep the button locked and say why.
