@@ -29,7 +29,7 @@ describe('the scope', () => {
   });
   it('which legs run (live-tested 2026-11-06): a Lightning page BLOCKS, so its leg runs in every scope; the cheap scan skips every read that can only find a mention; the mentions scan skips every blocker read', () => {
     const B = { matchingRules: true, workflowFieldUpdates: true, workflow: true, approvals: true, sharingRules: true, duplicateRules: true, lwc: true, customMetadata: true };
-    const M = { reportTypes: true, listViews: true, compactLayouts: true, quickActions: true, paths: true, validationRulesOff: true, emailTemplates: true };   // +validationRulesOff 2026-11-07: an inactive rule is a mention the index never returns
+    const M = { reportTypes: true, listViews: true, compactLayouts: true, quickActions: true, paths: true, validationRulesOff: true, emailTemplates: true, searchLayouts: true };   // +validationRulesOff 2026-11-07: an inactive rule is a mention the index never returns
     const off = o => Object.fromEntries(Object.keys(o).map(k => [k, false]));
     expect(F.fcScopeLegs('both')).toEqual({ flexiPages: true, ...B, leadMapping: false, objectRules: false, ...M });
     expect(F.fcScopeLegs('blockers')).toEqual({ flexiPages: true, ...B, leadMapping: false, objectRules: false, ...off(M) });
@@ -41,12 +41,12 @@ describe('the scope', () => {
     expect(F.fcScopeLegs('both', 'My_Obj__c')).toMatchObject({ leadMapping: false, objectRules: false });
     expect(F.fcScopeLegs('mentions', 'Lead')).toMatchObject({ leadMapping: false, objectRules: false });
   });
-  it('the cost follows the scope: 20 fixed calls for everything, 13 for the blockers, 10 for the mentions; the fan-outs stay a "more if" until known', () => {
+  it('the cost follows the scope: 21 fixed calls for everything, 13 for the blockers, 11 for the mentions; the fan-outs stay a "more if" until known', () => {
     const FAN = ['Lightning page in the org', 'list view on this object', 'create/update quick action on this object', '10 custom report types in the org', 'workflow rule, alert or outbound message on this object', '10 approval processes on this object', '10 duplicate rules on this object', '10 custom metadata records in the org (read up to 300)'];
-    expect(F.fcEstimateScanCalls(null)).toEqual({ now: 20, known: false, moreIf: FAN });   // +1 on 2026-11-10: every email template's text is read
+    expect(F.fcEstimateScanCalls(null)).toEqual({ now: 21, known: false, moreIf: FAN });   // +1 on 2026-11-10: every email template's text is read; +1: the object's search layouts
     expect(F.fcEstimateScanCalls(null, 'blockers')).toEqual({ now: 13, known: false, moreIf: FAN.filter(w => !/list view|quick action|report types/.test(w)) });
-    expect(F.fcEstimateScanCalls(null, 'mentions')).toEqual({ now: 10, known: false, moreIf: FAN.slice(0, 4) });
-    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2 }, 'mentions')).toEqual({ now: 61, known: true, moreIf: [] });
+    expect(F.fcEstimateScanCalls(null, 'mentions')).toEqual({ now: 11, known: false, moreIf: FAN.slice(0, 4) });
+    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2 }, 'mentions')).toEqual({ now: 62, known: true, moreIf: [] });
     expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 2, approvals: 1, duplicateRules: 1, customMetadata: 0 }, 'blockers')).toEqual({ now: 57, known: true, moreIf: [] });   // 13 + 40 pages + 2 + 1 + 1
     // the lead mapping and the Lead/Case rules are read only for those objects: +1 and +3 fixed calls
     expect(F.fcEstimateScanCalls(null, 'blockers', 'Account').now).toBe(14);

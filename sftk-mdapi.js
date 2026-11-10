@@ -773,6 +773,28 @@ function sftkFormulaDropField(formula, objApi, fieldApi, namesFn) {
     .filter(w => !/^(TRUE|FALSE|NULL|AND|OR|NOT)$/i.test(w));
   return words.length ? { mode: 'operand', text, n } : { mode: 'whole', n, why: 'constant', left: text };
 }
+// The search layouts of an object that list the field (user 2026-11-10: "also, what about search layouts?"). They
+// live inside the object's own metadata (<searchLayouts>), one element per listed field; a custom field is written
+// by its API name, a standard one as OBJECT.FIELD. Returns one hit per layout, in Setup's words.
+function sftkSearchLayoutHits(objectInnerXml, objApi, fieldApi) {
+  const NAMES = { customTabListAdditionalFields: 'Tab (recently viewed list)', lookupDialogsAdditionalFields: 'Lookup dialog', lookupPhoneDialogsAdditionalFields: 'Lookup dialog (phone)',
+    lookupFilterFields: 'Lookup filter fields', lookupPhoneFilterFields: 'Lookup filter fields (phone)', searchFilterFields: 'Search filter fields', searchResultsAdditionalFields: 'Search results' };
+  const box = sftkMdFindElement(String(objectInnerXml || ''), 'searchLayouts', 0);
+  if (!box) return [];
+  const body = String(objectInnerXml).slice(box.bodyStart, box.bodyEnd);
+  const hits = [];
+  for (const tag of Object.keys(NAMES)) {
+    let cursor = 0, found = false;
+    for (;;) {
+      const el = sftkMdFindElement(body, tag, cursor);
+      if (!el) break;
+      if (_sftkMdFieldIs(sftkMdUnescape(body.slice(el.bodyStart, el.bodyEnd)), objApi, fieldApi)) found = true;
+      cursor = el.end;
+    }
+    if (found) hits.push({ tag, label: NAMES[tag] });
+  }
+  return hits;
+}
 // Does a filter's logic (booleanFilter "1 AND (2 OR 3)") number its items?
 // Taking an item out of a numbered filter would silently change its meaning.
 function _sftkMdHasLogic(xml) {
@@ -1166,6 +1188,7 @@ function sftkMdLineDiff(a, b) {
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkMdEditField = sftkMdEditField;
   globalThis.sftkFormulaDropField = sftkFormulaDropField;
+  globalThis.sftkSearchLayoutHits = sftkSearchLayoutHits;
   globalThis.sftkMdEditWays  = sftkMdEditWays;
   globalThis.sftkMdPretty    = sftkMdPretty;
   globalThis.sftkMdLineDiff  = sftkMdLineDiff;

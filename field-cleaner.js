@@ -308,7 +308,8 @@ function fcScopeLegs(scope, objApi) {
     leadMapping: blockers && ['lead', 'account', 'contact', 'opportunity'].includes(o),
     objectRules: blockers && (o === 'lead' || o === 'case'),
     reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions, validationRulesOff: mentions,
-    emailTemplates: mentions,   // every template's text is read — Salesforce's index lists few of them (2026-11-10)
+    emailTemplates: mentions,
+    searchLayouts: mentions,    // the object's search layouts: one metadata read of the object (2026-11-10)   // every template's text is read — Salesforce's index lists few of them (2026-11-10)
   };
 }
 
@@ -341,7 +342,7 @@ function fcEstimateScanCalls(counts, scope, objApi) {
   ].filter(Boolean);
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
   let now = 2 + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
-    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates].filter(Boolean).length
+    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts].filter(Boolean).length
     + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
@@ -1435,7 +1436,7 @@ const FieldCleaner = (() => {
       ['compactLayouts', 'compact layouts', 2], ['quickActions', 'quick actions', 3], ['matchingRules', 'matching rules', 1], ['workflowFieldUpdates', 'workflow field updates', 1],
       ['workflow', 'workflow rules', 2], ['approvals', 'approval processes', 2], ['sharingRules', 'sharing rules', 1], ['duplicateRules', 'duplicate rules', 1],
       ['lwc', 'Lightning web components', 2], ['customMetadata', 'custom metadata records', 2], ['leadMapping', 'lead field mappings', 1], ['objectRules', 'assignment, auto-response and escalation rules', 1],
-      ['paths', 'Paths', 1], ['validationRulesOff', 'inactive validation rules', 1], ['emailTemplates', 'email templates', 2],
+      ['paths', 'Paths', 1], ['validationRulesOff', 'inactive validation rules', 1], ['emailTemplates', 'email templates', 2], ['searchLayouts', 'search layouts', 1],
     ];
     return all.filter(([k]) => k === 'index' || L[k]).map(([key, label, weight]) => ({ key, label, weight }));
   }
@@ -2062,12 +2063,37 @@ const FieldCleaner = (() => {
       }
     } catch (_) {/* non-fatal */}
 
+    // Search layouts (a mention: the delete goes through and the field drops out of the layout). They are part of
+    // the object's own metadata, so the object is read once (user 2026-11-10: "also, what about search layouts?").
+    if (L.searchLayouts) try {
+      msg('Scanning search layouts…');
+      const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'CustomObject', fullNames: [obj], _suppressError: true });
+      const rec = r && !r.error ? sftkMdExtractRecords(r.text).records.find(x => x.fullName === obj) : null;
+      for (const h of sftkSearchLayoutHits(rec ? rec.innerXml : '', obj, _selField.api)) add('SearchLayout', `sl_${obj}_${h.tag}`, h.label);
+    } catch (_) {/* non-fatal */}
+
     if (L.validationRulesOff) try {
       msg('Scanning inactive validation rules…');
       const rows = (await sfQ(`SELECT Id, ValidationName FROM ValidationRule WHERE EntityDefinition.QualifiedApiName = '${obj}' AND Active = false`, true))?.records || [];
       await eachMetadata('ValidationRule', rows, m => re.test(String(m.errorConditionFormula || '')) || sameField(m.errorDisplayField),
         'ValidationRuleInactive', r => `${r.ValidationName} (inactive)`, 'inactive validation rules');
     } catch (_) {/* non-fatal */}
+
+    // A scoping rule and a restriction rule are one kind to Salesforce (RestrictionRule) and one group here: each
+    // row says which it is, and whether it is on (user 2026-11-10: "גם אני לא רואה ברשימה scoping rule" — the
+    // rule was listed, as a bare name under "Scoping & Restriction Rules"). One query, only when the index has such rows.
+    try {
+      const rr = (existingDeps || []).filter(d => d.MetadataComponentType === 'RestrictionRule');
+      if (rr.length) {
+        const q = await sfQ(`SELECT Id, EnforcementType, IsActive FROM RestrictionRule WHERE Id IN (${rr.map(d => `'${String(d.MetadataComponentId).substring(0, 15)}'`).join(',')})`, true);
+        const by = new Map(((q && !q.error && q.records) || []).map(r => [String(r.Id).substring(0, 15), r]));
+        for (const d of rr) {
+          const r = by.get(String(d.MetadataComponentId).substring(0, 15));
+          if (!r || /\((scoping|restriction) rule/.test(String(d.MetadataComponentName || ''))) continue;
+          d.MetadataComponentName = `${d.MetadataComponentName} (${String(r.EnforcementType || '').toLowerCase() === 'scoping' ? 'scoping rule' : 'restriction rule'}${r.IsActive === false ? ', inactive' : ''})`;
+        }
+      }
+    } catch (_) {/* non-fatal: the rows keep their bare names */}
 
     // The index names a lookup filter "nf_<Object>_<field id>" — say which lookup field it is instead.
     try {
@@ -2242,6 +2268,8 @@ const FieldCleaner = (() => {
                       note: 'The alert sends to this field. Change its recipient in Setup (Workflow Actions → Email Alerts) or delete the alert.' },
     EmailAlertViaTemplate: { icon: '📨', label: 'Email Alerts (send a template that uses the field)', fixable: false, sev: 'silent',
                       note: 'The alert itself does not name the field — it sends an email template that does. Deleting the field goes through; the alert keeps sending, with that merge field empty. Fix the template (under Email Templates) and the alert needs nothing.' },
+    SearchLayout:   { icon: '🔎', label: 'Search Layouts', fixable: false, sev: 'silent',
+                      note: 'The object’s search layout lists the field as a column. The delete goes through and the column goes with it. Take it out in Object Manager → Search Layouts, or leave it.' },
     WorkflowOutboundMessage: { icon: '📡', label: 'Outbound Messages', fixable: false, sev: 'blocker',
                       note: 'The message sends this field. Take it out of the message’s fields in Setup (Workflow Actions → Outbound Messages) or delete the message.' },
     SharingCriteriaRule: { icon: '🔐', label: 'Sharing Rules (criteria)', fixable: false, sev: 'blocker',
@@ -2339,7 +2367,7 @@ const FieldCleaner = (() => {
         so a report that uses this field can be missing here. Before deleting, press 📊 Scan the reports below (it reads every report itself),
         or open the field in Setup and press “Where is this used?” — that page lists reports.
         <strong>Not read, and not a blocker</strong> (the delete goes through; these break or lose the field quietly):
-        Aura component markup, a Lightning web component that names the field only in its HTML, search layouts,
+        Aura component markup, a Lightning web component that names the field only in its HTML,
         related-list columns on other objects’ layouts, record-type picklist values, dependent-picklist settings,
         Experience Cloud pages, and any text that holds the field’s name (dynamic Apex, custom settings, custom
         labels). <strong>Not readable</strong>: territory assignment rules and managed-package components.
@@ -6588,6 +6616,7 @@ const FieldCleaner = (() => {
       AutoResponseRule: obj === 'Case' ? '/lightning/setup/CaseResponses/home' : '/lightning/setup/LeadResponses/home',
       EscalationRule: '/lightning/setup/CaseEscRules/home',
       RestrictionRule: `/lightning/setup/ObjectManager/${obj}/RestrictionRules/view`,
+      SearchLayout: `/lightning/setup/ObjectManager/${obj}/SearchLayouts/view`,
       PathAssistant:  '/lightning/setup/PathAssistantSetupHome/home',
       ApexComponent:  '/lightning/setup/ApexComponents/home',
       ApexPage:       '/lightning/setup/ApexPages/home',
