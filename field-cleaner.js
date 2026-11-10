@@ -4043,6 +4043,53 @@ const FieldCleaner = (() => {
   // swap: the button pressed — true = ⇄ Replace (move the reference to the
   // replacement field), false / undefined = ✂ Remove. One fix at a time.
   // way: a flow card's decision for the version that runs ('keep' | 'off').
+  // What ✂ / ⇄ from the row would change, read and worked out BEFORE the confirm and shown in it as a diff (user
+  // 2026-11-10, on the layout's confirm: "למה לא רואים פה מה מסירים מהxml?"). The same pure transforms the fix runs,
+  // on a copy; nothing is written. '' when the component cannot be read or nothing would change — the fix then says
+  // why, as it always did. A flow has its own plan box.
+  async function _fixPreviewHtml(type, componentId, componentName, swap) {
+    try {
+      const obj = _selObj.api, field = _selField.api, nf = swap ? _replField.api : '';
+      const hd = what => `<div class="fc-xml-diff-hd">${what} — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>`;
+      if (type === 'Layout' || type === 'FlexiPage') {
+        const res = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true, sobject: type, id: componentId });
+        if (!res || res.error || !res.Metadata) return '';
+        const after = JSON.parse(JSON.stringify(res.Metadata));
+        let n;
+        if (type === 'Layout') {
+          if (swap) { const sw = sftkLayoutReplaceField(after, field, nf, { readOnly: _replReadOnly() }); n = sw.swapped + sw.blanked; }
+          else n = removeFieldFromLayout(after, field);
+        } else if (swap) { const sw = sftkFlexiReplaceField(after, obj, field, nf); n = sw.swapped + sw.dropped; }
+        else n = removeFieldFromFlexiPage(after, obj, field);
+        if (!n) return '';
+        const xml = m => type === 'Layout' ? buildLayoutXml(m) : ['<FlexiPage>', ...Object.keys(m).sort().flatMap(k => _lxValueToLines(k, m[k], '    ')), '</FlexiPage>'].join('\n');
+        return hd('The XML') + _textDiffHtml(xml(res.Metadata), xml(after));
+      }
+      if (type === 'EmailTemplate') {
+        const rec = await _tplRead(componentId);
+        const r = swap ? sftkTplReplace(rec, field, nf) : sftkTplRemove(rec, field);
+        if (!r.n) return '';
+        return r.fields.map(k => hd(`<code>${esc(k)}</code>`) + _textDiffHtml(rec[k], r.rec[k])).join('');
+      }
+      if (type === 'Report') {
+        const d = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true, path: `services/data/v62.0/analytics/reports/${componentId}/describe` });
+        if (!d || d.error || !d.reportMetadata) return '';
+        const res = swap ? sftkRptReplaceField(d.reportMetadata, obj, field, nf, sftkRptTokenMatch, sftkRptFieldHits) : sftkRptStripField(d.reportMetadata, obj, field);
+        if (!res.changed) return '';
+        return hd('The report’s definition (JSON, as the Analytics API holds it)') + _textDiffHtml(JSON.stringify(d.reportMetadata, null, 2), JSON.stringify(res.meta, null, 2));
+      }
+      if (type === 'ReportType') {
+        const row = (_lastScan?.deps || []).find(d => d.MetadataComponentType === 'ReportType' && d.MetadataComponentId === componentId);
+        const fullName = (row && row._fullName) || (/^070/.test(String(componentId)) ? null : componentId);
+        if (!fullName || (row && row._managed)) return '';
+        const before = await readReportType(fullName);
+        const res = swap ? sftkRtReplaceField(before, obj, field, nf) : sftkRtRemoveField(before, obj, field);
+        if (!res.changed) return '';
+        return hd('The XML') + _xmlDiffHtml(before, res.xml);
+      }
+    } catch (_) { /* no preview: the confirm still states what happens, and the fix reports its own error */ }
+    return '';
+  }
   async function fixOne(type, componentId, componentName, fieldId, swap, way) {
     // A row that is already settled has nothing left to fix (and, for a flow,
     // its version may be gone): never run a fix on it again.
@@ -4148,6 +4195,12 @@ const FieldCleaner = (() => {
     if (preset) activeMode = preset;
     const asks = hasChoice && !preset;                      // the dialog shows the two ways only when the card did not
     const shownPlan = preset === 'delete' ? flowPlan.planDelete : (flowPlan ? flowPlan.plan : null);
+    let previewHtml = '';
+    if (type !== 'Flow') {
+      _rowBusy(componentId, '🔎 reading…');
+      previewHtml = await _fixPreviewHtml(type, componentId, componentName, swap);
+      _rowBusy(componentId, null);
+    }
     const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
       title: `${swap ? 'Replace' : 'Remove'} field reference — ${cfg.label || type}`,
@@ -4167,7 +4220,7 @@ const FieldCleaner = (() => {
       extraHtml: type === 'Flow' ? `
         ${hasChoice ? _flowChoiceHtml(flowPlan, componentName, canReplace, preset) : ''}
         <label class="sftk-confirm-ack"><input type="checkbox" id="fcFlowBackup" checked> ⬇ Back up the ${shownPlan.toDelete.length + (shownPlan.overwrite ? 1 : 0)} version(s) as a zip before deleting (recommended — the Flows tool can restore from it)</label>
-        ${flowPlan.interviews.length ? `<div class="sftk-confirm-undo">⏸ ${esc(sftkFlowInterviewWords(sftkFlowInterviewKinds(flowPlan.interviews)).head)} that will be deleted first: ${esc(flowPlan.interviews.slice(0, 8).map(i => i.InterviewLabel || i.Name).join(', '))}${flowPlan.interviews.length > 8 ? ` … +${flowPlan.interviews.length - 8} more` : ''}</div>` : ''}` : '',
+        ${flowPlan.interviews.length ? `<div class="sftk-confirm-undo">⏸ ${esc(sftkFlowInterviewWords(sftkFlowInterviewKinds(flowPlan.interviews)).head)} that will be deleted first: ${esc(flowPlan.interviews.slice(0, 8).map(i => i.InterviewLabel || i.Name).join(', '))}${flowPlan.interviews.length > 8 ? ` … +${flowPlan.interviews.length - 8} more` : ''}</div>` : ''}` : previewHtml,
       onRender: type === 'Flow' ? () => {
         const cb = document.getElementById('fcFlowBackup');
         cb?.addEventListener('change', () => { wantBackup = !!cb.checked; });
