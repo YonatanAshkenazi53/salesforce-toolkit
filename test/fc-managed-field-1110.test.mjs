@@ -34,3 +34,12 @@ describe('a packaged field in the results', () => {
     expect(FC).toContain('a packaged field cannot be deleted here. What is listed above is what THIS org built on it');
   });
 });
+
+describe('a child component of a custom object is read by the object’s API name', () => {
+  it('the Tooling record names a custom object by ID (01I…): the name is resolved before the full name is built', () => {
+    expect(FC).toContain("if (!g.FullName && /^01I[A-Za-z0-9]{12,15}$/.test(String(ent))) {");
+    expect(FC).toContain('SELECT QualifiedApiName FROM EntityDefinition WHERE DurableId = ');
+    const i = FC.indexOf('if (!g.FullName && /^01I');
+    expect(FC.indexOf('const fn = g.FullName ||', i)).toBeGreaterThan(i);
+  });
+});

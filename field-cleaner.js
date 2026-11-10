@@ -5689,7 +5689,14 @@ const FieldCleaner = (() => {
       const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id, _suppressError: true });
       if (g && !g.error) {
         // a child type without FullName on its Tooling record (live 2026-11-07: FieldSet) is "<Object>.<DeveloperName>"
-        const ent = g.EntityDefinitionId || g.TableEnumOrId || g.SobjectType || '';
+        let ent = g.EntityDefinitionId || g.TableEnumOrId || g.SobjectType || '';
+        // on a CUSTOM object (an org's own or a package's) the Tooling record names its object by ID (01I…), and a
+        // full name built from that was "not found in the org" (live 2026-11-10: a field set on dlrs__LookupChild__c)
+        if (!g.FullName && /^01I[A-Za-z0-9]{12,15}$/.test(String(ent))) {
+          const e = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: `SELECT QualifiedApiName FROM EntityDefinition WHERE DurableId = '${String(ent).slice(0, 15)}' OR DurableId = '${String(ent)}' LIMIT 1` });
+          const api = e && !e.error && e.records && e.records[0] ? e.records[0].QualifiedApiName : '';
+          if (api) ent = api;
+        }
         const fn = g.FullName || (spec.parent && ent && g.DeveloperName ? `${ent}.${g.DeveloperName}` : (g.DeveloperName || g.Name));
         if (fn) return String(fn);
       }

@@ -33,3 +33,14 @@ some of them red with no tag, so the target's validation rule refuses them unles
 npc BEFORE the rule is deployed there, by the live script.
 
 2026-11-10: `matchingRules/dlrs__LookupParent__c` (SFTK_Pkg_Parent_Name, exact Name) and `duplicateRules/dlrs__LookupParent__c.SFTK_Pkg_Parent_Dupes` (Allow + Alert, never blocks) — a duplicate rule on a packaged object for the Deploy page's ⏸ panel. Deployed to npc and npc2.
+
+
+## fc-app — Field Cleaner on a packaged object (2026-11-10)
+
+A second package directory. Org-built metadata on `dlrs__LookupChild__c` that uses `SFTK_Pkg_Tag__c`: a formula field, a list view, a field set, a compact layout, a page layout, a workflow rule (inactive) and a field update, a matching rule (inactive) and a report type. With the validation rule and the three flows of `force-app` the field has 13 places.
+
+```bash
+sf project deploy start -o npc -d fc-app
+```
+
+Redeploy after a Field Cleaner write test to put the references back.

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ReportType xmlns="http://soap.sforce.com/2006/04/metadata">
+    <baseObject>dlrs__LookupChild__c</baseObject>
+    <category>other</category>
+    <deployed>true</deployed>
+    <description>Admin Toolkit fixture: a report type on a packaged object.</description>
+    <label>SFTK Pkg RT</label>
+    <sections>
+        <columns>
+            <checkedByDefault>true</checkedByDefault>
+            <field>Name</field>
+            <table>dlrs__LookupChild__c</table>
+        </columns>
+        <columns>
+            <checkedByDefault>true</checkedByDefault>
+            <field>SFTK_Pkg_Tag__c</field>
+            <table>dlrs__LookupChild__c</table>
+        </columns>
+        <masterLabel>Lookup Children</masterLabel>
+    </sections>
+</ReportType>

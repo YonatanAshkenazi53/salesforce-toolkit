@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_Pkg_Tag_Upper__c</fullName>
+    <description>Admin Toolkit fixture: a formula on a PACKAGED object that reads the org-built field SFTK_Pkg_Tag__c. Safe to delete.</description>
+    <externalId>false</externalId>
+    <formula>UPPER(SFTK_Pkg_Tag__c)</formula>
+    <label>SFTK Pkg Tag Upper</label>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ListView xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_Pkg_Tagged</fullName>
+    <columns>NAME</columns>
+    <columns>SFTK_Pkg_Tag__c</columns>
+    <filterScope>Everything</filterScope>
+    <filters>
+        <field>SFTK_Pkg_Tag__c</field>
+        <operation>equals</operation>
+        <value>demo</value>
+    </filters>
+    <label>SFTK Pkg Tagged</label>
+</ListView>
