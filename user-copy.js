@@ -43,6 +43,21 @@ function cpFilterUsers(users, query) {
   return out;
 }
 
+// Rows sorted by a label IN THE PAGE. Never "ORDER BY Parent.Field" in the query: live 2026-11-10 (npc), sorting
+// PermissionSetAssignment by PermissionSet.Label made Salesforce return 5 of a user's 10 permission sets — every
+// standard, licence-based one was dropped, with no error.
+function ucSortByLabel(rows, labelOf) {
+  return (Array.isArray(rows) ? rows.slice() : []).sort((a, b) =>
+    String(labelOf(a) || '').localeCompare(String(labelOf(b) || ''), undefined, { sensitivity: 'base' }));
+}
+// A permission set's LicenseId is a USER licence (id 100…) or a PERMISSION SET licence (id 0PL…). Only a different
+// user licence makes it unassignable; a permission set licence is a seat Salesforce gives with the assignment.
+function ucIsSeatLicense(licenseId) { return /^0PL/i.test(String(licenseId || '')); }
+function ucNeedsOtherUserLicense(licenseId, targetUserLicenseId) {
+  if (!licenseId || !targetUserLicenseId || ucIsSeatLicense(licenseId)) return false;
+  return String(licenseId).slice(0, 15) !== String(targetUserLicenseId).slice(0, 15);
+}
+
 const UserCopy = (() => {
   let _orgUrl = null;
   let _sid    = null;
@@ -606,11 +621,10 @@ const UserCopy = (() => {
       query: `SELECT PermissionSetGroupId,PermissionSetGroup.MasterLabel,` +
         `PermissionSetGroup.DeveloperName,PermissionSetGroup.Status ` +
         `FROM PermissionSetAssignment ` +
-        `WHERE AssigneeId=${soqlLit(sourceUser.Id)} AND PermissionSetGroupId != null ` +
-        `ORDER BY PermissionSetGroup.MasterLabel`
+        `WHERE AssigneeId=${soqlLit(sourceUser.Id)} AND PermissionSetGroupId != null`   // no ORDER BY on the parent's field: it can drop rows (see ucSortByLabel)
     });
     if (sR.error) { psgProbeError = String(sR.error); return; }
-    sourcePermSetGroups = sR.records || [];
+    sourcePermSetGroups = ucSortByLabel(sR.records || [], r => r.PermissionSetGroup && (r.PermissionSetGroup.MasterLabel || r.PermissionSetGroup.DeveloperName));
 
     const tR = await bg({
       type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
@@ -645,9 +659,11 @@ const UserCopy = (() => {
         query: `SELECT PermissionSetId,PermissionSet.Label,PermissionSet.Name,` +
           `PermissionSet.LicenseId,PermissionSet.License.Name,PermissionSet.IsCustom ` +
           `FROM PermissionSetAssignment WHERE AssigneeId=${soqlLit(sourceUser.Id)} ` +
-          `AND PermissionSet.IsOwnedByProfile=false ORDER BY PermissionSet.Label`
+          `AND PermissionSet.IsOwnedByProfile=false`
       });
-      sourcePermSets = spsR.records || [];
+      // Sorted HERE, never in the query: "ORDER BY PermissionSet.Label" made Salesforce drop every standard,
+      // licence-based permission set of the user without a word (live 2026-11-10 on npc: 10 rows, 5 with the sort).
+      sourcePermSets = ucSortByLabel(spsR.records || [], r => r.PermissionSet && (r.PermissionSet.Label || r.PermissionSet.Name));
 
       // Permission sets already on target
       const tpsR = await bg({
@@ -810,7 +826,7 @@ const UserCopy = (() => {
         const ps = psa.PermissionSet;
         if (targetPermSetIds.has(psa.PermissionSetId)) {
           alreadyHas.push(psa);
-        } else if (ps?.LicenseId && targetLicenseId && ps.LicenseId !== targetLicenseId) {
+        } else if (ucNeedsOtherUserLicense(ps?.LicenseId, targetLicenseId)) {
           incompatible.push(psa);
         } else {
           assignable.push(psa);
@@ -828,6 +844,7 @@ const UserCopy = (() => {
             <label class="uc-row uc-row-check">
               <input type="checkbox" class="uc-ps-cb" data-psid="${esc(psa.PermissionSetId)}" checked>
               <span class="uc-row-name">${label}</span>
+              ${ucIsSeatLicense(psa.PermissionSet?.LicenseId) ? `<span class="uc-row-badge" title="This permission set needs a permission set licence. Salesforce assigns the licence with it when a seat is free; when none is, this one is refused and reported.">needs a seat: ${esc(psa.PermissionSet?.License?.Name || 'permission set licence')}</span>` : ''}
             </label>`;
         }
       }

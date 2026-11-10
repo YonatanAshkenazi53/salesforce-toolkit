@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SharingRules xmlns="http://soap.sforce.com/2006/04/metadata">
+    <sharingCriteriaRules>
+        <fullName>SFTK_Pkg_Share</fullName>
+        <accessLevel>Read</accessLevel>
+        <description>SFTK fixture: a criteria-based sharing rule on a packaged object, on the org-built field.</description>
+        <label>SFTK Pkg Share</label>
+        <sharedTo>
+            <allInternalUsers></allInternalUsers>
+        </sharedTo>
+        <criteriaItems>
+            <field>SFTK_Pkg_Tag__c</field>
+            <operation>equals</operation>
+            <value>share</value>
+        </criteriaItems>
+        <includeRecordsOwnedByAll>true</includeRecordsOwnedByAll>
+    </sharingCriteriaRules>
+</SharingRules>

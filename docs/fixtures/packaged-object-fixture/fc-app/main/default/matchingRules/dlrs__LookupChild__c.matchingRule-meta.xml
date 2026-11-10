@@ -9,6 +9,6 @@
             <fieldName>SFTK_Pkg_Tag__c</fieldName>
             <matchingMethod>Exact</matchingMethod>
         </matchingRuleItems>
-        <ruleStatus>Inactive</ruleStatus>
+        <ruleStatus>Active</ruleStatus>
     </matchingRules>
 </MatchingRules>
