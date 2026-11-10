@@ -706,8 +706,13 @@ function _sftkMdSwapToken(text, objApi, fieldApi, newField) {
 // OR(…), nested as deep as they go; every condition that names the field is taken out whole, the others stay as
 // written. What is left is a proposal — which conditions go changes when the rule fires, so the caller shows the
 // diff and lets the user edit it. Text in quotes and comments is skipped when the brackets are counted.
+// A rule may test several fields, and this field several times: every one of its conditions goes. The rule can
+// work without the field only when what is left still tests something — a formula left as a bare TRUE / FALSE
+// would block every save or never fire, so that counts as nothing left (user 2026-11-10: "להסיר את הרפרנסים שלו
+// במידה והולידציה יכולה לתפקד בלעדיו. אם לא אנחנו צריכים להגיד שהיא צריכה להכבות").
 //   → { mode: 'operand', text, n }   n conditions taken out, `text` is the formula that is left
-//     { mode: 'whole', n }           every condition names the field: nothing would be left
+//     { mode: 'whole', n, why }      nothing would be left: why 'all' (every condition names the field) or
+//                                    'constant' (only constants are left; `left` holds them)
 //     { mode: 'none' }               the formula does not name the field
 function sftkFormulaDropField(formula, objApi, fieldApi) {
   // the field named in the formula's own text — a comment or a quoted string that holds its name does not count
@@ -752,13 +757,19 @@ function sftkFormulaDropField(formula, objApi, fieldApi) {
       return (split(kept[0], '||').length > 1 || split(kept[0], '&&').length > 1) ? `(${kept[0]})` : kept[0];
     }
     if (t[0] === '(' && wraps(t, 0)) { const r = drop(t.slice(1, -1)); return r == null ? null : `(${r})`; }
+    const not = /^NOT\s*\(/i.exec(t);
+    if (not && wraps(t, not[0].length - 1)) { const r = drop(t.slice(not[0].length, -1)); return r == null ? null : `NOT(${r})`; }
     n++;
     return null;   // one condition that uses the field
   };
   const src = String(formula || '');
   if (!names(src)) return { mode: 'none' };
   const text = drop(src);
-  return text == null ? { mode: 'whole', n } : { mode: 'operand', text, n };
+  if (text == null) return { mode: 'whole', n, why: 'all' };
+  // does what is left still test anything? (a field, a function on one, $User… — not just TRUE / FALSE / numbers)
+  const words = (text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""').match(/[A-Za-z_$][A-Za-z0-9_.$]*/g) || [])
+    .filter(w => !/^(TRUE|FALSE|NULL|AND|OR|NOT)$/i.test(w));
+  return words.length ? { mode: 'operand', text, n } : { mode: 'whole', n, why: 'constant', left: text };
 }
 // Does a filter's logic (booleanFilter "1 AND (2 OR 3)") number its items?
 // Taking an item out of a numbered filter would silently change its meaning.
@@ -821,13 +832,15 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       if (d.mode === 'operand') {
         xml = xml.slice(0, fe.bodyStart) + sftkMdEscape(d.text) + xml.slice(fe.bodyEnd);
         suggested = true;
-        how.push(`suggested: ${plural(d.n, 'condition')} that use${d.n === 1 ? 's' : ''} the field taken out of the formula — the rule stays active`);
+        how.push(`${plural(d.n, 'condition')} that use${d.n === 1 ? 's' : ''} the field taken out of the formula — the rule stays active on its other conditions`);
         break;
       }
       // every condition uses the field: nothing would be left of the formula, so the suggestion is to switch it off
       xml = xml.slice(0, act.bodyStart) + 'false' + xml.slice(act.bodyEnd);
       off = true;
-      how.push('suggested: switch the rule off — every condition of its formula uses the field, so nothing would be left');
+      how.push(d.why === 'constant'
+        ? `the rule cannot work without the field — only “${d.left}” would be left of its formula — so it has to be switched off`
+        : 'the rule cannot work without the field — every condition of its formula uses it — so it has to be switched off');
       break;
     }
     case 'CustomField': {

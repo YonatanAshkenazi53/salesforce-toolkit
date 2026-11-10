@@ -26,15 +26,20 @@ describe('every kind of the demo field, ✂ and ⇄', () => {
     const vr = X('ValidationRule.Account.SFTK_Live_VR');
     const r = rm('ValidationRule', vr);
     expect(r.refused).toBeNull();
-    // ISBLANK(field) && FALSE → FALSE; the rule stays active
-    expect(r.xml).toBe(vr.replace('ISBLANK(SFTK_Live_Blk__c) &amp;&amp; FALSE', 'FALSE'));
-    expect(r.suggested).toBe(true); expect(r.off).toBe(false);
-    expect(r.how[0]).toMatch(/^suggested: 1 condition that uses the field taken out/);
-    // the field in every condition: the suggestion is to switch the rule off, the formula untouched
+    // ISBLANK(field) && FALSE → only FALSE would be left: the rule cannot work without the field, so it is switched off
+    expect(r.xml).toBe(vr.replace('<active>true</active>', '<active>false</active>'));
+    expect(r.off).toBe(true); expect(r.how[0]).toMatch(/cannot work without the field — only “FALSE” would be left/);
+    // several fields, this one twice: both of its conditions go, the rule stays active on the other field
+    const multi = vr.replace('ISBLANK(SFTK_Live_Blk__c) &amp;&amp; FALSE', 'AND(ISBLANK(SFTK_Live_Blk__c), ISBLANK(Name), LEN(SFTK_Live_Blk__c) &gt; 5)');
+    const m = rm('ValidationRule', multi);
+    expect(m.xml).toBe(vr.replace('ISBLANK(SFTK_Live_Blk__c) &amp;&amp; FALSE', 'ISBLANK(Name)'));
+    expect(m.suggested).toBe(true); expect(m.off).toBe(false);
+    expect(m.how[0]).toMatch(/^2 conditions that use the field taken out/);
+    // the field in every condition: switched off, the formula untouched
     const only = vr.replace('ISBLANK(SFTK_Live_Blk__c) &amp;&amp; FALSE', 'ISBLANK(SFTK_Live_Blk__c)');
     const o = rm('ValidationRule', only);
     expect(o.xml).toBe(only.replace('<active>true</active>', '<active>false</active>'));
-    expect(o.off).toBe(true); expect(o.how[0]).toMatch(/^suggested: switch the rule off/);
+    expect(o.off).toBe(true); expect(o.how[0]).toMatch(/every condition of its formula uses it/);
     swapped(vr, rp('ValidationRule', vr).xml);
     const x = X('ValidationRule.Contact.SFTK_Live_XVR');
     expect(rp('ValidationRule', x).xml).toContain('Account.SFTK_Live_Blk2__c = &apos;never@sftk.invalid&apos;');

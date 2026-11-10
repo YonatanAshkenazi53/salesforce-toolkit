@@ -11,7 +11,7 @@ const d = f => M.sftkFormulaDropField(f, 'Account', 'F__c');
 
 describe('sftkFormulaDropField', () => {
   it('takes a condition out of && and || and keeps the rest as written', () => {
-    expect(d('ISBLANK(F__c) && FALSE')).toEqual({ mode: 'operand', text: 'FALSE', n: 1 });
+    expect(d('ISBLANK(F__c) && G__c = 1')).toEqual({ mode: 'operand', text: 'G__c = 1', n: 1 });
     expect(d('a__c || b__c && F__c > 1')).toEqual({ mode: 'operand', text: 'a__c || b__c', n: 1 });
     expect(d('(F__c = 1 || G__c = 2) && H__c').text).toBe('(G__c = 2) && H__c');
   });
@@ -25,7 +25,17 @@ describe('sftkFormulaDropField', () => {
     expect(d('ISBLANK(F__c)').mode).toBe('whole');
     expect(d('NOT(ISBLANK(Account.F__c))').mode).toBe('whole');
     expect(d('IF(F__c = 1, TRUE, G__c)').mode).toBe('whole');
-    expect(d('AND(F__c = 1, LEN(F__c) > 2)').mode).toBe('whole');
+    expect(d('AND(F__c = 1, LEN(F__c) > 2)')).toEqual({ mode: 'whole', n: 2, why: 'all' });
+  });
+  it('only a constant left is nothing left: the rule would never fire, or block every save', () => {
+    expect(d('ISBLANK(F__c) && FALSE')).toEqual({ mode: 'whole', n: 1, why: 'constant', left: 'FALSE' });
+    expect(d('OR(F__c = "a", TRUE)').why).toBe('constant');
+    expect(d('ISBLANK(F__c) || $User.Alias = "x"').mode).toBe('operand');
+  });
+  it('several fields, the field several times, and inside NOT( )', () => {
+    expect(d('AND(ISBLANK(F__c), ISBLANK(Name), LEN(F__c) > 5, Amount__c > 0)')).toEqual({ mode: 'operand', text: 'AND(ISBLANK(Name), Amount__c > 0)', n: 2 });
+    expect(d('NOT(OR(ISBLANK(F__c), ISBLANK(Name)))').text).toBe('NOT(ISBLANK(Name))');
+    expect(d('Amount__c > F__c && Name <> ""').text).toBe('Name <> ""');
   });
   it('another field with a longer name, a comment and a quoted string are not the field', () => {
     expect(d('Other_F__c = 1 && XF__c').mode).toBe('none');
