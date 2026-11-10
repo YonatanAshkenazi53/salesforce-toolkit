@@ -15,6 +15,8 @@ extensions containing root files that start with `_`).
 
 ## 1.1.0 — 2026-11-04
 
+- **⏻ Flow switches shows the switch, not the API version** (2026-11-10: "אין צורך להציג שם גרסאת api"). Each row carries ON/OFF and the flow version that runs; the API version lives in ⚙ API versions.
+
 ### Data Studio
 - **The matching section reads in layers** (2026-11-08: "זה גם צריך ui יותר טוב. זה מאוד לא ברור"): the key as one
   sentence on top — "Key · Account Name · Two records are the same when this field is equal on both sides" — with

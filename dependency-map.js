@@ -2777,7 +2777,7 @@ const DependencyMap = (() => {
         <div style="font-weight:600;margin-bottom:2px">⏻ Flow switches — ${escHtml(depHost(orgUrl))}</div>
         <div style="font-size:11.5px;opacity:.8;margin-bottom:6px">
           Every flow in this org — record-triggered flows by object, every other flow by its kind — with its
-          on/off state, running flow version and pinned <strong>API version</strong>.
+          on/off state and the flow version that runs.
           <strong>Off</strong> stops that flow's automation for everyone in this org until reactivated —
           records created meanwhile are never retroactively processed.
         </div>
@@ -2923,7 +2923,7 @@ const DependencyMap = (() => {
       const c = r.cells[o.key];
       if (!c || !c.present) return '<span class="dep-list-state"><span class="dep-pill dep-pill-absent" title="This flow does not exist in this org \u2014 absence, not off.">not in this org</span></span>';
       const rem = (st.remembered[o.key] || {})[r.apiName];
-      const api = c.apiVersion ? `<span class="dep-pill dep-pill-api" title="Pinned to Salesforce API ${escHtml(c.apiVersion)}">API ${escHtml(c.apiVersion)}</span>` : '';
+      const api = '';   // the API version belongs to ⚙ API versions, not to the switches (user 2026-11-10: "אין צורך להציג שם גרסאת api")
       const state = c.isActive
         ? `<span class="dep-pill dep-pill-on" title="Active${c.activeVersion ? ` \u2014 version ${c.activeVersion} is running` : ''}">ON${c.activeVersion ? ` v${c.activeVersion}` : ''}</span>`
         : `<span class="dep-pill dep-pill-off" title="No active version \u2014 this flow's automation is not running">OFF</span>${rem
