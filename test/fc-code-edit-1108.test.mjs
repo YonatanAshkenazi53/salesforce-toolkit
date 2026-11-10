@@ -128,7 +128,7 @@ describe('the wiring in Field Cleaner', () => {
     expect(FC).toContain('✂ Remove all left out what can only be replaced — ${skipped.join(\', \')}');
     // the confirm's XML (and a code file's text) can be edited before the deploy (user 2026-11-08: "we can't edit here")
     expect(FC).toContain('function _cfEditBlock(id, proposed, opts) {');
-    expect(FC).toContain("const cfEdit = _cfEditBlock('fcCfEdit', ed.xml, { xml: true, what: 'the XML', name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName });");
+    expect(FC).toContain("const cfEdit = _cfEditBlock('fcCfEdit', ed.xml, { xml: true, what: 'the XML', open: sug, name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName });");
     expect(FC).toContain('const finalXml = handXml != null ? handXml : ed.xml;');
     expect(FC).toContain('const deployFiles = sftkMdPackageFiles(pkgType, fullName, finalXml);');
     expect(FC).toContain('const edits = changed.map((s, i) => _cfEditBlock(`fcCfCode${i}`, s.source, { what: s.file }));');
