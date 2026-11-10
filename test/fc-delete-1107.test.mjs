@@ -94,7 +94,7 @@ describe('the wiring', () => {
     expect(FC).toContain("verify: async () => { try { return { ok: await plan.gone(), text: null }; } catch (_) { return { ok: false, text: null }; } },");
     expect(FC).toContain("msg: plan.undoPatch ? { type: 'SF_PATCH', ...plan.undoPatch } : { type: 'SF_METADATA_DEPLOY', zipBase64: zipBack },");
     expect(FC).toContain("testLevel: 'RunLocalTests'");
-    expect(BG).toContain('async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel) {');
+    expect(BG).toContain('async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel, checkOnly) {');
     expect(BG).toContain("(testLevel === 'RunLocalTests' || testLevel === 'RunAllTestsInOrg') ? testLevel : 'NoTestRun'");
   });
   it('a row from the index resolves its full name through the Tooling record; a matching rule through its developer name; the legs put the name in the id', () => {

@@ -275,6 +275,35 @@ function fcPickerSummary(state) {
 // hold a double underscore, so two of them before the suffix always mean a namespace prefix. A packaged field
 // cannot be deleted from the org, and the package's own components are not readable — the scan must never call
 // such a field "safe to delete" (user 2026-11-10: "ברחו לנו מלא מטאדאטה חבילתי … לוודא שגם האובייקטים החבילתיים נסרקים").
+// What the check-only delete answered, as the box shows it (pure). r = the background's answer; listedBlockers =
+// how many blockers the scan's list still shows.
+//   → { kind: 'ok' | 'blocked' | 'error', head, lines: [Salesforce's own words, once each], foot }
+function fcAskVerdict(r, listedBlockers) {
+  if (!r || r.error) return { kind: 'error', head: '⚠ Salesforce could not be asked', lines: [String((r && r.error) || 'no answer')], foot: '' };
+  if (r.success) {
+    return { kind: 'ok', head: '✅ Salesforce would accept the delete right now', lines: [],
+      foot: listedBlockers > 0
+        ? `The list still marks ${listedBlockers} item${listedBlockers === 1 ? '' : 's'} as blocking — Salesforce does not refuse over ${listedBlockers === 1 ? 'it' : 'them'}. Look at what ${listedBlockers === 1 ? 'it does' : 'they do'} before deleting.`
+        : 'This answers only what blocks. What stops working without the field (👀) Salesforce does not say.' };
+  }
+  // Salesforce puts one sentence in front of every name ("This custom field is referenced elsewhere in salesforce.com. :
+  // Workflow Rules.") — the head says it once and the lines keep the names
+  const REF = /This custom field is referenced elsewhere in salesforce\.com\.\s*:\s*/gi;
+  const seen = new Set(), lines = [];
+  let ref = 0;
+  for (const f of (r.failures || [])) {
+    const p = String(f.problem || '').trim();
+    // one problem may hold several of them back to back
+    const parts = REF.test(p) ? (ref++, p.split(REF)) : [p];
+    REF.lastIndex = 0;
+    for (const x of parts) { const t = parts.length > 1 || ref ? x.trim().replace(/\.$/, '') : x.trim(); if (t && !seen.has(t)) { seen.add(t); lines.push(t); } }
+  }
+  if (!lines.length) lines.push(String(r.errorMessage || 'Salesforce refused and gave no reason'));
+  return { kind: 'blocked', head: ref && ref === (r.failures || []).length ? '🔒 Salesforce refuses the delete — the field is referenced by:' : '🔒 Salesforce refuses the delete — in its own words:', lines,
+    foot: listedBlockers > 0
+      ? 'Salesforce may name only some of what blocks — clear the blockers listed, then ask again.'
+      : 'The scan does not list this: Salesforce’s index did not return it. Fix it in Setup, or run 🧭 Full metadata text scan below — it finds such references and adds them to the list. Then ask again.' };
+}
 function fcFieldNamespace(api) {
   const m = /^([A-Za-z](?:[A-Za-z0-9]|_(?!_))*)__[A-Za-z0-9_]+?__c$/.exec(String(api || '').trim());
   return m ? m[1] : '';
@@ -2497,8 +2526,9 @@ const FieldCleaner = (() => {
           <div class="fc-clean-sub"><code>${esc(_selField.api)}</code> belongs to the package <b>${esc(pkgNs)}</b>. A packaged field cannot be deleted here — it goes only with the package (or with a package upgrade). The package’s own code, flows and rules are not readable, so they were not scanned: this is not “unused”.</div>`
           : `<div class="fc-clean-icon">✅</div>
           <div class="fc-clean-title">No dependencies found</div>
-          <div class="fc-clean-sub">This field can be safely deleted.</div>
-          <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>`}
+          <div class="fc-clean-sub">The scan found nothing that uses this field. 🩺 Ask Salesforce confirms nothing blocks the delete.</div>
+          <div class="fc-clean-btns">${_askHtml().split('\n')[0]}<button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button></div>
+          <div class="fc-ask-box" id="fcAskBox" hidden></div>`}
         </div>
         <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
         <div id="fcCopyVals"></div>
@@ -2508,6 +2538,7 @@ const FieldCleaner = (() => {
         <div id="fcRptScan"></div>
         <div id="fcOrgSweep"></div>`;
       if (eid('fcDelFreeBtn')) eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);   // a packaged field has no delete button
+      _wireAsk();
       runDataUsage();
       renderDeprecationZone(fieldId);
       renderFlsPanel();
@@ -2658,12 +2689,14 @@ const FieldCleaner = (() => {
             : blockerTotal > 0
               ? '🔒 Delete is blocked until the blockers below are cleared.'
               : silentManual > 0
-                ? '✅ No blockers — safe to delete (the cosmetic references below will simply vanish).'
-                : '✅ Safe to delete.'}
+                ? '✅ The scan lists no blocker (the references below simply go with the field). 🩺 Ask Salesforce confirms it.'
+                : '✅ The scan lists no blocker. 🩺 Ask Salesforce confirms it.'}
         </div>
+        ${pkgNs ? '' : _askHtml().split('\n')[0]}
         <button class="btn btn-danger" id="fcDelBtn" ${delDisabled ? 'disabled' : ''}>
           🗑 Delete Field
         </button>
+        ${pkgNs ? '' : '<div class="fc-ask-box" id="fcAskBox" hidden></div>'}
       </div>`;
     html = html.replace('<!--FC_GATE-->', () => gateHtml);
 
@@ -2733,6 +2766,7 @@ const FieldCleaner = (() => {
 
     const delBtn = eid('fcDelBtn');
     if (delBtn) delBtn.onclick = () => confirmDelete(fieldId);
+    _wireAsk();
 
     runDataUsage();              // F1: fill the verdict placeholder asynchronously
     renderDeprecationZone(fieldId);  // F3: stage banner / deprecate button
@@ -4548,7 +4582,7 @@ const FieldCleaner = (() => {
     if (remaining.length === 0 && blockerTotal === 0) {
       delBtn.disabled = false;
       const note = eid('fcDeleteNote');
-      if (note) note.textContent = 'All dependencies resolved. Safe to delete.';
+      if (note) note.textContent = 'Everything listed is resolved. 🩺 Ask Salesforce confirms nothing else blocks.';
     } else if (remaining.length === 0 && blockerTotal > 0) {
       delBtn.disabled = true;
       const note = eid('fcDeleteNote');
@@ -6828,7 +6862,7 @@ const FieldCleaner = (() => {
   // Delete one custom field through the Metadata API: a deploy whose
   // destructiveChanges.xml names the field and whose package.xml is empty.
   // Returns { success } or { error } — the deploy's own words on failure.
-  async function _deleteFieldViaMetadata(fullName) {
+  async function _deleteFieldViaMetadata(fullName, checkOnly) {
     const enc = new TextEncoder();
     const pkg = [
       '<?xml version="1.0" encoding="UTF-8"?>',
@@ -6851,10 +6885,41 @@ const FieldCleaner = (() => {
       { name: 'package.xml',            data: enc.encode(pkg) },
       { name: 'destructiveChanges.xml', data: enc.encode(del) },
     ]);
+    // check-only: nothing is written — Salesforce's answer comes back as it is
+    if (checkOnly === true) return bg({ type: 'SF_METADATA_VALIDATE', orgUrl: _orgUrl, sid: _sid, zipBase64, _suppressError: true });
     // verified-by: doDelete (the only caller) re-reads the field after any
     // delete this function reports successful.
     const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64, _suppressError: true });
     return r?.error ? { error: r.error } : { success: true };
+  }
+
+  // "Ask Salesforce" (user 2026-11-10: "If we can ask Salesforce directly why we didn't do it?"). A CHECK-ONLY delete
+  // of the field: Salesforce validates it, deletes nothing, and names in its own words what refuses it. It answers
+  // only "what BLOCKS" — what the delete would break silently (👀) Salesforce does not mention.
+  const _ASK_BTN = '🩺 Ask Salesforce';
+  function _askHtml() {
+    return `<button type="button" class="btn btn-secondary fc-ask-btn" id="fcAskBtn" title="A check-only delete: Salesforce answers whether it would accept the delete of this field right now, and names what blocks it. Nothing is deleted.">${_ASK_BTN}</button>
+        <div class="fc-ask-box" id="fcAskBox" hidden></div>`;
+  }
+  function _wireAsk() { const b = eid('fcAskBtn'); if (b) b.onclick = () => askSalesforce(); }
+  async function askSalesforce() {
+    const btn = eid('fcAskBtn'), box = eid('fcAskBox');
+    if (!btn || !box || !_selObj || !_selField) return;
+    const obj = _selObj.api, field = _selField.api;
+    btn.disabled = true; btn.textContent = '⏳ Asking Salesforce…';
+    let r;
+    try { r = await _deleteFieldViaMetadata(`${obj}.${field}`, true); }
+    catch (e) { r = { error: String((e && e.message) || e) }; }
+    if (!btn.isConnected) return;                                   // the list was redrawn meanwhile
+    btn.disabled = false; btn.textContent = _ASK_BTN;
+    if (!_selField || _selField.api !== field) return;              // another field was picked meanwhile
+    const at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const view = fcAskVerdict(r, (_manualBlockers || []).reduce((n, b) => n + b.count, 0) + new Set([...document.querySelectorAll('#fcResults .fc-fix-btn:not([disabled])')].filter(b => (TYPE_CFG[b.dataset.type] || TYPE_CFG_DEFAULT).sev === 'blocker').map(b => b.dataset.id)).size);
+    box.hidden = false;
+    box.className = `fc-ask-box fc-ask-${view.kind}`;
+    box.innerHTML = `<div class="fc-ask-head">${esc(view.head)} <span class="fc-ask-at">checked ${esc(at)} · nothing was deleted</span></div>`
+      + (view.lines.length ? `<ul class="fc-ask-list">${view.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : '')
+      + (view.foot ? `<div class="fc-ask-foot">${esc(view.foot)}</div>` : '');
   }
 
   async function doDelete(fieldId) {

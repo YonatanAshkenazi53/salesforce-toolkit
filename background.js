@@ -3646,6 +3646,8 @@ async function dispatchMessage(message) {
       return sfQuery(orgUrl, sid, message.query, false);
     case 'SF_METADATA_DEPLOY':
       return sfMetadataDeploy(orgUrl, sid, message.zipBase64, message.testLevel);
+    case 'SF_METADATA_VALIDATE':   // check-only: Salesforce validates the zip and writes nothing
+      return sfMetadataDeploy(orgUrl, sid, message.zipBase64, message.testLevel, true);
     case 'SF_MD_LIST':
       return sfMetadataList(orgUrl, sid, message.mdType, message.folder);
     case 'SF_MD_DESCRIBE':
@@ -4726,7 +4728,11 @@ async function sfMetadataRead(orgUrl, sid, mdType, fullNames) {
     `<met:readMetadata><met:type>${sfMdEscape(mdType)}</met:type>${names.map(n => `<met:fullNames>${sfMdEscape(n)}</met:fullNames>`).join('')}</met:readMetadata>`);
 }
 
-async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel) {
+// checkOnly (2026-11-10): Salesforce validates the zip and writes NOTHING. The answer is then returned, never thrown:
+//   { success, checkOnly: true, failures: [{ problem, type, name }] }
+// It is how Field Cleaner asks Salesforce itself what still blocks a field's delete. Not a write, so an org marked
+// read-only may be asked too.
+async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel, checkOnly) {
   // Decode base64 → raw bytes
   const binaryStr = atob(zipBase64);
   const zipBytes  = new Uint8Array(binaryStr.length);
@@ -4738,7 +4744,7 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel) {
   const optionsJson = JSON.stringify({
     deployOptions: {
       allowMissingFiles: false,
-      checkOnly:         false,
+      checkOnly:         checkOnly === true,
       ignoreWarnings:    true,
       rollbackOnError:   true,
       singlePackage:     true,
@@ -4757,7 +4763,7 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel) {
   for (const chunk of [p1Hdr, p1Body, p2Hdr, zipBytes, close]) { multipart.set(chunk, pos); pos += chunk.length; }
 
   // 1. Kick off the deployment (direct sfFetch — gate reads here explicitly)
-  await assertOrgWritable(orgUrl);
+  if (checkOnly !== true) await assertOrgWritable(orgUrl);
   const deployUrl = `${orgUrl}/services/data/${API_VERSION}/metadata/deployRequest`;
   const deployRes = await sfFetch(deployUrl, {
     method:  'POST',
@@ -4796,6 +4802,12 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel) {
     const deployResult = payload.deployResult || payload;
 
     if (deployResult.done) {
+      if (checkOnly === true) {
+        const fl = [].concat(deployResult.details?.componentFailures || []);
+        return { success: !!deployResult.success, checkOnly: true,
+          failures: fl.map(f => ({ problem: String(f.problem || ''), type: String(f.componentType || ''), name: String(f.fullName || '') })).filter(f => f.problem),
+          ...(deployResult.errorMessage ? { errorMessage: String(deployResult.errorMessage) } : {}) };
+      }
       if (deployResult.success) return { success: true };
       const failures = deployResult.details?.componentFailures || [];
       const msg = failures.map(f => f.problem).filter(Boolean).join('; ')
