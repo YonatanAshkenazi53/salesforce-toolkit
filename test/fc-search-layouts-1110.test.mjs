@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { extractFunctions } from './extract.mjs';
 
-const M = extractFunctions('sftk-mdapi.js', ['sftkSearchLayoutHits', 'sftkSearchLayoutEdit', 'sftkMdFindElement', 'sftkMdUnescape', 'sftkMdEscape', '_sftkMdFieldIs', '_sftkMdWalk']);
+const M = extractFunctions('sftk-mdapi.js', ['sftkSearchLayoutHits', 'sftkSearchLayoutEdit', 'sftkDependentPicklists', 'sftkMdChildren', 'sftkMdChildText', 'sftkMdFindElement', 'sftkMdUnescape', 'sftkMdEscape', '_sftkMdFieldIs', '_sftkMdWalk']);
 const FC = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8');
 // as Salesforce returned Account on npc
 const XML = `<fullName>Account</fullName><searchLayouts>
@@ -84,5 +84,21 @@ describe('the fix and the stale quick action', () => {
   it('a quick action Salesforce still serves from its cache after a delete is not listed', () => {
     expect(FC).toContain("query: `SELECT DeveloperName FROM QuickActionDefinition WHERE SobjectType = '${obj}'`");
     expect(FC).toContain("for (const qa of qaHits) if (!have || have.has(bare(qa.name).toLowerCase())) add('QuickAction', qa.name, qa.label || qa.name);");
+  });
+});
+
+describe('dependent picklists (live 2026-11-10: the delete goes through and the dependency is lost silently)', () => {
+  const OBJ = '<fullName>Account</fullName><fields><fullName>Ctl__c</fullName><type>Picklist</type></fields>'
+    + '<fields><fullName>Dep__c</fullName><type>Picklist</type><valueSet><controllingField>Ctl__c</controllingField><valueSettings><controllingFieldValue>A</controllingFieldValue><valueName>X</valueName></valueSettings></valueSet></fields>'
+    + '<fields><fullName>Other__c</fullName><valueSet><controllingField>Else__c</controllingField></valueSet></fields>';
+  it('lists the picklists the field controls, and only those', () => {
+    expect(M.sftkDependentPicklists(OBJ, 'Ctl__c')).toEqual(['Dep__c']);
+    expect(M.sftkDependentPicklists(OBJ, 'ctl__c')).toEqual(['Dep__c']);
+    expect(M.sftkDependentPicklists(OBJ, 'Dep__c')).toEqual([]);
+    expect(M.sftkDependentPicklists('', 'Ctl__c')).toEqual([]);
+  });
+  it('rides the object read the search layouts already make — a mention, no extra call', () => {
+    expect(FC).toContain("for (const n of sftkDependentPicklists(rec ? rec.innerXml : '', _selField.api)) add('DependentPicklist',");
+    expect(FC).toMatch(/DependentPicklist: \{[^}]*fixable: false, sev: 'silent'/);
   });
 });

@@ -2080,6 +2080,9 @@ const FieldCleaner = (() => {
       const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'CustomObject', fullNames: [obj], _suppressError: true });
       const rec = r && !r.error ? sftkMdExtractRecords(r.text).records.find(x => x.fullName === obj) : null;
       for (const h of sftkSearchLayoutHits(rec ? rec.innerXml : '', obj, _selField.api)) add('SearchLayout', `sl_${obj}_${h.tag}`, h.label);
+      // the same read holds the object's picklists: the ones this field controls (live 2026-11-10: the delete goes
+      // through and they silently lose their dependency)
+      for (const n of sftkDependentPicklists(rec ? rec.innerXml : '', _selField.api)) add('DependentPicklist', `dp_${obj}_${n}`, `${n} — its values depend on this field`);
     } catch (_) {/* non-fatal */}
 
     if (L.validationRulesOff) try {
@@ -2282,6 +2285,8 @@ const FieldCleaner = (() => {
                       note: 'The object’s search layout lists the field as a column. The delete goes through and the column goes with it; ✂ takes it out now.',
                       doneLabel: '✅ Search layout updated',
                       replNote: '{new} takes the field’s place in the layout (when it is already a column there, the old one just goes).' },
+    DependentPicklist: { icon: '🔗', label: 'Dependent Picklists', fixable: false, sev: 'silent',
+                      note: 'This field controls which values the picklist offers. The delete goes through (live-tested): the picklist is left with no controlling field and offers every value, with no warning. Decide what should control it first — Object Manager → Fields & Relationships → Field Dependencies.' },
     WorkflowOutboundMessage: { icon: '📡', label: 'Outbound Messages', fixable: false, sev: 'blocker',
                       note: 'The message sends this field. Take it out of the message’s fields in Setup (Workflow Actions → Outbound Messages) or delete the message.' },
     SharingCriteriaRule: { icon: '🔐', label: 'Sharing Rules (criteria)', fixable: false, sev: 'blocker',

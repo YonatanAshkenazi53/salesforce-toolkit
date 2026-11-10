@@ -795,6 +795,16 @@ function sftkSearchLayoutHits(objectInnerXml, objApi, fieldApi) {
   }
   return hits;
 }
+// The picklists of the object whose values DEPEND on the field (it is their controlling field). Live 2026-11-10 on
+// npc: deleting the controlling field goes through, and the dependent picklist is left with no controlling field and
+// no value settings — it offers every value from then on, and nothing says so.
+function sftkDependentPicklists(objectInnerXml, fieldApi) {
+  const f = String(fieldApi || '').toLowerCase();
+  if (!f) return [];
+  return sftkMdChildren(objectInnerXml, 'fields')
+    .filter(c => String(sftkMdChildText(c.innerXml, 'controllingField') || '').trim().toLowerCase() === f)
+    .map(c => c.fullName);
+}
 // ✂ / ⇄ on one search layout (2026-11-10). The field's entry in <tag> goes (✂) or names newField (⇄; when the new
 // field is already listed there, the old entry just goes — a column appears once). Returns the <searchLayouts>
 // element before and after, and the object FILE to deploy: a standard object takes its search layouts alone, a
@@ -1219,6 +1229,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkFormulaDropField = sftkFormulaDropField;
   globalThis.sftkSearchLayoutHits = sftkSearchLayoutHits;
   globalThis.sftkSearchLayoutEdit = sftkSearchLayoutEdit;
+  globalThis.sftkDependentPicklists = sftkDependentPicklists;
   globalThis.sftkMdEditWays  = sftkMdEditWays;
   globalThis.sftkMdPretty    = sftkMdPretty;
   globalThis.sftkMdLineDiff  = sftkMdLineDiff;
