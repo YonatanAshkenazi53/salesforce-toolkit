@@ -71,3 +71,7 @@ after the Deploy-page changes `value-edit.mjs` NOWRITE=1, `ve-rt.mjs`, `deploy-t
 ## Live pass of 2026-11-10
 
 18 live scripts, npc and npc → npc2, one after another, all exit 0 with no page errors: flow-switches-all, flow-filter, dependencies, fc-demo-scan, fc-usage, orghealth, deploy-scanall, deploy-ticks, deploy-tree, matching-kit, value-edit (NOWRITE=1), ve-owner, ve-rt, dryrun, pause-panel, pii-deploy, pkg-deploy, history-beforeafter. The four that write into npc2 rolled back with no rollback errors. `dependencies.mjs`, `fc-demo-scan.mjs` and `fc-usage.mjs` first failed on selectors that no longer exist (the Dependencies tab is a view of Flows; the scope switch is gone) — the scripts were fixed, the product was not at fault. Not covered by this pass: Field Cleaner's write paths on the demo field, and the popup tools whose scripts still target the trailheads orgs (Lightning Pages, Flow Access, Copy Permissions, Debugger).
+
+### Live fact, 2026-11-10: a report and a report type do NOT block a field delete
+
+Asked by the owner ("חשבתי שדוח וסוג דוח כן מונע מחיקה"). On npc: a throwaway text field on Account, a custom report type with its column, a tabular report on the standard Accounts type with the field as a column AND a filter, and a report on the custom type with the column. The Metadata API delete of the field **succeeded**. Re-read: both reports lost the column, the filter was dropped silently, the report type lost its column. So both stay under "Might break". Everything was removed afterwards.
