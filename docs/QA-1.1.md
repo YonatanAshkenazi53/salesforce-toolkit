@@ -108,3 +108,10 @@ Nothing goes to the store until all four are green. Results are written under ea
 Related-list columns on parent layouts; a text read of Apex / Visualforce (the check-only delete at the end of every
 scan catches a miss); the unverified research leads; splitting custom-metadata text values from relationship values;
 ✎ edit for flows / layouts / Lightning pages; a composite key for a parent outside the deployment; 1.1 video chapters.
+
+### Results, 2026-11-10 (build 3b81d9b and later)
+
+- Gate 1: green, 3,923 tests.
+- Gate 2: `release-smoke` ✓; batch `toolkit` 27 of 27 ✓ (0 exceptions, 0 console errors). `studio`, `studio2`, `toolkit2`: see below when run.
+- Gate 3: ✓ — licence kept, 9 of 9 stored keys, 6 of 6 deployments, dark mode, every view and tab opens.
+- Gate 4: the owner.

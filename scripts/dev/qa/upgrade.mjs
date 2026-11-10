@@ -16,7 +16,7 @@ if (!existsSync(OLD)) { console.error(`no ${OLD}`); process.exit(2); }
 if (!existsSync(join(NEW, 'manifest.json'))) { console.error(`no build at ${NEW} — pack first`); process.exit(2); }
 rmSync(root, { recursive: true, force: true });
 mkdirSync(ext, { recursive: true }); mkdirSync(profile, { recursive: true });
-execFileSync('tar', ['-xf', resolve(OLD), '-C', ext]);
+execFileSync(join(process.env.SystemRoot || 'C:/Windows', 'System32', 'tar.exe'), ['-xf', resolve(OLD), '-C', ext]);   // Windows' own tar reads a zip; Git Bash's does not
 const ver = () => JSON.parse(readFileSync(join(ext, 'manifest.json'), 'utf8')).version;
 
 let failed = false;
