@@ -82,3 +82,14 @@ describe('sftkTplNamesField — a template names the field of THIS object', () =
     expect(FC).toContain('sent by email alert');
   });
 });
+
+describe('email rows say what they are (user 2026-11-10)', () => {
+  it('a template Salesforce listed itself gets its kind and its alerts on the row too', () => {
+    expect(FC).toContain("const indexed = (existingDeps || []).filter(d => d.MetadataComponentType === 'EmailTemplate');");
+    expect(FC).toContain("if (row) row.MetadataComponentName = label; else add('EmailTemplate', t.Id, label);");
+  });
+  it('an alert that sends such a template is a row of its own — a mention, not a blocker', () => {
+    expect(FC).toContain("add('EmailAlertViaTemplate', r.Id,");
+    expect(FC).toMatch(/EmailAlertViaTemplate: \{[^}]*fixable: false, sev: 'silent'/);
+  });
+});

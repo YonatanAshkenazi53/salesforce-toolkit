@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Workflow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <alerts>
+        <fullName>SFTK_Pkg_Alert</fullName>
+        <description>Admin Toolkit fixture: an email alert on a packaged object that sends SFTK Pkg Email.</description>
+        <protected>false</protected>
+        <recipients>
+            <type>owner</type>
+        </recipients>
+        <senderType>CurrentUser</senderType>
+        <template>unfiled$public/SFTK_Pkg_Email</template>
+    </alerts>
     <fieldUpdates>
         <fullName>SFTK_Pkg_FU</fullName>
         <description>Admin Toolkit fixture: a field update on a packaged object.</description>

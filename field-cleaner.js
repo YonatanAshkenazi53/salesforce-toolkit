@@ -2030,18 +2030,35 @@ const FieldCleaner = (() => {
     if (L.emailTemplates) try {
       msg('Scanning email templates…');
       const q = await sfQ('SELECT Id, Name, DeveloperName, Subject, Body, HtmlValue, Markup, RelatedEntityType, UiType, TemplateType FROM EmailTemplate', false);
-      const found = (q && !q.error ? (q.records || []) : []).filter(t => sftkTplNamesField(t, obj, _selField.api));
+      const all = (q && !q.error ? (q.records || []) : []);
+      // the templates Salesforce's index already listed: they get their kind and their alerts on the row too (user
+      // 2026-11-10: "מה עם לייטנינג וקלאסיק אימייל טמפלייטים? אני רואה שכתוב רק אימייל טמפלייט")
+      const id15 = x => String(x || '').substring(0, 15);
+      const indexed = (existingDeps || []).filter(d => d.MetadataComponentType === 'EmailTemplate');
+      const indexedIds = new Set(indexed.map(d => id15(d.MetadataComponentId)));
+      const found = all.filter(t => indexedIds.has(id15(t.Id)) || sftkTplNamesField(t, obj, _selField.api));
       // which email alerts send them — one Tooling query, only when a template was found
       const sentBy = {};
+      let alertRows = [];
       if (found.length) {
         msg('Scanning email templates… their email alerts');
-        const al = await sfQ(`SELECT DeveloperName, TemplateId, EntityDefinition.QualifiedApiName FROM WorkflowAlert WHERE TemplateId IN (${found.map(t => `'${t.Id}'`).join(',')})`, true);
-        for (const r of ((al && !al.error && al.records) || [])) (sentBy[String(r.TemplateId).substring(0, 15)] ||= []).push(`${(r.EntityDefinition && r.EntityDefinition.QualifiedApiName) || ''}${r.EntityDefinition ? '.' : ''}${r.DeveloperName}`);
+        const al = await sfQ(`SELECT Id, DeveloperName, TemplateId, EntityDefinition.QualifiedApiName FROM WorkflowAlert WHERE TemplateId IN (${found.map(t => `'${t.Id}'`).join(',')})`, true);
+        alertRows = (al && !al.error && al.records) || [];
+        for (const r of alertRows) (sentBy[String(r.TemplateId).substring(0, 15)] ||= []).push(`${(r.EntityDefinition && r.EntityDefinition.QualifiedApiName) || ''}${r.EntityDefinition ? '.' : ''}${r.DeveloperName}`);
       }
       for (const t of found) {
         const kind = sftkTplKind(t).replace(/ email template$/, '');
-        const by = sentBy[String(t.Id).substring(0, 15)] || [];
-        add('EmailTemplate', t.Id, `${t.Name || t.DeveloperName} (${kind}${by.length ? ` · sent by email alert ${by.join(', ')}` : ''})`);
+        const by = sentBy[id15(t.Id)] || [];
+        const label = `${t.Name || t.DeveloperName} (${kind}${by.length ? ` · sent by email alert ${by.join(', ')}` : ''})`;
+        const row = indexed.find(d => id15(d.MetadataComponentId) === id15(t.Id));
+        if (row) row.MetadataComponentName = label; else add('EmailTemplate', t.Id, label);
+      }
+      // …and each of those alerts is a row of its own (user 2026-11-10: "וגם הemail alert"): the alert does not name
+      // the field, it SENDS a template that does — so it is a mention, not a blocker, and its fix is the template's.
+      const tplName = Object.fromEntries(found.map(t => [id15(t.Id), t.Name || t.DeveloperName]));
+      for (const r of alertRows) {
+        const owner = (r.EntityDefinition && r.EntityDefinition.QualifiedApiName) || '';
+        add('EmailAlertViaTemplate', r.Id, `${owner}${owner ? '.' : ''}${r.DeveloperName} → sends “${tplName[id15(r.TemplateId)] || 'the template'}”`);
       }
     } catch (_) {/* non-fatal */}
 
@@ -2223,6 +2240,8 @@ const FieldCleaner = (() => {
                       note: 'Edit the rule’s criteria or formula in Setup, or delete the rule — an inactive rule blocks the delete too (live-tested). Found by reading every workflow rule on this object.' },
     WorkflowAlert:  { icon: '📨', label: 'Email Alerts',     fixable: false, sev: 'blocker',
                       note: 'The alert sends to this field. Change its recipient in Setup (Workflow Actions → Email Alerts) or delete the alert.' },
+    EmailAlertViaTemplate: { icon: '📨', label: 'Email Alerts (send a template that uses the field)', fixable: false, sev: 'silent',
+                      note: 'The alert itself does not name the field — it sends an email template that does. Deleting the field goes through; the alert keeps sending, with that merge field empty. Fix the template (under Email Templates) and the alert needs nothing.' },
     WorkflowOutboundMessage: { icon: '📡', label: 'Outbound Messages', fixable: false, sev: 'blocker',
                       note: 'The message sends this field. Take it out of the message’s fields in Setup (Workflow Actions → Outbound Messages) or delete the message.' },
     SharingCriteriaRule: { icon: '🔐', label: 'Sharing Rules (criteria)', fixable: false, sev: 'blocker',

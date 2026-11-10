@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EmailTemplate xmlns="http://soap.sforce.com/2006/04/metadata">
+    <available>true</available>
+    <description>Admin Toolkit fixture: a classic text template that merges a field of a PACKAGED object.</description>
+    <encodingKey>UTF-8</encodingKey>
+    <name>SFTK Pkg Email</name>
+    <style>none</style>
+    <subject>SFTK Pkg {!dlrs__LookupChild__c.Name}</subject>
+    <type>text</type>
+    <uiType>Aloha</uiType>
+</EmailTemplate>
