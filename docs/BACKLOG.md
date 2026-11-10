@@ -40,6 +40,9 @@ Untouched, still waiting for the owner: fixture clean-up, master fast-forward, s
 
 | Ask | Date | Closed | Verified by |
 |---|---|---|---|
+| "אני שוקל לשחרר את כל מה שעשינו מינוס pii" (2026-11-09) → "בוא נשאיר את הpii, נראה טוב יחסית" (2026-11-10) — PII stays in 1.1; no cut was made | 2026-11-09 | 2026-11-10 | the owner's decision; CUT_IDS unchanged |
+| "זה נמצא במקום לא טוב, לדעתי צריך לשים את זה למעלה. באותו card מתחת between which orgs" — the Deploy page's whole-deployment actions (🎭 Suggest PII, scan all, ✓ Tick every insert) moved from under the totals row into the "Between which orgs" card | 2026-11-10 | 2026-11-10 | harness npc→npc2, light + dark: the lines are inside .ds-dep-orgs, none under the table; verify 3,846 |
+| "מה ההבדל בין scan all לrescan all. זה אותו דבר" — ONE button on the Deploy page: it reads every object; it says 🔎 Scan all N (primary, naming the unread objects) while some are unread, 🔄 Rescan all N after | 2026-11-10 | 2026-11-10 | harness npc→npc2 (Accounts tree): on open "Scan all 12" + the 11 unread names, after the read "Rescan all 12", a click re-reads; no #dsDepScanAll; pin in test/deploy-view-0919 |
 | "משהו בקשר לעמוד של הswitchers. אין צורך להציג שם גרסאת api" — the API pill is gone from every ⏻ Switches row and from the intro sentence; ⚙ API versions keeps it | 2026-11-10 | 2026-11-10 | harness npc: 0 `.dep-pill-api` on Switches (light + dark shots), API versions unchanged; npm run verify |
 | "אין חיפוש ב-switchers/api versions" (2026-11-09, at work) | 2026-11-09 | 2026-11-10 | no bug: the unpacked load had not been refreshed; the owner: "החיפוש קיים" |
 | A colleague's flows that ⏻ Switches did not list (kinds: scheduled, autolaunched, screen, triggered on a packaged object) | 2026-11-08 | 2026-11-10 | the owner's own eyes at work, on an unpacked 1.1.0 load (chrome://extensions screenshot): the colleague's flows show in ⏻ Switches AND in Versions ("בשניהם") |

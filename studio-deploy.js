@@ -409,7 +409,7 @@ function sftkDeployOrgPicker(p, open, label, key) {
   return { src, tgt, sources: open, targets, notes };
 }
 
-function _depOrgPickerHtml(p) {
+function _depOrgPickerHtml(p, actionsHtml) {
   const open = (typeof sftkOpenOrgs === 'function') ? sftkOpenOrgs() : [];
   // typeof guards: the runtime test renders this page in a bare VM context
   const m = sftkDeployOrgPicker(p, open, (typeof orgLabel === 'function') ? orgLabel : (u => String(u || '')), (typeof _orgKey === 'function') ? _orgKey : (u => String(u || '')));
@@ -427,6 +427,7 @@ function _depOrgPickerHtml(p) {
       <button class="ds-btn ds-btn-xs" id="dsDepSwap" title="Swap source and target" ${m.src && m.tgt ? '' : 'disabled'}>⇄</button>
     </div>
     ${m.notes.map(n => `<div class="ds-dep-orgs-note">${esc(n)}</div>`).join('')}
+    ${actionsHtml || ''}
   </div>`;
 }
 
@@ -569,11 +570,14 @@ async function renderDeploy() {
           <td>${r.depth ? `<button class="ds-btn ds-btn-xs" data-dep-scan="${esc(r.pathKey)}" title="${r.scanned ? 'Read this object again, under the records of the scan above' : 'This object has not been read against this target yet — its records are unknown, not zero'}">${r.scanned ? '🔎 Rescan' : '🔎 Scan'}</button>` : ''}</td>
         </tr>`).join('')}
         ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same', 'amb'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
-      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepPiiAll" title="Read the records this deployment inserts and suggest a PII treatment per field — each with a real example and the record it comes from; you tick what applies">🎭 Suggest PII treatment for all ${every.found.toLocaleString()} to insert</button> <span class="ds-dep-muted">${(() => { const n = Object.values(p.piiPolicy || {}).filter(Boolean).length; return n ? `${n} field${n === 1 ? ' is' : 's are'} masked now — ▸ record shows each value as it is written` : 'no field is masked yet'; })()}</span></div>` : ''}
-      <div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepRescanAll" title="Read every object of this deployment again in both orgs — the root and every child, read before or not, parents before their children. Nothing is changed.">🔄 Rescan all ${plan.length}</button> <span class="ds-dep-muted">every object, root and children${unscanned.length ? ` — ${unscanned.length} not read yet` : ''}</span></div>
-      ${unscanned.length ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepScanAll" title="Read every object below against the target, one after the other, parents before their children">🔎 Scan all ${unscanned.length}</button> <b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan ${unscanned.length === 1 ? 'it' : 'them'} before calling this pair in sync.</div>` : ''}
-      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
     </details>`;
+  // The page's whole-deployment actions sit in the "Between which orgs" card, above the table (user 2026-11-10:
+  // "זה נמצא במקום לא טוב … למעלה. באותו card מתחת between which orgs") — they were under the totals row.
+  const actionsHtml = `<div class="ds-dep-orgs-acts">
+      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepPiiAll" title="Read the records this deployment inserts and suggest a PII treatment per field — each with a real example and the record it comes from; you tick what applies">🎭 Suggest PII treatment for all ${every.found.toLocaleString()} to insert</button> <span class="ds-dep-muted">${(() => { const n = Object.values(p.piiPolicy || {}).filter(Boolean).length; return n ? `${n} field${n === 1 ? ' is' : 's are'} masked now — ▸ record shows each value as it is written` : 'no field is masked yet'; })()}</span></div>` : ''}
+      <div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs${unscanned.length ? ' ds-btn-primary' : ''}" id="dsDepRescanAll" title="Read every object of this deployment in both orgs — the root and every child, read before or not, parents before their children. Nothing is changed.">${unscanned.length ? '🔎 Scan' : '🔄 Rescan'} all ${plan.length}</button> ${unscanned.length ? `<b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan before calling this pair in sync.` : '<span class="ds-dep-muted">every object, root and children, read again in both orgs</span>'}</div>
+      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
+    </div>`;
 
   // ── notes: the same facts the classic header shows ──
   const notes = [];
@@ -632,7 +636,7 @@ async function renderDeploy() {
     </details>
     <div id="dsDepFlowLeft"></div>
     <div id="dsDepRuleLeft"></div>
-    ${(() => { const s = planHtml.indexOf('</summary>') + 10, i = planHtml.lastIndexOf('</details>'); return planHtml.slice(0, s) + _depOrgPickerHtml(p) + planHtml.slice(s, i) + recordsHtml + planHtml.slice(i); })()}
+    ${(() => { const s = planHtml.indexOf('</summary>') + 10, i = planHtml.lastIndexOf('</details>'); return planHtml.slice(0, s) + _depOrgPickerHtml(p, actionsHtml) + planHtml.slice(s, i) + recordsHtml + planHtml.slice(i); })()}
     <div class="ds-dep-actionbar">
       <div class="ds-dep-ab-row ds-dep-ab-top">
         <div class="ds-dep-summary" id="dsDepSummary"></div>
@@ -692,7 +696,6 @@ async function renderDeploy() {
     el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
   });
   document.querySelectorAll('.ds-dep-objbtn').forEach(b => b.addEventListener('click', () => { _depObjPath = b.dataset.depObj; _depTab = 'ins'; _depFilter = ''; renderDeploy(); }));
-  eid('dsDepScanAll')?.addEventListener('click', () => _depScanAll(p, unscanned.map(r => r.pathKey)));
   eid('dsDepRescanAll')?.addEventListener('click', () => _depRescan(p));
   eid('dsDepPiiAll')?.addEventListener('click', () => {
     const byObj = {};

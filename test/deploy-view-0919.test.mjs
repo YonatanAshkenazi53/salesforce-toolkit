@@ -143,8 +143,10 @@ describe('Deploy page: scan all, refresh re-reads children, the run log stays', 
     expect(order(null)).toEqual([]);
   });
   it('one button reads every unread child; Refresh (and 🔄 Rescan all) re-read EVERY child — read before or not (2026-11-08)', () => {
-    expect(DV).toContain('id="dsDepScanAll"');
-    expect(DV).toContain("eid('dsDepScanAll')?.addEventListener('click', () => _depScanAll(p, unscanned.map(r => r.pathKey)));");
+    // ONE button since 2026-11-10 ("מה ההבדל בין scan all לrescan all. זה אותו דבר"): it reads every object, and says Scan while some are unread
+    expect(DV).not.toContain('id="dsDepScanAll"');
+    expect(DV).toContain("${unscanned.length ? '🔎 Scan' : '🔄 Rescan'} all ${plan.length}</button>");
+    expect(DV).toContain('const actionsHtml = `<div class="ds-dep-orgs-acts">');   // the actions sit in the "Between which orgs" card
     const rescan = DV.slice(DV.indexOf('async function _depRescan(p, opts) {'), DV.indexOf('function sftkDeployChildOrder'));
     expect(rescan.indexOf('const kids = sftkDeployRescanKeys(p.tree, o.from);')).toBeLessThan(rescan.indexOf('await window.refreshProfileState?.(p.id);'));
     expect(rescan).toContain('const res = await scanReconcileChild(fp, kids[i]);');
