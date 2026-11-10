@@ -60,3 +60,25 @@ describe('wiring (pins)', () => {
     expect(FC).toContain('-metadata-text-scan-${r.hits.length}.csv');
   });
 });
+
+// 2026-11-10: the everyday scan reads every email template's text ("מה שלא ראיתי בסריקה זה email alerts, lightning
+// email templates, classic email templates" — "אנחנו צריכים לתמוך בשלושתם")
+describe('sftkTplNamesField — a template names the field of THIS object', () => {
+  const T = extractFunctions('sftk-emailtpl.js', ['sftkTplTextFields', '_sftkTplRx', 'sftkTplHits', 'sftkTplNamesField']);
+  it('classic, Lightning, Visualforce and recipient merge fields; a same-named field of another object does not count', () => {
+    expect(T.sftkTplNamesField({ Body: 'Dear {!Account.X__c}' }, 'Account', 'X__c')).toBe(true);
+    expect(T.sftkTplNamesField({ HtmlValue: '<p>{{{Account.X__c}}}</p>' }, 'Account', 'X__c')).toBe(true);
+    expect(T.sftkTplNamesField({ HtmlValue: '{{{X__c}}}', RelatedEntityType: 'Account' }, 'Account', 'X__c')).toBe(true);
+    expect(T.sftkTplNamesField({ Markup: '<messaging:emailTemplate relatedToType="Account">{!relatedTo.X__c}' }, 'Account', 'X__c')).toBe(true);
+    expect(T.sftkTplNamesField({ HtmlValue: '{{{Recipient.X__c}}}' }, 'Contact', 'X__c')).toBe(true);
+    expect(T.sftkTplNamesField({ Body: '{!Contact.X__c}' }, 'Account', 'X__c')).toBe(false);
+    expect(T.sftkTplNamesField({ Body: '{!Account.X__cc}' }, 'Account', 'X__c')).toBe(false);
+    expect(T.sftkTplNamesField({ Subject: 'nothing here' }, 'Account', 'X__c')).toBe(false);
+  });
+  it('the scan has the leg, names the kind and the alerts that send the template', () => {
+    expect(FC).toContain("emailTemplates: mentions,");
+    expect(FC).toContain("'SELECT Id, Name, DeveloperName, Subject, Body, HtmlValue, Markup, RelatedEntityType, UiType, TemplateType FROM EmailTemplate'");
+    expect(FC).toContain('FROM WorkflowAlert WHERE TemplateId IN (');
+    expect(FC).toContain('sent by email alert');
+  });
+});

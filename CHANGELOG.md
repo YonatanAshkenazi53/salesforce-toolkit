@@ -15,6 +15,7 @@ extensions containing root files that start with `_`).
 
 ## 1.1.0 — 2026-11-04
 
+- **Field Cleaner reads every email template** (2026-11-10). Salesforce's dependency index lists few templates, so the scan now reads the text of every one — classic text and HTML, Lightning, Visualforce — and lists those that name the field of this object, each with the email alerts that send it. One more API call per scan (paged on a large org).
 - **⏸ The pause panel lists scheduled flows too** (2026-11-10). A schedule-triggered flow that starts on an object the deployment writes is listed under it, marked ⏰ and unticked — it runs on its clock, not on a write; tick it to keep it from firing mid-run. Works on packaged objects like every other kind.
 - **🎭 The PII suggestion window reads at a glance** (2026-11-10). One line on top and the long explanation folded away; a bar that counts the ticked fields with ✓ Suggested / All / None; a card per object; each field is one row — tick, the field and why it is offered, what it is written as — with its examples under it. The Apply button says how many fields it applies to.
 - **The Deploy page's actions sit with the orgs** (2026-11-10). 🎭 Suggest PII, the scan of every object and ✓ Tick every insert moved from under the table into the "Between which orgs" card. Scan all and Rescan all are one button: it reads every object, and says which ones were never read.

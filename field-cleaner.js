@@ -300,6 +300,7 @@ function fcScopeLegs(scope, objApi) {
     leadMapping: blockers && ['lead', 'account', 'contact', 'opportunity'].includes(o),
     objectRules: blockers && (o === 'lead' || o === 'case'),
     reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions, validationRulesOff: mentions,
+    emailTemplates: mentions,   // every template's text is read — Salesforce's index lists few of them (2026-11-10)
   };
 }
 
@@ -332,7 +333,7 @@ function fcEstimateScanCalls(counts, scope, objApi) {
   ].filter(Boolean);
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
   let now = 2 + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
-    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff].filter(Boolean).length
+    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates].filter(Boolean).length
     + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
@@ -1425,7 +1426,7 @@ const FieldCleaner = (() => {
       ['compactLayouts', 'compact layouts', 2], ['quickActions', 'quick actions', 3], ['matchingRules', 'matching rules', 1], ['workflowFieldUpdates', 'workflow field updates', 1],
       ['workflow', 'workflow rules', 2], ['approvals', 'approval processes', 2], ['sharingRules', 'sharing rules', 1], ['duplicateRules', 'duplicate rules', 1],
       ['lwc', 'Lightning web components', 2], ['customMetadata', 'custom metadata records', 2], ['leadMapping', 'lead field mappings', 1], ['objectRules', 'assignment, auto-response and escalation rules', 1],
-      ['paths', 'Paths', 1], ['validationRulesOff', 'inactive validation rules', 1],
+      ['paths', 'Paths', 1], ['validationRulesOff', 'inactive validation rules', 1], ['emailTemplates', 'email templates', 2],
     ];
     return all.filter(([k]) => k === 'index' || L[k]).map(([key, label, weight]) => ({ key, label, weight }));
   }
@@ -2012,6 +2013,29 @@ const FieldCleaner = (() => {
     // 15. Inactive validation rules (a mention: live-tested, an inactive rule
     // lets the delete through; the index returns only active ones — the demo
     // scan of 2026-11-07 listed none). One Tooling list, one read per rule.
+    // Email templates — classic text and HTML, Lightning, Visualforce. Salesforce's dependency index lists few of
+    // them, so the text of every template is read (one query, paged) and searched for the field tied to this object.
+    // The email ALERTS that send a found template are named on its row: the alert itself holds no field. (user
+    // 2026-11-10: "מה שלא ראיתי בסריקה זה email alerts, lightning email templates, classic email templates" —
+    // "אנחנו צריכים לתמוך בשלושתם")
+    if (L.emailTemplates) try {
+      msg('Scanning email templates…');
+      const q = await sfQ('SELECT Id, Name, DeveloperName, Subject, Body, HtmlValue, Markup, RelatedEntityType, UiType, TemplateType FROM EmailTemplate', false);
+      const found = (q && !q.error ? (q.records || []) : []).filter(t => sftkTplNamesField(t, obj, _selField.api));
+      // which email alerts send them — one Tooling query, only when a template was found
+      const sentBy = {};
+      if (found.length) {
+        msg('Scanning email templates… their email alerts');
+        const al = await sfQ(`SELECT DeveloperName, TemplateId, EntityDefinition.QualifiedApiName FROM WorkflowAlert WHERE TemplateId IN (${found.map(t => `'${t.Id}'`).join(',')})`, true);
+        for (const r of ((al && !al.error && al.records) || [])) (sentBy[String(r.TemplateId).substring(0, 15)] ||= []).push(`${(r.EntityDefinition && r.EntityDefinition.QualifiedApiName) || ''}${r.EntityDefinition ? '.' : ''}${r.DeveloperName}`);
+      }
+      for (const t of found) {
+        const kind = sftkTplKind(t).replace(/ email template$/, '');
+        const by = sentBy[String(t.Id).substring(0, 15)] || [];
+        add('EmailTemplate', t.Id, `${t.Name || t.DeveloperName} (${kind}${by.length ? ` · sent by email alert ${by.join(', ')}` : ''})`);
+      }
+    } catch (_) {/* non-fatal */}
+
     if (L.validationRulesOff) try {
       msg('Scanning inactive validation rules…');
       const rows = (await sfQ(`SELECT Id, ValidationName FROM ValidationRule WHERE EntityDefinition.QualifiedApiName = '${obj}' AND Active = false`, true))?.records || [];

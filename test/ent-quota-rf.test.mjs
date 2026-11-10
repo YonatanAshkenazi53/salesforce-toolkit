@@ -155,9 +155,9 @@ describe('fcEstimateScanCalls (field-cleaner.js)', () => {
   // query, report-type list, workflow rule + alert + outbound-message lists
   // (3), approval-process list, sharing-rules read, duplicate-rule query,
   // LWC source query, custom-metadata list, Path query. Eight legs fan out.
-  it('pre-scan (nothing discovered yet): the 19-call floor plus eight unknown legs', () => {
+  it('pre-scan (nothing discovered yet): the 20-call floor plus eight unknown legs', () => {
     const e = fcEstimateScanCalls(null);
-    expect(e.now).toBe(19);
+    expect(e.now).toBe(20);   // +1 on 2026-11-10: the email-template read
     expect(e.known).toBe(false);
     expect(e.moreIf).toHaveLength(8);
     expect(e.moreIf).toContain('Lightning page in the org');
@@ -168,14 +168,14 @@ describe('fcEstimateScanCalls (field-cleaner.js)', () => {
 
   it('every discovered leg moves from "more if" into the floor at 1 call per item', () => {
     const e = fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0 });
-    expect(e.now).toBe(19 + 40 + 6 + 3 + 2);
+    expect(e.now).toBe(20 + 40 + 6 + 3 + 2);
     expect(e.known).toBe(true);
     expect(e.moreIf).toEqual([]);
   });
 
   it('a partially known scan counts what it knows and names what it does not', () => {
     const e = fcEstimateScanCalls({ flexiPages: 40 });
-    expect(e.now).toBe(59);
+    expect(e.now).toBe(60);
     expect(e.known).toBe(false);
     expect(e.moreIf).toHaveLength(7);
     expect(e.moreIf).not.toContain('Lightning page in the org');
@@ -183,7 +183,7 @@ describe('fcEstimateScanCalls (field-cleaner.js)', () => {
 
   it('junk counts are unknown, not zero — absence of an answer is not an answer', () => {
     const e = fcEstimateScanCalls({ flexiPages: 'many', listViews: -2, quickActions: NaN, reportTypes: 'some', workflowRules: 'few', approvals: -1, duplicateRules: {}, customMetadata: 'none' });
-    expect(e.now).toBe(19);
+    expect(e.now).toBe(20);   // +1 on 2026-11-10: the email-template read
     expect(e.known).toBe(false);
     expect(e.moreIf).toHaveLength(8);
   });
@@ -197,7 +197,7 @@ describe('fcScanBudgetLine (field-cleaner.js)', () => {
 
   it('quotes "≈N now, plus 1 for each …" — never a fake total — before discovery', () => {
     const line = fcScanBudgetLine(preScan, null);
-    expect(line.text).toMatch(/^≈19 API calls now, plus 1 for each /);
+    expect(line.text).toMatch(/^≈20 API calls now, plus 1 for each /);
     expect(line.text).toContain('Lightning page in the org');
     expect(line.text).toContain('list view on this object');
     expect(line.text).toContain('create/update quick action on this object');
@@ -206,7 +206,7 @@ describe('fcScanBudgetLine (field-cleaner.js)', () => {
 
   it('a fully known cost drops the conditional clause', () => {
     const line = fcScanBudgetLine(fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0 }), null);
-    expect(line.text).toBe('≈70 API calls');
+    expect(line.text).toBe('≈71 API calls');
   });
 
   it('no budget reader → just the estimate, no meter and no "unavailable" noise', () => {
@@ -222,7 +222,7 @@ describe('fcScanBudgetLine (field-cleaner.js)', () => {
 
   it('reader answered → the meter rides beside the estimate, labeled', () => {
     const line = fcScanBudgetLine(preScan, { label: 'this org', budget: { max: 100, remaining: 90 } });
-    expect(line.text).toContain('≈19 API calls now');
+    expect(line.text).toContain('≈20 API calls now');
     expect(line.text).toContain('this org has 90 of 100 daily API calls remaining');
     expect(line.warn).toBe(false);
   });
@@ -236,7 +236,7 @@ describe('fcScanBudgetLine (field-cleaner.js)', () => {
   });
 
   it('floor equal to remaining does not warn', () => {
-    const line = fcScanBudgetLine(preScan, { label: 'this org', budget: { max: 100, remaining: 19 } });
+    const line = fcScanBudgetLine(preScan, { label: 'this org', budget: { max: 100, remaining: 20 } });
     expect(line.warn).toBe(false);
   });
 });

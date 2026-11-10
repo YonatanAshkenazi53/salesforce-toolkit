@@ -35,6 +35,24 @@ function sftkTplHits(rec, fieldApi) {
   return out;
 }
 
+// Does this template name THIS object's field? (the everyday scan's test, 2026-11-10: "מה שלא ראיתי בסריקה זה email
+// alerts, lightning email templates, classic email templates"). The field's API name must be in the text as a whole
+// word AND tied to the object: written "Object.Field" ({!Account.X__c}, {{{Account.X__c}}}), or the template is
+// about the object (Lightning: RelatedEntityType; Visualforce: relatedToType="Object"), or — for the people objects —
+// written "Recipient.Field". A same-named field of another object does not count.
+function sftkTplNamesField(rec, objApi, fieldApi) {
+  if (!sftkTplHits(rec, fieldApi).length) return false;
+  const o = String(objApi || '').trim(), f = String(fieldApi || '').trim();
+  if (!o || !f) return false;
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const text = sftkTplTextFields().map(k => (rec && typeof rec[k] === 'string') ? rec[k] : '').join('\n');
+  if (new RegExp(`(?<![A-Za-z0-9_])${esc(o)}\\.${esc(f)}(?![A-Za-z0-9_])`, 'i').test(text)) return true;
+  if (String((rec && rec.RelatedEntityType) || '').toLowerCase() === o.toLowerCase()) return true;
+  if (new RegExp(`relatedToType\\s*=\\s*["']${esc(o)}["']`, 'i').test(text)) return true;
+  if (['contact', 'lead', 'user'].includes(o.toLowerCase()) && new RegExp(`(?<![A-Za-z0-9_])(recipient|receivingUser|sendingUser|Sender)\\.${esc(f)}(?![A-Za-z0-9_])`, 'i').test(text)) return true;
+  return false;
+}
+
 // ⇄ the field's API name renamed in every text field, whole word, the spelling of the new name as given.
 //   → { rec (the changed fields only), n (places), fields: [k…] }
 function sftkTplReplace(rec, fieldApi, newField) {
