@@ -135,7 +135,7 @@ function sftkFlowRefWhere(root, path) {
 //   emptied   elements the fix leaves with nothing in a part that needs
 //             something — Salesforce is likely to refuse the new version
 function sftkFlowRefPreview(before, after, isRef) {
-  const removedRaw = [], emptiedRaw = [];
+  const removedRaw = [], emptiedRaw = [], rewrittenRaw = [];
   const J = x => JSON.stringify(x);
   (function cmp(b, a, path) {
     if (Array.isArray(b)) {
@@ -156,11 +156,15 @@ function sftkFlowRefPreview(before, after, isRef) {
         if (a == null || !(k in a)) { if (b[k] != null) removedRaw.push({ path: [...path, k], item: b[k] }); }
         else cmp(b[k], a[k], [...path, k]);
       }
+      return;
     }
+    // a text the fix REWROTE (a Boolean formula that lost the field's conditions): shown as old → new
+    if (typeof b === 'string' && typeof a === 'string' && b !== a) rewrittenRaw.push({ path, before: b, after: a });
   })(before || {}, after || {}, []);
   const what = it => {
     if (it == null) return '';
     if (typeof it !== 'object') return String(it);
+    if (it.leftValueReference) { const rv = it.rightValue || {}; const r = rv.elementReference != null ? rv.elementReference : rv.stringValue != null ? `“${rv.stringValue}”` : rv.booleanValue != null ? String(rv.booleanValue) : rv.numberValue != null ? String(rv.numberValue) : ''; return `${it.leftValueReference} ${it.operator || ''} ${r}`.trim(); }
     if (it.assignToReference) return `${it.assignToReference} ${it.operator || '='} ${it.value ? (it.value.elementReference || it.value.stringValue || '') : ''}`.trim();
     if (it.field) return `${it.field}${it.value ? ` = ${it.value.elementReference || it.value.stringValue || ''}` : ''}`;
     if (it.objectFieldReference) return it.objectFieldReference;
@@ -169,7 +173,8 @@ function sftkFlowRefPreview(before, after, isRef) {
   };
   const NEEDS_SOMETHING = new Set(['assignmentItems', 'inputAssignments', 'conditions']);
   return {
-    removed: removedRaw.map(r => ({ ...sftkFlowRefWhere(before, r.path), what: what(r.item) })),
+    removed: [...removedRaw.map(r => ({ ...sftkFlowRefWhere(before, r.path), what: what(r.item) })),
+      ...rewrittenRaw.map(r => ({ ...sftkFlowRefWhere(before, r.path), what: `${r.before}  →  ${r.after}` }))],
     remaining: sftkFlowRefScan(after, isRef).map(h => ({ ...sftkFlowRefWhere(after, h.path), value: h.value })),
     emptied: emptiedRaw.map(pth => sftkFlowRefWhere(before, [...pth, 0])).filter(e => NEEDS_SOMETHING.has(e.part)),
   };
@@ -328,7 +333,7 @@ function sftkFlowDoneLines(r, plan, opts) {
   if (p.cleanInactive) out.push({ icon: '·', text: `${p.cleanInactive} other version${p.cleanInactive === 1 ? '' : 's'} never mentioned the field and ${p.cleanInactive === 1 ? 'was' : 'were'} left alone.` });
   if (res.stillMentions) out.push({ icon: '⚠', warn: true, text: res.swapped
     ? `The new version still mentions ${o.field} in ${res.undecided || 'some'} place(s) whose object could not be worked out — if they are this field, change them in Flow Builder.`
-    : 'The new version still mentions the field in text the automatic fix does not touch (a formula or decision) — finish it in Flow Builder.' });
+    : 'The new version still mentions the field in a place the automatic fix does not touch (a decision outcome that rests on the field alone or has a numbered logic, or a formula that is not a plain yes/no test) — finish it in Flow Builder.' });
   return out;
 }
 

@@ -4190,7 +4190,7 @@ const FieldCleaner = (() => {
       const left = pv ? pv.remaining.length : 0;
       appendInlineError(componentId, swap
         ? `Nothing in ${vN} can be pointed at ${swapTo} automatically${left ? ` — the field is mentioned in ${left} place(s) where its object could not be worked out` : ''}. Nothing was changed. Change it in Flow Builder, or use one of the other buttons on this flow.`
-        : `Nothing can be taken out of ${vN} automatically${left ? ` — the field is used in ${left} place(s) the fix never rewrites (a decision or a formula)` : ''}. Nothing was changed. Change it in Flow Builder and press ✂ again, or press 🗑 Delete versions · flow off.`,
+        : `Nothing can be taken out of ${vN} automatically${left ? ` — the field is used in ${left} place(s) the fix never rewrites (a decision outcome that rests on the field alone or has a numbered logic, or a formula that is not a plain yes/no test)` : ''}. Nothing was changed. Change it in Flow Builder and press ✂ again, or press 🗑 Delete versions · flow off.`,
         flowPlan.builderUrl, '↗ Open in Flow Builder');
       return;
     }
@@ -4292,7 +4292,7 @@ const FieldCleaner = (() => {
         if (r.failed || r.skipped) bits.push(`⚠ ${r.failed + r.skipped} version(s) couldn't be deleted — still blocking the field delete${r.errors.length ? ` (${[...new Set(r.errors)].join('; ')})` : ''}`);
         if (r.stillMentions) bits.push(r.swapped
           ? `⚠ the new version still mentions ${_selField.api} in ${r.undecided || 'some'} place(s) whose object could not be worked out — if they are this field, change them in Flow Builder`
-          : `⚠ the new version still mentions the field in text the auto-fix does not touch (a formula or decision) — finish it in Flow Builder`);
+          : `⚠ the new version still mentions the field in a place the auto-fix does not touch (a decision outcome that rests on the field alone or has a numbered logic, or a formula that is not a plain yes/no test) — finish it in Flow Builder`);
         // Not finished is not done (live 2026-09-22: three versions Salesforce
         // refused were marked ✅ and the delete zone read "All dependencies
         // resolved"). A refused version keeps its ✂ button and says why.
@@ -4708,7 +4708,7 @@ const FieldCleaner = (() => {
       ${pv.removed.length ? `<div class="fc-prev-sec fc-prev-ok"><b>✂ Comes out automatically (${pv.removed.length})</b>${list(pv.removed, 'what')}</div>`
         : `<div class="fc-prev-sec fc-prev-bad"><b>✂ Nothing can be taken out automatically.</b></div>`}
       ${pv.remaining.length ? `<div class="fc-prev-sec fc-prev-bad"><b>✋ Cannot be removed automatically (${pv.remaining.length}) — these KEEP the field locked</b>
-        <div class="fc-prev-note">Decisions and formulas decide what a flow does, so they are never rewritten for you. Until these are changed by hand, Salesforce will still refuse to delete the field.</div>${list(pv.remaining, 'value')}</div>` : ''}
+        <div class="fc-prev-note">A decision outcome loses the field’s condition when it has other conditions to stand on, and a yes/no formula loses the field’s part when the rest still tests something. What is listed here could not be done that way: an outcome that rests on the field alone (taking it out would delete a path of the flow), a numbered condition logic, or a formula that is not a plain yes/no test. Until these are changed by hand, Salesforce will still refuse to delete the field.</div>${list(pv.remaining, 'value')}</div>` : ''}
       ${pv.emptied.length ? `<div class="fc-prev-sec fc-prev-warn"><b>⚠ Left empty by the fix (${pv.emptied.length}) — Salesforce is likely to refuse the new version</b>${list(pv.emptied, '')}
         <div class="fc-prev-note">An element with nothing left to do is invalid. If the deploy is refused, nothing is deleted and the message says so.</div></div>` : ''}
       <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); change or remove the reference, reconnect anything you delete, then Save As a new version and Activate. Run ✂ Remove here again afterwards — it will find the active version clean and only remove the old versions.</div>
@@ -5184,9 +5184,36 @@ const FieldCleaner = (() => {
       }
     }
 
-    // Decisions, formulas, and free-text expression fields are intentionally
-    // NOT modified — branching logic changes and formula edits require human
-    // review. If the dep is only in those, the user must fix manually.
+    // ── decisions — an outcome loses the conditions that test the field, when it has others to stand on
+    // (user 2026-11-10: "יכול להיות בפלואו אחד עשרות פורמולות ועשרות decisions" — one decision that tests the field
+    // kept the whole flow "by hand"). Left alone, and so still reported as by hand: an outcome whose ONLY
+    // conditions are the field's (taking them out would delete a path of the flow), and an outcome with a
+    // numbered logic ("1 AND (2 OR 3)"), where dropping a condition would renumber the rest.
+    const condIsRef = c => refMatches(c && c.leftValueReference) || refMatches(c && c.rightValue && c.rightValue.elementReference);
+    for (const el of (metadata.decisions || [])) {
+      for (const rule of (el.rules || [])) {
+        if (!Array.isArray(rule.conditions)) continue;
+        const hit = rule.conditions.filter(condIsRef).length;
+        if (!hit || hit === rule.conditions.length) continue;
+        if (!/^(and|or)$/i.test(String(rule.conditionLogic || 'and').trim())) continue;
+        rule.conditions = rule.conditions.filter(c => !condIsRef(c));
+        changes += hit;
+      }
+    }
+
+    // ── formulas — a Boolean formula loses the conditions that use the field (the validation rule's engine,
+    // sftkFormulaDropField), when what is left still tests something. Any other formula is left to the user.
+    const fTok = new RegExp(`(^|[^A-Za-z0-9_])${fieldApi.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i');
+    for (const el of (metadata.formulas || [])) {
+      if (String(el.dataType || '') !== 'Boolean' || typeof el.expression !== 'string' || !fTok.test(el.expression)) continue;
+      const d = typeof sftkFormulaDropField === 'function' ? sftkFormulaDropField(el.expression, objApi, fieldApi, t => fTok.test(t)) : { mode: 'none' };
+      if (d.mode !== 'operand') continue;
+      el.expression = d.text;
+      changes += d.n;
+    }
+
+    // Everything else that names the field in free text — a text or number formula, a text template, a
+    // decision outcome that rests on the field alone — is NOT rewritten: it stays listed as by hand.
 
     return changes;
   }

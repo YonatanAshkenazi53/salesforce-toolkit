@@ -710,13 +710,15 @@ function _sftkMdSwapToken(text, objApi, fieldApi, newField) {
 // work without the field only when what is left still tests something — a formula left as a bare TRUE / FALSE
 // would block every save or never fire, so that counts as nothing left (user 2026-11-10: "להסיר את הרפרנסים שלו
 // במידה והולידציה יכולה לתפקד בלעדיו. אם לא אנחנו צריכים להגיד שהיא צריכה להכבות").
+// namesFn (optional): the caller's own test for "this text names the field" — a flow formula writes
+// {!$Record.Field__c}, which the object-aware default does not read.
 //   → { mode: 'operand', text, n }   n conditions taken out, `text` is the formula that is left
 //     { mode: 'whole', n, why }      nothing would be left: why 'all' (every condition names the field) or
 //                                    'constant' (only constants are left; `left` holds them)
 //     { mode: 'none' }               the formula does not name the field
-function sftkFormulaDropField(formula, objApi, fieldApi) {
+function sftkFormulaDropField(formula, objApi, fieldApi, namesFn) {
   // the field named in the formula's own text — a comment or a quoted string that holds its name does not count
-  const names = t => _sftkMdSwapToken(String(t).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""'), objApi, fieldApi, null).n > 0;
+  const names = t => (typeof namesFn === 'function' ? x => !!namesFn(x) : x => _sftkMdSwapToken(x, objApi, fieldApi, null).n > 0)(String(t).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""'));
   // walk t outside quotes and comments; at(i, depth) may return a new index to jump to
   const scan = (t, at) => {
     let depth = 0, q = null;
