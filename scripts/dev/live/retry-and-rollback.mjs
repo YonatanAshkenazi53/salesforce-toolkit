@@ -23,7 +23,7 @@ export default async function (h) {
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
   const dir = await h.eval(`(() => { const p = (typeof _reconcileProfile !== 'undefined' && _reconcileProfile) || null; return p ? { src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()`);
   h.log('direction:', JSON.stringify(dir));
-  if (!dir || !dir.src.includes('trailheads5') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error(`the Deploy page is open ${dir ? `${dir.src} → ${dir.tgt}` : 'on nothing'}; this script only ever writes trailheads5 → trailheads4`);
+  if (!dir || !dir.src.includes('orgfarm-c449e108c2') || !dir.tgt.includes('orgfarm-e2c4511b2b'))   /* npc → npc2 since the trailheads trials expired */ throw new Error(`the Deploy page is open ${dir ? `${dir.src} → ${dir.tgt}` : 'on nothing'}; this script only ever writes trailheads5 → trailheads4`);
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
   await h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000);
   await h.sleep(1500);
@@ -50,6 +50,11 @@ export default async function (h) {
     await h.waitFor("_currentView === 'deploy' && !!document.querySelector('.ds-dep-plan')", 300000, 1000); await h.sleep(2500);
     h.log('RETRY LINE:', (await h.eval(`[...document.querySelectorAll('.ds-rec-card-line')].map(e => e.innerText).find(t => /Retry/.test(t)) || '(no retry line)'`)).slice(0, 400));
     h.log('SUMMARY after retry:', await dump(h, '#dsDepSummary', 300));
+    // the page is still reading right after it opens — the summary that counts is the one after the reads (QA 2026-11-11)
+    await h.waitFor("!/checking the parents|reading what each object/i.test(document.querySelector('#dsMain')?.innerText || '')", 120000, 1000); await h.sleep(1500);
+    const settled = await dump(h, '#dsDepSummary', 300);
+    h.log('SUMMARY after retry, reads done:', settled);
+    if (/Nothing selected/i.test(settled)) throw new Error('↻ Retry says the failed records are ticked, but nothing is selected');
     await h.shot(h.shots + '/retry.png');
   }
 

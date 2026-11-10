@@ -37,6 +37,10 @@ describe('fcAskVerdict', () => {
     expect(v.kind).toBe('ok');
     expect(v.foot).toContain('still marks 2 items as blocking');
   });
+  it('a sentence of another shape is kept whole, and the repeated sentence is cut with or without its colon', () => {
+    const v = F.fcAskVerdict({ success: false, failures: [{ problem: REF + 'Workflow Rules. ' + REF + 'This field is used by the following duplicate rules: X. Before you can delete the field, remove it from the duplicate rules.. This custom field is referenced elsewhere in salesforce.com. ' }] }, 1);
+    expect(v.lines).toEqual(['Workflow Rules', 'This field is used by the following duplicate rules: X. Before you can delete the field, remove it from the duplicate rules.']);
+  });
   it('no answer is an error, never an acceptance', () => {
     expect(F.fcAskVerdict(null, 0).kind).toBe('error');
     expect(F.fcAskVerdict({ error: 'Session expired' }, 0).lines).toEqual(['Session expired']);
@@ -81,6 +85,11 @@ describe('the check rides every scan, and what it names joins the list', () => {
     expect(A.fcAskKindListed('Workflow Rules', ['Workflow Rules'])).toBe(true);
     expect(A.fcAskKindListed('Workflow Rules', ['Flows', 'Page Layouts'])).toBe(false);
     expect(A.fcAskKindListed('Territory Rules', ['Workflow Rules'])).toBe(false);
+    // live 2026-11-11, the full demo field: Salesforce's wording differs from the list's
+    expect(A.fcAskKindListed('Criteria-based Sharing Rules', ['Sharing Rules (criteria)'])).toBe(true);
+    expect(A.fcAskKindListed('This field is used by the following duplicate rules: SFTK Live DR. Before you can delete the field, remove it from the duplicate rules.', ['Duplicate Rules', 'Flows'])).toBe(true);
+    expect(A.fcAskKindListed('Email Alerts', ['Email Alerts (send a template that uses the field)'])).toBe(true);
+    expect(A.fcAskKindListed('Outbound Messages', ['Flows', 'Workflow Rules'])).toBe(false);
   });
   it('runs once per scan, not for a mentions-only scope; named components join the list; the rest is listed in Salesforce\'s words; a refusal locks the delete', () => {
     expect(FC).toContain("if (_lastScan.ask) { _paintAsk(_lastScan.ask); return; }");

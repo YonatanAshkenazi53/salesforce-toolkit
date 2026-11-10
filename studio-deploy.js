@@ -455,6 +455,8 @@ function _depWireOrgPicker(p) {
 }
 
 async function renderDeploy() {
+  // the page's own reads repaint it when they end: never over another page the user has moved to (QA 2026-11-11)
+  if (_reconcileProfile && _currentView !== 'deploy' && _currentView !== 'reconcile') return;
   const p = _reconcileProfile;
   if (!p) { _currentView = 'profiles'; renderProfiles(); return; }
   sftkRecResetSelectionFor(p);
@@ -485,12 +487,14 @@ async function renderDeploy() {
   // A run or a rollback that finished after this scan makes its numbers a
   // fiction — refresh once, unasked, exactly as the classic page did (user
   // 2026-09-22: "i rolled back so i need to see two of them now").
+  let rescanQueued = false;   // this render is about to be replaced by a fresh read of both orgs
   if (fresh && scan.runAt) {
     let staleRun = null;
     try { staleRun = sftkScanStaleRun(_history, p, scan.runAt); } catch (_) { staleRun = null; }
     if (staleRun && _recAutoRefreshKey !== `${p.id}|${staleRun.id}`) {
       _recAutoRefreshKey = `${p.id}|${staleRun.id}`;
       showToast(`↻ ${staleRun.kind === 'rollback' ? 'A rollback' : 'A run'} changed these orgs after the last scan — refreshing state…`, 'info', 3000);
+      rescanQueued = true;
       setTimeout(() => _depRescan(p), 0);
     }
   }
@@ -533,7 +537,11 @@ async function renderDeploy() {
     if (unread.length) setTimeout(() => _depScanAll(p, unread), 0);
   }
 
-  if (_depRetry && (_depRetry.profileId === p.id || _depRetry.profileId === p._ringOf?.profileId)) {
+  // ↻ Retry ticks the failed records on the scan the user will act on. Opened right after the run, this render is on
+  // the scan from BEFORE the run and a fresh read is already queued — and that read resets every selection. Ticking
+  // now left the banner saying "1 of 1 failed record(s) are ticked" over a page with nothing ticked (QA 2026-11-11,
+  // retry-and-rollback on npc → npc2). The request waits for the render after the read.
+  if (_depRetry && !rescanQueued && (_depRetry.profileId === p.id || _depRetry.profileId === p._ringOf?.profileId)) {
     const rp = sftkDeployRetryPicks(scan, _depRetry.byPath, sftkRecChildRowState);
     for (const [k, ids] of Object.entries(rp.picks)) { const set = k === '' ? _recSel.push : _depChildSel(k).push; ids.forEach(id => set.add(id)); }
     _depRetryNote = _depRetry.mode === 'continue' ? sftkDeployContinueLine(rp) : sftkDeployRetryLine(rp);

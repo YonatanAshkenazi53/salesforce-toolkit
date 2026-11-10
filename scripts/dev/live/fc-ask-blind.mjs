@@ -43,7 +43,14 @@ export default async function (h) {
   for (const r of rows) h.log('   ', r);
   const all = rows.join(' ');
   const need = ['SFTK_Live_Cls', 'SFTK_Live_Trg', 'SFTK_Live_VF', 'sftkLiveAura'];
-  const miss = need.filter(n => !all.includes(n));
+  // Salesforce names only SOME of what blocks in one answer (the full demo field: the workflow kinds first, no code):
+  // what must hold is that everything it DID name is in the list. The rest surfaces when the list is cleared and it
+  // is asked again.
+  const box = await h.eval(`document.querySelector('#fcAskBox').innerText`);
+  const named = need.filter(n => box.includes(n));
+  h.log('named by Salesforce in this answer:', named.join(', ') || '(none of the code)');
+  h.log('rows under "Named by Salesforce":', rows.filter(r => /^Named by Salesforce/.test(r)).join(' ') || '(none)');
+  const miss = named.filter(n => !all.includes(n));
   h.log('delete button:', await h.eval(`(() => { const b = document.querySelector('#fcDelBtn, #fcDelFreeBtn'); return b ? (b.disabled ? 'locked' : 'OPEN') : 'none'; })()`));
   await h.eval(`document.querySelector('#fcAskBox').scrollIntoView({ block: 'start' })`); await h.sleep(500);
   await h.shot(`${h.shots}/ask-blind.png`);

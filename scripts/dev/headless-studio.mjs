@@ -22,7 +22,7 @@
 // SFTK_WINDOW=1600,900 sets the window size (default 1500,1100).
 // Chrome profile lives under %LOCALAPPDATA%\Temp (never the user's profile).
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, rmSync, readFileSync, createWriteStream } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, createWriteStream } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -47,6 +47,16 @@ try {
   execFileSync('powershell.exe', ['-NoProfile', '-Command',
     "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object { $_.CommandLine -match 'sftk-headless' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
     { stdio: 'ignore', timeout: 15000 });
+} catch (_) { /* best effort */ }
+// The profile of a run that ended is supposed to go at exit (above), and often does not: Chrome still holds files
+// when the process ends. 300 of them, 31 GB, filled the owner's disk on 2026-11-11. Every stray Chrome is dead by
+// now, so every OTHER sftk-headless-<pid> folder is a leftover: sweep them before starting.
+try {
+  const tmp = join(process.env.LOCALAPPDATA, 'Temp');
+  for (const d of readdirSync(tmp)) {
+    if (!/^sftk-headless-\d+$/.test(d) || join(tmp, d) === PROFILE) continue;
+    try { rmSync(join(tmp, d), { recursive: true, force: true, maxRetries: 2, retryDelay: 200 }); } catch (_) { /* next run */ }
+  }
 } catch (_) { /* best effort */ }
 log('profile:', PROFILE, process.env.SFTK_KEEP ? '(kept)' : '(deleted on exit)');
 

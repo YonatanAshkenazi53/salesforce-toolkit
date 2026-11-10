@@ -18,6 +18,32 @@ export const BATCHES = {
   // ── the round before shipping, 2026-10-25: everything that changed in the week of 10-19..10-24 (merge first,
   // most-specific-first keys, suggestions by depth, the one-table grade, bundle import, the folding cards, the
   // parents' match field, the Flows page), plus the release smoke. Orgs npc = trailheads5, npc2 = the DE org.
+  // 1.1.0 (2026-11-10): the scripts written against the npc / npc2 trial orgs and the 1.1 screens — the release gate.
+  // The older Data Studio scripts in `studio` / `studio2` that guard on the expired trailheads orgs or wait for the
+  // pause panel's old wording are superseded by pause-panel, deploy-ticks, dryrun and pii-deploy here.
+  qa11: [
+    { name: 'flow-switches-all', script: `${L}flow-switches-all.mjs`, timeoutMin: 25 },
+    { name: 'flow-filter', script: `${L}flow-filter.mjs`, timeoutMin: 25 },
+    { name: 'fc-demo-scan', script: `${L}fc-demo-scan.mjs`, timeoutMin: 25 },
+    { name: 'fc-usage', script: `${L}fc-usage.mjs`, timeoutMin: 25 },
+    { name: 'fc-ask', script: `${L}fc-ask.mjs`, timeoutMin: 25 },
+    { name: 'fc-ask-blind', script: `${L}fc-ask-blind.mjs`, timeoutMin: 25 },
+    { name: 'fc-pkg-scan', script: `${L}fc-pkg-scan.mjs`, timeoutMin: 25 },
+    { name: 'orghealth', script: `${L}orghealth.mjs`, timeoutMin: 25 },
+    { name: 'deploy-scanall', script: `${L}deploy-scanall.mjs`, timeoutMin: 25 },
+    { name: 'deploy-ticks', script: `${L}deploy-ticks.mjs`, timeoutMin: 25 },
+    { name: 'deploy-tree', script: `${L}deploy-tree.mjs`, timeoutMin: 25 },
+    { name: 'matching-kit', script: `${L}matching-kit.mjs`, timeoutMin: 25 },
+    { name: 've-owner', script: `${L}ve-owner.mjs`, timeoutMin: 25 },
+    { name: 've-rt', script: `${L}ve-rt.mjs`, timeoutMin: 25 },
+    { name: 'dryrun', script: `${L}dryrun.mjs`, timeoutMin: 25 },
+    { name: 'pause-panel', script: `${L}pause-panel.mjs`, timeoutMin: 25 },
+    { name: 'pii-deploy', script: `${L}pii-deploy.mjs`, timeoutMin: 25 },
+    { name: 'pkg-deploy', script: `${L}pkg-deploy.mjs`, timeoutMin: 25 },
+    { name: 'history-beforeafter', script: `${L}history-beforeafter.mjs`, timeoutMin: 25 },
+    { name: 'value-edit-nowrite', script: `${L}value-edit.mjs`, env: { NOWRITE: '1' }, timeoutMin: 25 },
+    { name: 'fr-copy-fill-undo', script: `${L}field-replace.mjs`, env: { STEP: 'copy', UNDO: '1' } },
+  ],
   qa1025: [
     { name: 'release-smoke', script: `${L}release-smoke.mjs` },
     { name: 'import-bundle', script: `${L}qa-import-bundle.mjs` },

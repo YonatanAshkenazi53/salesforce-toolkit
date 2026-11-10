@@ -115,3 +115,9 @@ scan catches a miss); the unverified research leads; splitting custom-metadata t
 - Gate 2: `release-smoke` ✓; batch `toolkit` 27 of 27 ✓ (0 exceptions, 0 console errors). `studio`, `studio2`, `toolkit2`: see below when run.
 - Gate 3: ✓ — licence kept, 9 of 9 stored keys, 6 of 6 deployments, dark mode, every view and tab opens.
 - Gate 4: the owner.
+
+### Results, 2026-11-11
+
+- Gate 1: green, 3,928 tests.
+- Gate 2: `qa11` 21 of 21 on the packed build; `toolkit2` 8 of 9, the ninth green on re-run. Two real bugs found and fixed (↻ Retry ticked nothing; the Deploy page pulled the user back from another page) — both re-run green. Stale scripts named in BACKLOG.
+- Harness: it leaked one Chrome profile per run (300 folders, 31 GB, the disk filled) — it now sweeps them at start.

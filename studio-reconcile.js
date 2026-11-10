@@ -536,6 +536,11 @@ function sftkRecPruneTree(children, basePath, rides, decorate) {
 }
 
 async function renderReconcile() {
+  // A repaint must never pull the user back here (found by QA 2026-11-11: a deployment was opened, the user moved to
+  // Org Compare while it was still reading, and when the read ended the Deploy page replaced Org Compare under them).
+  // Every door into this page sets _currentView to 'deploy' / 'reconcile' BEFORE it calls; a repaint that arrives
+  // while another page is open is for a page nobody is looking at — the state is kept, nothing is drawn.
+  if (_reconcileProfile && _currentView !== 'deploy' && _currentView !== 'reconcile') return;
   // ✨ Deploy view (beta): every repaint the classic code asks for — after a
   // run, a rescan, a child scan — lands on the page the user is actually on.
   // 1.5.0 — every door into this page (cards, History, Compare, Ring, Seeder)

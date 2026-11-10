@@ -288,7 +288,7 @@ function fcAskVerdict(r, listedBlockers) {
   }
   // Salesforce puts one sentence in front of every name ("This custom field is referenced elsewhere in salesforce.com. :
   // Workflow Rules.") — the head says it once and the lines keep the names
-  const REF = /This custom field is referenced elsewhere in salesforce\.com\.\s*:\s*/gi;
+  const REF = /This custom field is referenced elsewhere in salesforce\.com\.\s*:?\s*/gi;   // the colon is missing after a sentence of another shape
   const seen = new Set(), lines = [];
   let ref = 0;
   for (const f of (r.failures || [])) {
@@ -336,10 +336,18 @@ function fcAskNamed(lines) {
 }
 // Is a kind-only line ("Field Updates") already a group of the list ("Workflow Field Updates")?
 function fcAskKindListed(line, groupLabels) {
-  const norm = x => String(x || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim().replace(/s$/, '');
-  const l = norm(line);
-  if (!l) return true;
-  return (groupLabels || []).some(g => { const n = norm(g); return !!n && (n === l || ` ${n} `.includes(` ${l} `) || ` ${l} `.includes(` ${n} `)); });   // whole words: "workflow rule" is not "flow"
+  // word sets, order and punctuation aside: Salesforce says "Criteria-based Sharing Rules" for the list's "Sharing
+  // Rules (criteria)", "Field Updates" for "Workflow Field Updates", and a whole sentence for a duplicate rule
+  // ("This field is used by the following duplicate rules: X. Before you can delete…") — live 2026-11-11.
+  const words = x => new Set(String(x || '').toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(Boolean).map(w => w.replace(/s$/, '')));
+  const l = words(line);
+  if (!l.size) return true;
+  return (groupLabels || []).some(g => {
+    const n = words(g);
+    if (!n.size) return false;
+    const [small, big] = n.size <= l.size ? [n, l] : [l, n];
+    return [...small].every(w => big.has(w));
+  });
 }
 function fcFieldNamespace(api) {
   const m = /^([A-Za-z](?:[A-Za-z0-9]|_(?!_))*)__[A-Za-z0-9_]+?__c$/.exec(String(api || '').trim());

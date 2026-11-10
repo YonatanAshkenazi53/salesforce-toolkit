@@ -21,7 +21,7 @@ describe('the Deploy view is the page: every door opens it', () => {
   });
   it('ONE seam: anything that ends in renderReconcile() lands on the Deploy view', () => {
     const i = RC.indexOf('async function renderReconcile() {');
-    expect(RC.slice(i, i + 700)).toContain("if (typeof renderDeploy === 'function' && typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) { _currentView = 'deploy'; return renderDeploy(); }");
+    expect(RC.slice(i, i + 1500)).toContain("if (typeof renderDeploy === 'function' && typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) { _currentView = 'deploy'; return renderDeploy(); }");
     // Compare and the Seeder set 'reconcile' and call renderReconcile() — the seam covers them
     // (All open orgs no longer builds a ring_* clone: it opens the saved deployment via window.openReconcile)
     for (const file of ['studio-compare.js', 'studio-seed.js']) {

@@ -1006,6 +1006,7 @@ async function bldCompareParent(refObj, btn) {
     eid('bldParentCmpOpen')?.addEventListener('click', () => {
       closeModal();
       _reconcileProfile = eph;
+      _currentView = (typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? 'deploy' : 'reconcile';   // a door: it says where it goes (renderReconcile no longer assumes)
       renderReconcile();
     });
   } finally {
