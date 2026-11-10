@@ -2004,7 +2004,7 @@ function _depPausePaint(p) {
   const objects = sftkDeployObjects(p.tree).map(o => o.obj);
   const tgt = orgLabel(p.targetOrg);
   const kinds = [
-    { kind: 'flow', st: _depFlowPause, on: _depFlowPause.on, word: 'record-triggered flows', managedWord: 'Flows' },
+    { kind: 'flow', st: _depFlowPause, on: _depFlowPause.on, word: 'record-triggered and scheduled flows', managedWord: 'Flows' },
     { kind: 'rule', st: _depRulePause, on: _depRulePause.on, word: 'validation rules', managedWord: 'Rules' },
     { kind: 'dupe', st: _depDupePause, on: p.duplicateRules === 'bypass', word: 'duplicate rules', managedWord: '' },
   ];
@@ -2026,15 +2026,16 @@ function _depPausePaint(p) {
   }
   const written = sftkDeployWrittenObjects(sftkDeployObjects(p.tree), _recSel, _recChildSel);
   const rows = sftkPauseRows(objects, lists, _depPauseSkip, written);
+  const tipSched = 'A schedule-triggered flow that starts on this object. It does not run when a record is written — it runs on its clock. Ticked: switched off before the first write and back on when the run ends, so it cannot fire mid-run. Unticked (the default): left as it is.';
   const tip = kind => kind === 'dupe'
     ? 'Ticked: the writes on this object carry the duplicate-rule header, so a rule set to Alert lets the records through (a rule set to Block still blocks). Unticked: the rule is respected and a record it flags is refused. The rule itself is never switched off.'
     : 'Ticked: switched off before the first write and back on when the run ends. Unticked: stays on for this run.';
-  const item = (kind, x) => `<label class="ds-dep-pause-item${x.on ? '' : ' ds-dep-pause-off'}" title="${esc(tip(kind))}"><input type="checkbox" class="ds-dep-pause-cb" data-key="${esc(x.key)}" data-obj="${esc(x.object)}" ${x.on ? 'checked' : ''}> ${esc(sftkPauseItemName(kind, x))}</label>`;
+  const item = (kind, x) => `<label class="ds-dep-pause-item${x.on ? '' : ' ds-dep-pause-off'}${kind === 'flow' && x.scheduled ? ' ds-dep-pause-sched' : ''}" title="${esc(kind === 'flow' && x.scheduled ? tipSched : tip(kind))}"><input type="checkbox" class="ds-dep-pause-cb" data-key="${esc(x.key)}" data-obj="${esc(x.object)}" ${x.on ? 'checked' : ''}> ${esc(sftkPauseItemName(kind, x))}</label>`;
   // one tab per kind whose option is on (user 2026-11-08: "להראות רק אם מסמנים את המטאדאטה שרוצים לעצור… ולעשות
   // 3 טאבים עם פירוט מובן"); inside a tab, the objects this run writes to, each with its items and all / none.
   // Every tab's pane is in the DOM (hidden when not chosen) so a tick anywhere keeps its key.
   const TAB = {
-    flow: { label: '⏸ Flows', field: 'flows', why: `These record-triggered flows on the objects this run writes are switched off before the first write and switched back on when the run ends — also when it fails or is cancelled. Untick a flow to leave it running for this run.` },
+    flow: { label: '⏸ Flows', field: 'flows', why: `These record-triggered flows on the objects this run writes are switched off before the first write and switched back on when the run ends — also when it fails or is cancelled. Untick a flow to leave it running for this run. A ⏰ scheduled flow that starts on one of these objects is listed too, unticked: it runs on its clock, not on a write — tick it to keep it from firing while the records land.` },
     rule: { label: '⏸ Validation rules', field: 'rules', why: `These validation rules on the objects this run writes are switched off before the first write and switched back on when the run ends. Untick a rule to keep it enforcing for this run.` },
     dupe: { label: '🔁 Duplicate rules', field: 'dupes', why: `The writes on these objects carry the duplicate-rule header: a rule set to Alert lets the records through, a rule set to Block still blocks. No rule is switched off or changed. Untick an object to respect its rules as they are.` },
   };
@@ -2126,6 +2127,8 @@ async function _depFlowPauseWire(p) {
       const sess = await getOrgSession(p.targetOrg);
       if (!sess) throw new Error(`${orgLabel(p.targetOrg)} is not open in a Chrome tab`);
       const list = await sftkFlowPauseList(sess, objects);
+      // a ⏰ scheduled flow does not run on a write: listed, but unticked until the user ticks it (2026-11-10)
+      for (const f of (list.flows || [])) if (f.scheduled) _depPauseSkip.add(sftkPauseKey('flow', f));
       if (_depFlowPause.key === key && _depFlowPause.on) _depFlowPause.list = list;
     } catch (e) { if (_depFlowPause.key === key) _depFlowPause.error = (e && e.message) || String(e); }
     paint();

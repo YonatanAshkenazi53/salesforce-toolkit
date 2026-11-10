@@ -15,6 +15,7 @@ extensions containing root files that start with `_`).
 
 ## 1.1.0 — 2026-11-04
 
+- **⏸ The pause panel lists scheduled flows too** (2026-11-10). A schedule-triggered flow that starts on an object the deployment writes is listed under it, marked ⏰ and unticked — it runs on its clock, not on a write; tick it to keep it from firing mid-run. Works on packaged objects like every other kind.
 - **🎭 The PII suggestion window reads at a glance** (2026-11-10). One line on top and the long explanation folded away; a bar that counts the ticked fields with ✓ Suggested / All / None; a card per object; each field is one row — tick, the field and why it is offered, what it is written as — with its examples under it. The Apply button says how many fields it applies to.
 - **The Deploy page's actions sit with the orgs** (2026-11-10). 🎭 Suggest PII, the scan of every object and ✓ Tick every insert moved from under the table into the "Between which orgs" card. Scan all and Rescan all are one button: it reads every object, and says which ones were never read.
 - **⏻ Flow switches shows the switch, not the API version** (2026-11-10: "אין צורך להציג שם גרסאת api"). Each row carries ON/OFF and the flow version that runs; the API version lives in ⚙ API versions.

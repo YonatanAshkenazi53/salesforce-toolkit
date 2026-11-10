@@ -39,6 +39,7 @@ describe('list → off → on, through the write discipline', () => {
     org = new Map([['Acc1', true], ['Con1', true]]);   // ApiName → active?
     globalThis.SFTK_FLOWPAUSE_KEY = 'sftk_flow_run_paused';
     globalThis.SFTK_RT_TRIGGERS = ['RecordAfterSave', 'RecordBeforeSave', 'RecordBeforeDelete'];
+    globalThis.SFTK_PAUSE_TRIGGERS = [...globalThis.SFTK_RT_TRIGGERS, 'Scheduled'];   // 2026-11-10: scheduled flows on the objects are listed too
     globalThis.sftkOrgKey = u => String(u).replace(/^https?:\/\//, '');
     globalThis.orgLabel = u => 't';
     globalThis.sftkHistoryBegin = () => ({ kind: 'tool', what: [], errors: [] });
@@ -46,7 +47,7 @@ describe('list → off → on, through the write discipline', () => {
     globalThis.sftkHistoryNote = () => {};
     globalThis.chrome = { storage: { local: { get: async k => ({ [k]: store[k] }), set: async v => { Object.assign(store, JSON.parse(JSON.stringify(v))); } } } };
   });
-  afterEach(() => { for (const k of ['SFTK_FLOWPAUSE_KEY', 'SFTK_RT_TRIGGERS', 'sftkOrgKey', 'orgLabel', 'sftkHistoryBegin', 'sftkHistoryEnd', 'sftkHistoryNote', 'chrome']) delete globalThis[k]; });
+  afterEach(() => { for (const k of ['SFTK_FLOWPAUSE_KEY', 'SFTK_RT_TRIGGERS', 'SFTK_PAUSE_TRIGGERS', 'sftkOrgKey', 'orgLabel', 'sftkHistoryBegin', 'sftkHistoryEnd', 'sftkHistoryNote', 'chrome']) delete globalThis[k]; });
   const send = async m => {
     calls.push(m);
     const q = String(m.query || '');
@@ -65,7 +66,7 @@ describe('list → off → on, through the write discipline', () => {
 
   it('lists the flows with the version that is active now', async () => {
     const l = await FP.sftkFlowPauseList(sess, ['Account', 'Contact'], send);
-    expect(l.flows).toEqual([{ apiName: 'Acc1', label: 'Acc One', defId: '300A1', object: 'Account', version: 3 }, { apiName: 'Con1', label: 'Con One', defId: '300C1', object: 'Contact', version: 1 }]);
+    expect(l.flows).toEqual([{ apiName: 'Acc1', label: 'Acc One', defId: '300A1', object: 'Account', version: 3, scheduled: false }, { apiName: 'Con1', label: 'Con One', defId: '300C1', object: 'Contact', version: 1, scheduled: false }]);
     expect(l.managed).toEqual(['Pkg Flow (Account)']);
   });
   it('off: every flow confirmed off and remembered BEFORE the run writes; on: back at the exact version, forgotten', async () => {
@@ -118,5 +119,18 @@ describe('wired into the Deploy page and the run', () => {
     expect(DV).toContain('▶ Switch them back on</button>');
     expect(read('studio.html').indexOf('src="sftk-flowpause.js"')).toBeLessThan(read('studio.html').indexOf('src="studio-deploy.js"'));
     expect(read('studio-orghealth.js')).toContain("for (const [n, v] of Object.entries((d.sftk_flow_run_paused || {})[ctx.orgKey] || {})) remembered[n] = (v && v.version) || v;");
+  });
+});
+
+describe('scheduled flows on the objects of the deployment are listed, flagged (2026-11-10)', () => {
+  it('a Scheduled flow that starts on a written object is selected with scheduled: true; one on another object is not', () => {
+    const idToObj = new Map([['Account', 'Account'], ['01I000000000001', 'dlrs__LookupParent__c']]);
+    const r = select([
+      { ApiName: 'S1', Label: 'Nightly', TriggerType: 'Scheduled', TriggerObjectOrEventId: '01I000000000001', DurableId: '300S1', ActiveVersionId: '301S1' },
+      { ApiName: 'S2', Label: 'Other', TriggerType: 'Scheduled', TriggerObjectOrEventId: 'Lead', DurableId: '300S2', ActiveVersionId: '301S2' },
+      { ApiName: 'R1', Label: 'Rt', TriggerType: 'RecordAfterSave', TriggerObjectOrEventId: 'Account', DurableId: '300R1', ActiveVersionId: '301R1' },
+      { ApiName: 'P1', Label: 'Screen', TriggerType: null, TriggerObjectOrEventId: null, DurableId: '300P1', ActiveVersionId: '301P1' },
+    ], idToObj);
+    expect(r.own.map(f => [f.apiName, f.object, f.scheduled])).toEqual([['R1', 'Account', false], ['S1', 'dlrs__LookupParent__c', true]]);
   });
 });

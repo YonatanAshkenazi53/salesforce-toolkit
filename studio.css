@@ -6517,6 +6517,7 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-dep-pause-item { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
 .ds-dep-pause-item input { margin: 0; }
 .ds-dep-pause-off { text-decoration: line-through; color: var(--subtext); }
+.ds-dep-pause-off.ds-dep-pause-sched { text-decoration: none; }   /* a scheduled flow is unticked by default — "left as it is", not "crossed out" */
 .ds-dep-pause-unwritten { opacity: .6; }
 .ds-dep-pause-sum { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); color: var(--subtext); }
 .ds-dep-pause-none { color: var(--subtext); }

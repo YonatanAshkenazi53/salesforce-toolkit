@@ -31,3 +31,5 @@ Deploy: `cd docs/fixtures/packaged-object-fixture && sf project deploy start -o 
 Records for the Data Deployment proof (npc → npc2): a few `dlrs__LookupParent__c` with `dlrs__LookupChild__c` children,
 some of them red with no tag, so the target's validation rule refuses them unless the panel pauses it — inserted in
 npc BEFORE the rule is deployed there, by the live script.
+
+2026-11-10: `matchingRules/dlrs__LookupParent__c` (SFTK_Pkg_Parent_Name, exact Name) and `duplicateRules/dlrs__LookupParent__c.SFTK_Pkg_Parent_Dupes` (Allow + Alert, never blocks) — a duplicate rule on a packaged object for the Deploy page's ⏸ panel. Deployed to npc and npc2.

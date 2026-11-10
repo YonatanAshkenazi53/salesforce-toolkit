@@ -92,7 +92,7 @@ function sftkPauseDupeObjects(dupes, skip, written) {
 
 // The name of one item for a sentence.
 function sftkPauseItemName(kind, x) {
-  if (kind === 'flow') return `${x.label || x.apiName}${x.version ? ` v${x.version}` : ''}`;
+  if (kind === 'flow') return `${x.label || x.apiName}${x.version ? ` v${x.version}` : ''}${x.scheduled ? ' · ⏰ scheduled' : ''}`;
   if (kind === 'rule') return x.name;
   return x.label || x.name;
 }

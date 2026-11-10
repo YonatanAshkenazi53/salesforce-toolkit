@@ -22,6 +22,9 @@
 
 const SFTK_FLOWPAUSE_KEY = 'sftk_flow_run_paused';
 const SFTK_RT_TRIGGERS = ['RecordAfterSave', 'RecordBeforeSave', 'RecordBeforeDelete'];
+// The panel also LISTS the schedule-triggered flows that start on these objects (user 2026-11-10: "לראות שמוצגים גם
+// … scheduled triggers של אובייקטים חבילתיים"). A scheduled flow does not run on a write, so it is offered unticked.
+const SFTK_PAUSE_TRIGGERS = ['RecordAfterSave', 'RecordBeforeSave', 'RecordBeforeDelete', 'Scheduled'];
 
 function _sftkFpLit(v) { return `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`; }
 
@@ -32,11 +35,11 @@ function _sftkFpLit(v) { return `'${String(v).replace(/\\/g, '\\\\').replace(/'/
 function sftkFlowPauseSelect(defs, idToObj) {
   const own = [], managed = [];
   for (const d of (defs || [])) {
-    if (!d || !d.ApiName || !['RecordAfterSave', 'RecordBeforeSave', 'RecordBeforeDelete'].includes(String(d.TriggerType || ''))) continue;   // = SFTK_RT_TRIGGERS (pure: no file constant)
+    if (!d || !d.ApiName || !['RecordAfterSave', 'RecordBeforeSave', 'RecordBeforeDelete', 'Scheduled'].includes(String(d.TriggerType || ''))) continue;   // = SFTK_PAUSE_TRIGGERS (pure: no file constant)
     const obj = idToObj.get(String(d.TriggerObjectOrEventId || ''));
     if (!obj) continue;
     if (d.ManageableState === 'installed') { managed.push(`${d.Label || d.ApiName} (${obj})`); continue; }
-    own.push({ apiName: d.ApiName, label: d.Label || d.ApiName, defId: d.DurableId, verId: d.ActiveVersionId, object: obj });
+    own.push({ apiName: d.ApiName, label: d.Label || d.ApiName, defId: d.DurableId, verId: d.ActiveVersionId, object: obj, scheduled: d.TriggerType === 'Scheduled' });
   }
   own.sort((a, b) => a.object.localeCompare(b.object) || a.label.localeCompare(b.label));
   return { own, managed };
@@ -60,7 +63,7 @@ async function sftkFlowPauseList(sess, objects, send) {
   }
   calls++;
   const defs = await bg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _silentError: true,
-    query: `SELECT DurableId, ApiName, Label, TriggerType, TriggerObjectOrEventId, ActiveVersionId, ManageableState FROM FlowDefinitionView WHERE IsActive = true AND TriggerType IN (${SFTK_RT_TRIGGERS.map(_sftkFpLit).join(',')})` });
+    query: `SELECT DurableId, ApiName, Label, TriggerType, TriggerObjectOrEventId, ActiveVersionId, ManageableState FROM FlowDefinitionView WHERE IsActive = true AND TriggerType IN (${SFTK_PAUSE_TRIGGERS.map(_sftkFpLit).join(',')})` });
   if (!defs || defs.error) throw new Error(`the org's record-triggered flows could not be listed (${(defs && defs.error) || 'no answer'})`);
   const { own, managed } = sftkFlowPauseSelect(defs.records || [], idToObj);
   if (!own.length) return { flows: [], managed, calls };
@@ -69,7 +72,7 @@ async function sftkFlowPauseList(sess, objects, send) {
     query: `SELECT Id, VersionNumber FROM Flow WHERE Id IN (${own.map(f => _sftkFpLit(f.verId)).join(',')})` });
   if (!vers || vers.error) throw new Error(`the active versions could not be read (${(vers && vers.error) || 'no answer'})`);
   const vOf = new Map((vers.records || []).map(v => [v.Id, Number(v.VersionNumber) || 0]));
-  const flows = own.map(f => ({ apiName: f.apiName, label: f.label, defId: f.defId, object: f.object, version: vOf.get(f.verId) || 0 }));
+  const flows = own.map(f => ({ apiName: f.apiName, label: f.label, defId: f.defId, object: f.object, version: vOf.get(f.verId) || 0, scheduled: !!f.scheduled }));
   const noVer = flows.filter(f => !f.version);
   if (noVer.length) throw new Error(`the active version of ${noVer.map(f => f.label).join(', ')} could not be read — nothing would bring it back`);
   return { flows, managed, calls };
