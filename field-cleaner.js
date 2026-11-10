@@ -301,8 +301,18 @@ function fcAskVerdict(r, listedBlockers) {
   if (!lines.length) lines.push(String(r.errorMessage || 'Salesforce refused and gave no reason'));
   return { kind: 'blocked', head: ref && ref === (r.failures || []).length ? '🔒 Salesforce refuses the delete — the field is referenced by:' : '🔒 Salesforce refuses the delete — in its own words:', lines,
     foot: listedBlockers > 0
-      ? 'Salesforce may name only some of what blocks — clear the blockers listed, then ask again.'
-      : 'The scan does not list this: Salesforce’s index did not return it. Fix it in Setup, or run 🧭 Full metadata text scan below — it finds such references and adds them to the list. Then ask again.' };
+      ? 'Salesforce names only some of what blocks. Clear the blockers listed — it is asked again when the list is clear.'
+      : 'The scan does not list this: Salesforce’s index did not return it. Fix it in Setup, or run 🧭 Full metadata text scan below — it finds such references and adds them to the list.' };
+}
+// The Aura bundles a refusal names — live 2026-11-10: `Aura Component Bundle "c:sftkLiveAura" - COMPONENT - sftkLiveAura`.
+// The other kinds seen come without a name ("Field Updates", "Workflow Rules"), so only these can become rows.
+function fcAskAuraBundles(lines) {
+  const out = [];
+  for (const l of (lines || [])) {
+    const m = /^Aura Component Bundle "(?:([A-Za-z0-9_]+):)?([A-Za-z0-9_]+)"/.exec(String(l || '').trim());
+    if (m && !out.some(o => o.name === m[2] && o.ns === (m[1] || 'c'))) out.push({ ns: m[1] || 'c', name: m[2] });
+  }
+  return out;
 }
 function fcFieldNamespace(api) {
   const m = /^([A-Za-z](?:[A-Za-z0-9]|_(?!_))*)__[A-Za-z0-9_]+?__c$/.exec(String(api || '').trim());
@@ -333,7 +343,7 @@ function fcScopeLegs(scope, objApi) {
   return {
     flexiPages: true,
     matchingRules: blockers, workflowFieldUpdates: blockers, workflow: blockers, approvals: blockers,
-    sharingRules: blockers, duplicateRules: blockers, lwc: blockers, customMetadata: blockers,
+    sharingRules: blockers, duplicateRules: blockers, lwc: blockers, aura: blockers, customMetadata: blockers,
     leadMapping: blockers && ['lead', 'account', 'contact', 'opportunity'].includes(o),
     objectRules: blockers && (o === 'lead' || o === 'case'),
     reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions, validationRulesOff: mentions,
@@ -370,8 +380,9 @@ function fcEstimateScanCalls(counts, scope, objApi) {
     L.customMetadata && { count: known(c.customMetadata), what: '10 custom metadata records in the org (read up to 300)' },
   ].filter(Boolean);
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
-  let now = 2 + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
-    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts].filter(Boolean).length
+  // + the check-only delete (🩺 Ask Salesforce, every scan that looks for blockers): the deploy and its status read
+  let now = 2 + (fcScopeNorm(scope) === 'mentions' ? 0 : 2) + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
+    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts].filter(Boolean).length
     + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
@@ -2010,6 +2021,25 @@ const FieldCleaner = (() => {
       }
     } catch (_) {/* non-fatal */}
 
+    // 10b. Aura components (2026-11-10). Salesforce's index is supposed to return them and did not: live on npc it
+    // returned NO row for a field that an Aura bundle's markup ({!v.account.Field__c}) and controller name, and
+    // Salesforce refused the delete over both. One Tooling query reads every Aura source in the org; a source that
+    // names the field as a whole word is listed. Whether that one blocks, 🩺 Ask Salesforce says with the same scan.
+    if (L.aura) try {
+      msg('Scanning Aura components…');
+      const res = await sfQ('SELECT Id, DefType, Source, AuraDefinitionBundleId, AuraDefinitionBundle.DeveloperName, AuraDefinitionBundle.NamespacePrefix FROM AuraDefinition', true);
+      const want = new RegExp(`(?<![A-Za-z0-9_])${fieldLc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i');
+      const seenBundle = new Set();
+      for (const r of (res?.records || [])) {
+        if (r.AuraDefinitionBundle?.NamespacePrefix) continue;          // a package's own component is not editable here
+        if (!want.test(String(r.Source || ''))) continue;
+        const bid = r.AuraDefinitionBundleId;
+        if (!bid || seenBundle.has(bid)) continue;
+        seenBundle.add(bid);
+        add('AuraDefinitionBundle', bid, r.AuraDefinitionBundle?.DeveloperName || bid);
+      }
+    } catch (_) {/* non-fatal */}
+
     // 11. Custom metadata records whose value holds the field: a Field
     // Definition relationship makes Salesforce refuse the delete (and SOQL on
     // such a type returned nothing live, so the records are read through
@@ -2324,6 +2354,8 @@ const FieldCleaner = (() => {
                       note: 'The rule’s record filter names the field — active or not, Salesforce refuses the delete. ✂ / ⇄ / ✎ edit the filter here (the diff shown first, a restore point kept), 🗑 delete the rule, or edit it in Setup → Duplicate Management. Nothing switches a duplicate rule off or edits one behind a deployment.' },
     LightningComponentBundle: { icon: '⚡', label: 'Lightning Web Components', fixable: false, sev: 'blocker',
                       note: 'The component imports the field’s schema (@salesforce/schema). Remove the import in the code and deploy. A field named only in the HTML does not block — and is not listed.' },
+    AuraDefinitionBundle: { icon: '⚡', label: 'Aura Components', fixable: false, sev: 'blocker',
+                      note: 'The component’s markup or JavaScript names the field. Salesforce refused a delete over an Aura expression that reads the field (live-tested); a plain text mention may not block — its own answer in the delete box says which. Found by reading every Aura source in the org, not through Salesforce’s index.' },
     CustomMetadataRecord: { icon: '🗂', label: 'Custom Metadata Records', fixable: false, sev: 'blocker',
                       note: 'A record holds the field’s name. When that value is a Field Definition relationship Salesforce refuses the delete; a plain text value only breaks whatever reads it. Edit the record in Setup → Custom Metadata Types → Manage Records.' },
     LeadConvertSettings: { icon: '🔀', label: 'Lead Field Mapping', fixable: false, sev: 'blocker',
@@ -2413,7 +2445,7 @@ const FieldCleaner = (() => {
         so a report that uses this field can be missing here. Before deleting, press 📊 Scan the reports below (it reads every report itself),
         or open the field in Setup and press “Where is this used?” — that page lists reports.
         <strong>Not read, and not a blocker</strong> (the delete goes through; these break or lose the field quietly):
-        Aura component markup, a Lightning web component that names the field only in its HTML,
+        a Lightning web component that names the field only in its HTML,
         related-list columns on other objects’ layouts, record-type picklist values, dependent-picklist settings,
         Experience Cloud pages, and any text that holds the field’s name (dynamic Apex, custom settings, custom
         labels). <strong>Not readable</strong>: territory assignment rules and managed-package components.
@@ -2526,7 +2558,7 @@ const FieldCleaner = (() => {
           <div class="fc-clean-sub"><code>${esc(_selField.api)}</code> belongs to the package <b>${esc(pkgNs)}</b>. A packaged field cannot be deleted here — it goes only with the package (or with a package upgrade). The package’s own code, flows and rules are not readable, so they were not scanned: this is not “unused”.</div>`
           : `<div class="fc-clean-icon">✅</div>
           <div class="fc-clean-title">No dependencies found</div>
-          <div class="fc-clean-sub">The scan found nothing that uses this field. 🩺 Ask Salesforce confirms nothing blocks the delete.</div>
+          <div class="fc-clean-sub">The scan found nothing that uses this field. Salesforce is asked below whether it would accept the delete.</div>
           <div class="fc-clean-btns">${_askHtml().split('\n')[0]}<button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button></div>
           <div class="fc-ask-box" id="fcAskBox" hidden></div>`}
         </div>
@@ -2538,7 +2570,7 @@ const FieldCleaner = (() => {
         <div id="fcRptScan"></div>
         <div id="fcOrgSweep"></div>`;
       if (eid('fcDelFreeBtn')) eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);   // a packaged field has no delete button
-      _wireAsk();
+      _autoAsk();
       runDataUsage();
       renderDeprecationZone(fieldId);
       renderFlsPanel();
@@ -2689,8 +2721,8 @@ const FieldCleaner = (() => {
             : blockerTotal > 0
               ? '🔒 Delete is blocked until the blockers below are cleared.'
               : silentManual > 0
-                ? '✅ The scan lists no blocker (the references below simply go with the field). 🩺 Ask Salesforce confirms it.'
-                : '✅ The scan lists no blocker. 🩺 Ask Salesforce confirms it.'}
+                ? '✅ The scan lists no blocker (the references below simply go with the field).'
+                : '✅ The scan lists no blocker.'}
         </div>
         ${pkgNs ? '' : _askHtml().split('\n')[0]}
         <button class="btn btn-danger" id="fcDelBtn" ${delDisabled ? 'disabled' : ''}>
@@ -2766,7 +2798,7 @@ const FieldCleaner = (() => {
 
     const delBtn = eid('fcDelBtn');
     if (delBtn) delBtn.onclick = () => confirmDelete(fieldId);
-    _wireAsk();
+    _autoAsk();
 
     runDataUsage();              // F1: fill the verdict placeholder asynchronously
     renderDeprecationZone(fieldId);  // F3: stage banner / deprecate button
@@ -4133,7 +4165,7 @@ const FieldCleaner = (() => {
     if (fixable || canDel) {
       return `
         <div class="fc-item" id="fcItem_${esc(id)}">
-          <span class="fc-item-name">${name}</span>
+          <span class="fc-item-name">${name}</span>${dep._tag ? `<span class="fc-item-tag">${esc(dep._tag)}</span>` : ''}
           <span class="fc-item-btns">
             ${inspBtn}
             <span class="${canDel ? 'fc-del-pair' : 'fc-fix-pair'}" data-id="${esc(id)}" data-type="${esc(type)}" data-name="${name}">${_fixBtnsHtml(type, id, rawName)}</span>
@@ -4143,7 +4175,7 @@ const FieldCleaner = (() => {
     }
     return `
       <div class="fc-item" id="fcItem_${esc(id)}">
-        <span class="fc-item-name">${name}</span>
+        <span class="fc-item-name">${name}</span>${dep._tag ? `<span class="fc-item-tag">${esc(dep._tag)}</span>` : ''}
         <span class="fc-item-btns">
           ${inspBtn}
           <button class="btn btn-sm fc-setup-btn" data-type="${esc(type)}">↗ Setup</button>
@@ -4582,7 +4614,9 @@ const FieldCleaner = (() => {
     if (remaining.length === 0 && blockerTotal === 0) {
       delBtn.disabled = false;
       const note = eid('fcDeleteNote');
-      if (note) note.textContent = 'Everything listed is resolved. 🩺 Ask Salesforce confirms nothing else blocks.';
+      if (note) note.textContent = 'Everything listed is resolved — asking Salesforce whether anything else blocks…';
+      if (_lastScan) _lastScan.ask = null;
+      askSalesforce().then(() => { const n2 = eid('fcDeleteNote'); if (n2 && /asking Salesforce/.test(n2.textContent)) n2.textContent = 'Everything listed is resolved.'; });
     } else if (remaining.length === 0 && blockerTotal > 0) {
       delBtn.disabled = true;
       const note = eid('fcDeleteNote');
@@ -6902,24 +6936,69 @@ const FieldCleaner = (() => {
         <div class="fc-ask-box" id="fcAskBox" hidden></div>`;
   }
   function _wireAsk() { const b = eid('fcAskBtn'); if (b) b.onclick = () => askSalesforce(); }
+  let _askBusy = false;
   async function askSalesforce() {
-    const btn = eid('fcAskBtn'), box = eid('fcAskBox');
-    if (!btn || !box || !_selObj || !_selField) return;
-    const obj = _selObj.api, field = _selField.api;
+    const btn = eid('fcAskBtn');
+    if (!btn || !_selObj || !_selField || _askBusy) return;
+    const obj = _selObj.api, field = _selField.api, scan = _lastScan;
+    _askBusy = true;
     btn.disabled = true; btn.textContent = '⏳ Asking Salesforce…';
     let r;
     try { r = await _deleteFieldViaMetadata(`${obj}.${field}`, true); }
     catch (e) { r = { error: String((e && e.message) || e) }; }
-    if (!btn.isConnected) return;                                   // the list was redrawn meanwhile
-    btn.disabled = false; btn.textContent = _ASK_BTN;
-    if (!_selField || _selField.api !== field) return;              // another field was picked meanwhile
-    const at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const view = fcAskVerdict(r, (_manualBlockers || []).reduce((n, b) => n + b.count, 0) + new Set([...document.querySelectorAll('#fcResults .fc-fix-btn:not([disabled])')].filter(b => (TYPE_CFG[b.dataset.type] || TYPE_CFG_DEFAULT).sev === 'blocker').map(b => b.dataset.id)).size);
+    finally { _askBusy = false; }
+    if (!_selField || _selField.api !== field || _lastScan !== scan) return;   // another field or another scan meanwhile
+    const ask = { r, at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+    if (scan) scan.ask = ask;
+    // an Aura bundle Salesforce names and the list lacks becomes a row of the list (its index did not return it)
+    let joined = 0;
+    if (scan && r && !r.error && !r.success) {
+      try { joined = await _askJoin(scan, fcAskVerdict(r, 1).lines); } catch (_) { /* the box still names them */ }
+    }
+    if (_lastScan !== scan) return;
+    if (joined) { await renderResults(scan.deps, scan.fieldId); return; }       // draws the box again from scan.ask
+    _paintAsk(ask);
+  }
+  async function _askJoin(scan, lines) {
+    const want = fcAskAuraBundles(lines);
+    if (!want.length) return 0;
+    const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+      query: `SELECT Id, DeveloperName, NamespacePrefix FROM AuraDefinitionBundle WHERE DeveloperName IN (${want.map(w => `'${w.name}'`).join(',')})` });
+    let n = 0;
+    for (const b of ((q && q.records) || [])) {
+      if (!want.some(w => w.name === b.DeveloperName && (w.ns === 'c' ? !b.NamespacePrefix : w.ns === b.NamespacePrefix))) continue;
+      if (scan.deps.some(d => String(d.MetadataComponentId).slice(0, 15) === String(b.Id).slice(0, 15))) continue;
+      scan.deps.push({ MetadataComponentType: 'AuraDefinitionBundle', MetadataComponentId: b.Id, MetadataComponentName: b.DeveloperName, _tag: '🩺 named by Salesforce — its index did not return it' });
+      n++;
+    }
+    return n;
+  }
+  function _paintAsk(ask) {
+    const btn = eid('fcAskBtn'), box = eid('fcAskBox');
+    if (btn) { btn.disabled = false; btn.textContent = _ASK_BTN; }
+    if (!box || !ask) return;
+    const listed = (_manualBlockers || []).reduce((n, b) => n + b.count, 0) + new Set([...document.querySelectorAll('#fcResults .fc-fix-btn:not([disabled])')].filter(b => (TYPE_CFG[b.dataset.type] || TYPE_CFG_DEFAULT).sev === 'blocker').map(b => b.dataset.id)).size;
+    const view = fcAskVerdict(ask.r, listed);
     box.hidden = false;
     box.className = `fc-ask-box fc-ask-${view.kind}`;
-    box.innerHTML = `<div class="fc-ask-head">${esc(view.head)} <span class="fc-ask-at">checked ${esc(at)} · nothing was deleted</span></div>`
+    box.innerHTML = `<div class="fc-ask-head">${esc(view.head)} <span class="fc-ask-at">checked ${esc(ask.at)} · nothing was deleted</span></div>`
       + (view.lines.length ? `<ul class="fc-ask-list">${view.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : '')
       + (view.foot ? `<div class="fc-ask-foot">${esc(view.foot)}</div>` : '');
+    // Salesforce refuses → the delete stays locked whatever the list says
+    if (view.kind === 'blocked') {
+      for (const id of ['fcDelBtn', 'fcDelFreeBtn']) { const d = eid(id); if (d) d.disabled = true; }
+      const note = eid('fcDeleteNote');
+      if (note && listed === 0) note.textContent = '🔒 Salesforce refuses the delete — see its answer below.';
+    }
+  }
+  // With every scan (user 2026-11-10: "We need to run it every scan"): once per scan, never for a 👀-only scope or a
+  // packaged field (no button there). A redraw of the same scan shows the answer it already has.
+  function _autoAsk() {
+    _wireAsk();
+    if (!eid('fcAskBtn') || !_lastScan) return;
+    if (_lastScan.ask) { _paintAsk(_lastScan.ask); return; }
+    if (fcScopeNorm(_lastScan.scope) === 'mentions') return;
+    askSalesforce();
   }
 
   async function doDelete(fieldId) {
