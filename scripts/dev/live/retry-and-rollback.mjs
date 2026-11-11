@@ -54,7 +54,7 @@ export default async function (h) {
     await h.waitFor("!/checking the parents|reading what each object/i.test(document.querySelector('#dsMain')?.innerText || '')", 120000, 1000); await h.sleep(1500);
     const settled = await dump(h, '#dsDepSummary', 300);
     h.log('SUMMARY after retry, reads done:', settled);
-    if (/Nothing selected/i.test(settled)) throw new Error('↻ Retry says the failed records are ticked, but nothing is selected');
+    if (/Nothing selected/i.test(settled)) { process.exitCode = 1; h.log('❌ FAILED —', '↻ Retry says the failed records are ticked, but nothing is selected', '(the rollback below still runs, so the target is left clean)'); }
     await h.shot(h.shots + '/retry.png');
   }
 

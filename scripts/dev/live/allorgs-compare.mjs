@@ -8,7 +8,7 @@
 //   checked (matched + missing = source count, the percentage follows); the CSV
 //   export is a real download read back; 🚀 Deploy on a row opens the Deploy page
 //   (nothing ticked, nothing run).
-import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 const NL = String.fromCharCode(10);
 const lines = (s, n = 2500) => String(s || '').slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
@@ -99,7 +99,8 @@ export default async function (h) {
   // the CSV export of the last run
   const dlDir = resolve('dist/qa/downloads'); mkdirSync(dlDir, { recursive: true });
   await h.cdp('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir, eventsEnabled: true }, null);
-  const had = new Set(readdirSync(dlDir));
+  // a second run on the same day writes the same file name over the first — tell by the time, not the name
+  const t0csv = Date.now(); const had = { has: x => { try { return statSync(resolve(dlDir, x)).mtimeMs < t0csv - 1000; } catch (_) { return true; } } };
   await h.click('#dsOCExportCsv');
   let f = null; for (let i = 0; i < 40 && !f; i++) { await h.sleep(500); f = readdirSync(dlDir).find(x => !had.has(x) && /\.csv$/.test(x)); }
   if (!f) throw new Error('the compare CSV did not download');

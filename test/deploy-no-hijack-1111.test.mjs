@@ -33,7 +33,10 @@ describe('↻ Retry ticks on the scan the user acts on', () => {
   const DEP = R('studio-deploy.js');
   it('a render that has a fresh read queued leaves the retry request for the next one', () => {
     expect(DEP).toContain('      rescanQueued = true;\n      setTimeout(() => _depRescan(p), 0);');
-    expect(DEP).toContain('if (_depRetry && !rescanQueued && (_depRetry.profileId === p.id');
+    expect(DEP).toContain('if (_depRetry && !rescanQueued && !_depRescanBusy && !window._sftkRunTail && (_depRetry.profileId === p.id');
+    // the run's own tail (refresh, child re-reads, selection reset) is fenced, and always released
+    expect(REC).toContain('window._sftkRunTail = true;\n  try {');
+    expect(REC).toContain('} finally { window._sftkRunTail = false; }\n  renderReconcile();');
   });
   it('the Deploy page itself never repaints over another page', () => {
     const i = DEP.indexOf('async function renderDeploy() {');

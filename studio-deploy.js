@@ -541,7 +541,9 @@ async function renderDeploy() {
   // the scan from BEFORE the run and a fresh read is already queued — and that read resets every selection. Ticking
   // now left the banner saying "1 of 1 failed record(s) are ticked" over a page with nothing ticked (QA 2026-11-11,
   // retry-and-rollback on npc → npc2). The request waits for the render after the read.
-  if (_depRetry && !rescanQueued && (_depRetry.profileId === p.id || _depRetry.profileId === p._ringOf?.profileId)) {
+  // …and the read that follows every run may still be in flight when ↻ Retry is pressed (a run where every record
+  // failed: QA 2026-11-11, second find) — the ticks go on when no read is running.
+  if (_depRetry && !rescanQueued && !_depRescanBusy && !window._sftkRunTail && (_depRetry.profileId === p.id || _depRetry.profileId === p._ringOf?.profileId)) {
     const rp = sftkDeployRetryPicks(scan, _depRetry.byPath, sftkRecChildRowState);
     for (const [k, ids] of Object.entries(rp.picks)) { const set = k === '' ? _recSel.push : _depChildSel(k).push; ids.forEach(id => set.add(id)); }
     _depRetryNote = _depRetry.mode === 'continue' ? sftkDeployContinueLine(rp) : sftkDeployRetryLine(rp);
@@ -1635,8 +1637,11 @@ function sftkDeployRescanKeys(tree, from) {
   if (!Array.isArray(from)) return sftkDeployChildOrder(all);
   return sftkDeployChildOrder(all.filter(k => from.some(f => f !== '' && (k === f || k.startsWith(f + '.')))));
 }
+let _depRescanBusy = 0;       // reads of both orgs in flight (the one after a run, the stale-run one, a refresh)
 async function _depRescan(p, opts) {
   const o = opts || {};
+  _depRescanBusy++;
+  try {
   const b = eid('dsDepRefresh') || eid('dsDepScan');
   if (b) { b.disabled = true; b.textContent = '⏳ reading both orgs…'; }
   // same reset the classic 🔄 does: a new scan invalidates every selection
@@ -1657,6 +1662,7 @@ async function _depRescan(p, opts) {
     catch (e) { failed.push(`${_depObjName(fp, kids[i])}: ${e?.message || e}`); }
   }
   if (failed.length) showToast(`Child scan: ${failed.join(' · ')}`, 'error', 9000);
+  } finally { _depRescanBusy--; }
   if (_currentView === 'deploy') renderDeploy();
 }
 

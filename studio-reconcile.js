@@ -3537,6 +3537,10 @@ async function runReconcile(profile, objType, buckets, opts) {
   log(stoppedWhy ? '⏸' : '✅', stoppedWhy === 'pause' ? 'Paused — the records not reached are still to deploy; ▶ Continue from History.' : stoppedWhy === 'closed' ? 'Stopped — the page was closed mid-run; ▶ Continue from History.' : stoppedWhy ? 'Cancelled — refreshing state…' : `Transfer complete — refreshing state…`);
   window._sftkRunActive = false;
   eid('dsRunPauseBar')?.remove();
+  // The run is in History from here on, and what follows still reads both orgs and then clears every selection. A
+  // ↻ Retry pressed meanwhile must not tick before that (QA 2026-11-11) — the Deploy page waits for this flag.
+  window._sftkRunTail = true;
+  try {
   // Remember which child sections had scans BEFORE the root refresh wipes
   // lastScan.children — they get re-scanned right after so the accordion
   // reflects the new reality (and just-created orphans are visible).
@@ -3636,6 +3640,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       }
     } catch (_) { /* tile refresh is best-effort */ }
   } catch (_) { /* stale view is still better than no view */ }
+  } finally { window._sftkRunTail = false; }
   renderReconcile();
 }
 
