@@ -40,7 +40,7 @@ extensions containing root files that start with `_`).
 - **Email rows say what they are** (2026-11-10). Every email template in the list carries its kind — classic text, classic HTML, Lightning or Visualforce — and the email alerts that send it. Each of those alerts also gets a row of its own, under "Email Alerts (send a template that uses the field)": the alert does not name the field, so it does not stop the delete; fixing the template is the fix.
 - **A flow outcome that rests on the field alone can go as a whole** (2026-11-10). When a decision outcome tests nothing but the field, the confirmation offers a third way: keep the flow running without that outcome. What went down it takes the default outcome; the dialog names the elements that are no longer reached and so stop running. A decision left with no outcome goes too, and what pointed at it points at where its default led. Not offered when that decision is all the flow does — Salesforce refuses a flow with nothing after Start.
 - **Flow Access says which flows it leaves out** (2026-11-10). The list holds the flows a person can be given: screen flows and autolaunched flows with no trigger. Under it, one line counts the active flows that start by themselves (record-triggered, scheduled, event) and are therefore not listed. A before-delete record-triggered flow used to slip into the list; it no longer does.
-- **A Lightning page’s visibility rule: the confirm warns when its filter logic goes** (2026-11-10). Taking the field’s criterion out of a rule with a numbered logic drops that logic — the criteria left are joined by AND. The confirmation now says so above the diff.
+- **A Lightning page’s visibility rule: the confirm warns when its filter logic goes** (2026-11-10). Taking the field’s criterion out of a rule with a numbered logic, such as 1 AND (2 OR 3), drops that logic — the criteria left are joined by AND. The confirmation now says so above the diff.
 - **✂ / 🗑 on a field set of a custom object works** (2026-11-10). On a custom object — your own or a package’s — the field set was looked up under the object’s internal ID and reported "not found in the org". It is now read under the object’s API name.
 - **A packaged field is never called "safe to delete"** (2026-11-10). A field that belongs to an installed package (its name starts with the package’s prefix, like `dlrs__Color__c`) cannot be deleted from the org, and the package’s own code, flows and rules cannot be read. Field Cleaner now says so: no Delete button, and what it lists is what this org built on the field.
 - **A hand edit counts as done only when it worked** (2026-11-10). After "Deploy my edit" the org is read again: every line you added must be there and every line you took out must be gone. If the component still names the field afterwards (a validation rule: still names it and is still active), the edit stays deployed but the row is not ticked — it keeps its buttons and says the delete is still stopped.
@@ -79,8 +79,8 @@ extensions containing root files that start with `_`).
   off and back on, Contact's flow left on (CLI mid-run), Contact's duplicate rule respected, rollback clean.
 - **🎭 PII suggestions on the Deploy page, with the record each example comes from.** "Suggest PII
   treatment for all N to insert" reads the very records the deployment inserts and proposes a treatment per
-  field, each with real examples and the record they come from.
-  ▸ record shows, under every field the policy covers, the value that is actually written, and offers the same suggestions for that one record.
+  field, each with real examples and the record they come from — for example Omer → Lior, in Omer SFTK CX Lead One.
+  ▸ record shows, under every field the policy covers, the value that is actually written — 🎭 written as Lior — and offers the same suggestions for that one record.
 - **The History export says what an update changed, field by field.** A run that updates records now keeps,
   for every field it changed, the value the target held just before the run and the value written; a
   run's JSON export lists them (`fieldChanges`: object, record, field, before, after). The first 200
@@ -213,7 +213,7 @@ extensions containing root files that start with `_`).
   object), each flow placed once — a shared subflow under its triggered caller before a plain autolaunched one. A
   subflow whose caller is not in the list carries an "↳ SUBFLOW" tag; the chips are grouped by direction. Live on
   npc: the four dep-test levels nested under their Account trigger, the packaged SFTK_Pkg_Sub under SFTK_Pkg_Child
-  Trigger, SFTK_Pkg_Sched_Sub under the scheduled flow.
+  Trigger (Lookup Child 2), SFTK_Pkg_Sched_Sub under the scheduled flow.
 - **⏻ Flow switches: the whole chain** (2026-11-08):
   next to "↳ calls N" a dashed "⇊ whole chain down N" when the chain goes deeper than one level, and "⇈ every
   caller up N" next to "↰ called by"; the tooltip names every flow in order, a click ticks them all; nothing is
