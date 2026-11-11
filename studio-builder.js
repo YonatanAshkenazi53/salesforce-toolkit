@@ -1332,6 +1332,12 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
           const cfTitle = `These records are created BEFORE their parent (without ${node.field || 'the parent link'}) and connected afterwards — set in an earlier version or an imported file. This option is no longer offered: click to return to the normal order (parent first).`;
           return `
         <div class="ds-tree-config-row">
+          ${(() => {
+            // the matching field, said on the row (owner 2026-11-11, on a packaged object's tree: "no matching field? where did he go?") —
+            // it was only inside 🎯 Records and on the Deploy page. The chip opens the same window.
+            const mf = (node.matching && Array.isArray(node.matching.fields) && node.matching.fields.filter(Boolean).length) ? node.matching.fields.filter(Boolean) : [node.matchField || (isRoot && _editingProfile?.scanConfig?.matchField) || 'Name'];
+            return `<button class="ds-btn ds-btn-xs ds-btn-config ds-tree-match-chip" data-records-btn="${esc(pathKey)}" title="How ${esc(objName)} records are recognised as the same record in both orgs. Click to change the matching field, or match on several fields.">🔗 Matched by <b>${esc(mf.join(' + '))}</b></button>`;
+          })()}
           <button class="ds-btn ds-btn-xs ds-btn-config" data-records-btn="${esc(pathKey)}" title="Pick specific records to copy">
             🎯 Records${node.recordIds?.length ? ` <span class="ds-config-badge">${node.recordIds.length}</span>` : ''}
           </button>
