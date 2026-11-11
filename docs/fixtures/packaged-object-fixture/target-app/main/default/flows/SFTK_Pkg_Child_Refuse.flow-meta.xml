@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>62.0</apiVersion>
+    <customErrors>
+        <name>Refuse</name>
+        <label>Refuse</label>
+        <locationX>176</locationX>
+        <locationY>287</locationY>
+        <customErrorMessages>
+            <errorMessage>SFTK demo: this flow refuses the child named SFTK Pkg Child 6.</errorMessage>
+            <isFieldError>false</isFieldError>
+        </customErrorMessages>
+    </customErrors>
+    <description>Admin Toolkit fixture, TARGET org only: a before-save flow on a packaged object that refuses one record, so a dry run has a flow error to show. Safe to delete.</description>
+    <interviewLabel>SFTK Pkg Child Refuse {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Pkg Child Refuse</label>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <locationX>50</locationX>
+        <locationY>0</locationY>
+        <connector>
+            <targetReference>Refuse</targetReference>
+        </connector>
+        <filterLogic>and</filterLogic>
+        <filters>
+            <field>Name</field>
+            <operator>EqualTo</operator>
+            <value>
+                <stringValue>SFTK Pkg Child 6</stringValue>
+            </value>
+        </filters>
+        <object>dlrs__LookupChild__c</object>
+        <recordTriggerType>Create</recordTriggerType>
+        <triggerType>RecordBeforeSave</triggerType>
+    </start>
+    <status>Active</status>
+</Flow>

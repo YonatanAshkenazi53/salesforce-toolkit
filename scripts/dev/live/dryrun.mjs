@@ -27,7 +27,7 @@ export default async function (h) {
   await h.login('npc');
   await h.login('npc2');
   await h.studio('');
-  await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
+  await h.importProfiles(process.env.FIXTURE || 'docs/fixtures/complex-deployment/profiles.json');   // FIXTURE + PROFILE: any deployment, e.g. the packaged-object one
   const NAME = process.env.PROFILE || 'SFTK CX — Accounts tree';
   const id = await h.eval(`_profiles.find(p => p.name === ${JSON.stringify(NAME)})?.id`);
   if (!id) throw new Error('fixture profile missing');
@@ -91,6 +91,8 @@ export default async function (h) {
   await h.sleep(7500);
   await h.eval(`(() => { const el = document.querySelector('.ds-dep-actionbar'); if (el) el.scrollIntoView({ block: 'center' }); return true; })()`);
   await h.sleep(500);
+  h.log('WHY LINES:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.ds-prog-err, .ds-prog-note')].map(e => e.innerText.trim()).filter(t => /refused|failed|❌|✗/.test(t))`)));
+  await h.eval(`(() => { const e = [...document.querySelectorAll('.ds-prog-err')].pop(); if (e) e.scrollIntoView({ block: 'center' }); return true; })()`); await h.sleep(400); await h.shot(SHOTS + 'dryrun-why.png');
   h.log('ACTION BAR:', await dump(h, '.ds-dep-actionbar', 700));
   await h.shot(SHOTS + 'dryrun-3-bar.png');
   await theme(h, true); await h.shot(SHOTS + 'dryrun-3-bar-dark.png'); await theme(h, false);

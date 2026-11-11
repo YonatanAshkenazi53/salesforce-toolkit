@@ -66,9 +66,14 @@ describe('2. engine notes stay notes in the run log', () => {
       'Account: DUPLICATES_DETECTED:Use one of these records?:-- (×4800)',
       '🔗 2 lookup(s) included and resolved by matching: ParentId (by Name)',
     ]);
-    expect(calls.map(c => c[0])).toEqual(['ℹ', '❌', 'ℹ']);
-    expect(calls[0][1]).toBe('Account: 5000 record(s) ≥ 2000 — using Bulk API 2.0 (one async job).');
-    expect(calls.map(c => c[2])).toEqual(['ds-prog-note', 'ds-prog-err', 'ds-prog-note']);
+    // 2026-11-11: errors first — four notes used to fill the five lines shown and hid the second reason of a dry run
+    expect(calls.map(c => c[0])).toEqual(['❌', 'ℹ', 'ℹ']);
+    expect(calls[1][1]).toBe('Account: 5000 record(s) ≥ 2000 — using Bulk API 2.0 (one async job).');
+    expect(calls.map(c => c[2])).toEqual(['ds-prog-err', 'ds-prog-note', 'ds-prog-note']);
+    // every error is printed, however many notes there are
+    const many = [];
+    run((i, x, c) => many.push(c), ['ℹ a', 'ℹ b', 'ℹ c', 'ℹ d', 'ℹ e', 'ℹ f', 'Obj: reason one', 'Obj: reason two']);
+    expect(many.filter(c => c === 'ds-prog-err')).toHaveLength(2);
   });
 });
 

@@ -95,7 +95,7 @@ describe('the pages', () => {
   });
   it('runReconcile in probe mode: its own dialog, no restore point, no delete / overwrite / relink / pull, inserts flagged for the engine, no rescan', () => {
     expect(REC).toContain("const PROBE = !!(opts && opts.probe === true);");
-    expect(REC).toContain("title: '🧪 Dry run — a real write that Salesforce rolls back',");
+    expect(REC).toContain("title: 'Dry run — a real write that Salesforce rolls back',");
     expect(REC).toContain("const undoStub = PROBE ? { objects: [] } : await sftkUndoCaptureForRun(");
     expect(REC).toContain("for (const a of (PROBE ? [] : childActs)) {\n    if (!a.delIds.length) continue;");
     expect(REC).toContain("if (!PROBE && delIds.length) {");

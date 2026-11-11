@@ -2551,7 +2551,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       </div>`;
     const tgtGate = (tgtGuarded && probeInserts) ? await sftkOrgWriteGate(profile.targetOrg, _orgs) : null;
     const ok = await sftkConfirmDestructive({
-      title: '🧪 Dry run — a real write that Salesforce rolls back',
+      title: 'Dry run — a real write that Salesforce rolls back',   // the icon is the dialog's own (owner 2026-11-11: "we dont need two icons here")
       icon: '🧪',
       revOverride: { html: '🧪 <strong>Nothing is written.</strong> Salesforce evaluates every record and rolls the transaction back; the run then re-reads the org to confirm.', needsCheckbox: false },
       revWord: 'Rolled back — nothing kept',
@@ -3055,6 +3055,7 @@ async function runReconcile(profile, objType, buckets, opts) {
           cSum.failed ? 'ds-prog-err' : '');
       }
       (res.errors || []).forEach(e => allErrors.push(`insert: ${e}`));
+      _recLogRefused(log, res.summary, PROBE);
       _recLogEngineLines(log, res.errors);
     } catch (e) { allErrors.push(`Push failed: ${e?.message || e}`); log('❌', `Push failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
@@ -3153,6 +3154,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         else log('  ' + (rs.failed ? '⚠' : '✅'), `${rObj}: ${rs.created || 0} created under the new ${obj}${rs.failed ? `, ${rs.failed} failed` : ''}`, rs.failed ? 'ds-prog-err' : '');
       }
       (res.errors || []).forEach(e => allErrors.push(`insert ${obj}: ${e}`));
+      _recLogRefused(log, res.summary, PROBE);
       _recLogEngineLines(log, res.errors);
     } catch (e) { allErrors.push(`Insert ${obj} failed: ${e?.message || e}`); log('❌', `Insert ${obj} failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
@@ -4879,13 +4881,37 @@ function sftkParentPairsOf(res, by) {
 // painting them as red ❌ made a run read as broken (user 2026-09-30: after one
 // real DUPLICATES_DETECTED line, the Bulk-API choice, the person-account note
 // and the lookups disclosure all wore ✕). Same split sftkFriendlyError makes.
-function _recLogEngineLines(log, lines) {
-  for (const e of (lines || []).slice(0, 5)) {
-    const t = String(e);
-    const note = t.includes('ℹ') || t.includes('🔗') || t.includes('📎') || t.includes('⚠') || /hand-pick/i.test(t);
-    if (note) log('  ℹ', t.replace(/^\s*[ℹ⚠]\s*/, ''), 'ds-prog-note');
-    else log('  ❌', t, 'ds-prog-err');
+// Every refused record BY NAME, under its reason (owner 2026-11-11, on a dry run of the packaged-object tree: "we need
+// to say why they are refused" — the log said "3 refused" and showed one reason of two). From the engine's summary:
+// failedSourceIds = [{ id, label, error }]. One line per reason, the records it stopped after it.
+const _recRefusedShown = new Set();
+function _recLogRefused(log, summary, probe) {
+  for (const [obj, s] of Object.entries(summary || {})) {
+    const list = (s && s.failedSourceIds) || [];
+    if (!list.length) continue;
+    const by = new Map();
+    for (const f of list) {
+      const why = String((f && typeof f === 'object' && f.error) || 'Salesforce gave no reason');
+      if (!by.has(why)) by.set(why, []);
+      by.get(why).push((f && typeof f === 'object' && (f.label || f.id)) || String(f));
+    }
+    for (const [why, names] of by) {
+      _recRefusedShown.add(why);
+      log('  ✗', `${names.length} ${obj} ${probe ? 'would be refused' : 'failed'} — ${why}  →  ${names.slice(0, 12).join(' · ')}${names.length > 12 ? ` · and ${names.length - 12} more (⬇ Report lists them all)` : ''}`, 'ds-prog-err');
+    }
   }
+}
+// The engine's own lines. ERRORS FIRST and all of them — four notes used to fill the five lines shown, and the second
+// reason of a dry run was never printed (found 2026-11-11). A reason already said by name above is not said twice.
+function _recLogEngineLines(log, lines) {
+  const shown = (typeof _recRefusedShown !== 'undefined' && _recRefusedShown) || new Set();
+  const all = (lines || []).map(String);
+  const isNote = t => t.includes('ℹ') || t.includes('🔗') || t.includes('📎') || t.includes('⚠') || /hand-pick/i.test(t);
+  const errs = all.filter(t => !isNote(t) && ![...shown].some(w => t.includes(w)));
+  for (const t of errs.slice(0, 40)) log('  ❌', t, 'ds-prog-err');
+  if (errs.length > 40) log('  ❌', `…and ${errs.length - 40} more error line(s) — ⬇ Report has them all`, 'ds-prog-err');
+  for (const t of all.filter(isNote).slice(0, 5)) log('  ℹ', t.replace(/^\s*[ℹ⚠]\s*/, ''), 'ds-prog-note');
+  shown.clear();
 }
 
 async function sftkOpenParentsFirst(p, refObj, forObj) {
