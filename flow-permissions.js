@@ -214,7 +214,8 @@ const FlowPermissions = (() => {
       });
       // Build a lookup: DeveloperName → FlowDefinition.Id
       const fdIdByName = {};
-      if (!fdRes.error && fdRes.records) {
+      if (!fdRes || fdRes.error) throw new Error(`the org's flows could not be read — ${(fdRes && fdRes.error) || 'no answer'}`);   // not "No active assignable flows found" (QA 2026-11-11)
+      if (fdRes.records) {
         for (const r of fdRes.records) fdIdByName[r.DeveloperName] = r.Id;
       }
 
@@ -267,7 +268,11 @@ const FlowPermissions = (() => {
             query: `SELECT Id, ParentId, Parent.Label, SetupEntityId, SetupEntityType
                     FROM SetupEntityAccess WHERE SetupEntityId IN (${inList})`
           });
-          if (res?.records) out.push(...res.records);
+          // A failed chunk is NOT "no grants" (QA 2026-11-11): the grants it held were missing from the picture, and ↩ Undo
+          // of the next change then removed access this run never created. The load fails as a whole instead.
+          if (!res || res.error) throw new Error(`the flows' permission-set access could not be read — ${(res && res.error) || 'no answer'}`);
+          if (res.incomplete) throw new Error(`the flows' permission-set access came back incomplete (${res.incomplete.got} of ${res.incomplete.expected})`);
+          out.push(...(res.records || []));
         }
         return out;
       })();

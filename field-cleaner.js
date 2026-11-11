@@ -4313,8 +4313,15 @@ const FieldCleaner = (() => {
     const ids = [...new Set((rows || []).map(r => String(r.MetadataComponentId || '').substring(0, 15)).filter(Boolean))];
     for (let i = 0; i < ids.length; i += 100) {
       const lit = ids.slice(i, i + 100).map(x => `'${x}'`).join(',');
-      const r = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+      let r = null;
+      for (let t = 0; t < 2 && (!r || r.error); t++) r = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
         query: `SELECT Id, DefinitionId, VersionNumber, Status, ProcessType FROM Flow WHERE Id IN (${lit})` });
+      // Unread → a Process Builder process would pass for a flow and ✂ would rewrite it (QA 2026-11-11). Said in the
+      // gate; Delete stays locked until a re-scan reads them.
+      if ((!r || r.error) && _lastScan) {
+        _lastScan.unread = _lastScan.unread || [];
+        if (!_lastScan.unread.some(u => u.leg === 'flow versions')) _lastScan.unread.push({ leg: 'flow versions', why: `their number, state and kind (flow or Process Builder) could not be read — ${String((r && r.error) || 'no answer').slice(0, 140)}. Do not fix a flow from this list; re-scan first.` });
+      }
       for (const v of (r?.records || [])) {
         // ProcessType 'Workflow' is a Process Builder process: the index lists
         // it as a Flow and it blocks the delete like one (live 2026-11-06),
@@ -5339,7 +5346,8 @@ const FieldCleaner = (() => {
       // The new version must not mention the field either — formula and
       // decision text is outside what the auto-fix touches, so say so.
       const check = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id: ver.newId, _suppressError: true });
-      out.stillMentions = !!(check?.Metadata && flowReferencesField(check.Metadata));
+      // a re-read that FAILED is not "no more mentions" (QA 2026-11-11): unread counts as still mentioning, so the row stays open
+      out.stillMentions = !check || !!check.error || !check.Metadata || flowReferencesField(check.Metadata);
       if (swapping && check?.Metadata) {
         // After a swap, "still mentions" means: something of THIS field is left
         // (movable, or undecided) — a same-named field of another object is not.
@@ -5463,12 +5471,15 @@ const FieldCleaner = (() => {
         query: `SELECT DefinitionId FROM Flow WHERE Id = '${anyVersionId}'`
       });
       const defId = defRes?.records?.[0]?.DefinitionId;
-      if (!defId) return out;
+      // a lookup that FAILED is not "no old versions" (QA 2026-11-11): the row was marked ✅ Done and Delete unlocked
+      // while an old version still held the field. Counted as still blocking, so the row stays open.
+      if (!defId) { out.stillBlocking = 1; out.unread = String((defRes && defRes.error) || 'the flow was not found'); return out; }
       // …then list every version of it.
       const verRes = await bg({
         type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
         query: `SELECT Id, Status, VersionNumber FROM Flow WHERE DefinitionId = '${defId}' ORDER BY VersionNumber DESC`
       });
+      if (!verRes || verRes.error || verRes.incomplete) { out.stillBlocking = 1; out.unread = String((verRes && verRes.error) || 'the list of versions came back incomplete'); return out; }
       const versions = verRes?.records || [];
       const stale = [];
       for (const v of versions) {
@@ -5479,9 +5490,12 @@ const FieldCleaner = (() => {
           type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
           sobject: 'Flow', id: v.Id
         });
-        if (read?.error || !read?.Metadata) continue;
+        if (read?.error || !read?.Metadata) { out.stillBlocking++; out.unread = `v${v.VersionNumber} could not be read (${String((read && read.error) || 'no metadata')})`; continue; }
         if (!flowReferencesField(read.Metadata)) continue;
         stale.push(v);
+        // a restore point of every version that goes — this path (the inspector's "✂ Remove selected") had none,
+        // while its History note said the versions' metadata is kept under ↩ Restore points
+        await _snapshotFix('Flow', v.Id, `${flowName} v${v.VersionNumber}`, read.FullName, read.Metadata);
       }
       if (!stale.length) return out;
       // Paused interviews block the delete — name them and ask, then clear
@@ -8599,23 +8613,30 @@ const FieldCleaner = (() => {
   const SNAP_KEY = 'fc_fix_snapshots';
   const SNAP_CAP = 20;
 
+  // NO RESTORE POINT, NO WRITE (QA 2026-11-11). A failed save used to be logged and passed over — the fix went on
+  // while its dialog said "a restore point is saved first" (and a flow fix deletes versions for good). Every caller
+  // saves BEFORE it writes, so a throw here stops the fix with nothing changed. A full store is retried once with the
+  // oldest half of the restore points dropped.
   async function _snapshotFix(type, id, name, fullName, metadata) {
-    try {
-      const store = await chrome.storage.local.get(SNAP_KEY);
-      const list = store[SNAP_KEY] || [];
-      list.unshift({
-        at: Date.now(),
-        orgKey: sftkOrgKey(_orgUrl), orgUrl: _orgUrl,
-        type, id, name, fullName: fullName || null,
-        obj: _selObj?.api, field: _selField?.api,
-        metadata: JSON.parse(JSON.stringify(metadata)),   // deep copy — fixers mutate in place
-      });
-      await chrome.storage.local.set({ [SNAP_KEY]: list.slice(0, SNAP_CAP) });
-      renderSnapshotLog();
-    } catch (e) {
-      // Snapshot failure must never block the fix itself.
-      if (window.SFToolkitDebug?.enabled) window.SFToolkitDebug.log('fields', 'error', 'snapshot failed', e.message);
+    const entry = {
+      at: Date.now(),
+      orgKey: sftkOrgKey(_orgUrl), orgUrl: _orgUrl,
+      type, id, name, fullName: fullName || null,
+      obj: _selObj?.api, field: _selField?.api,
+      metadata: JSON.parse(JSON.stringify(metadata === undefined ? null : metadata)),   // deep copy — fixers mutate in place
+    };
+    let lastErr = null;
+    for (const cap of [SNAP_CAP, Math.max(1, Math.floor(SNAP_CAP / 2))]) {
+      try {
+        const store = await chrome.storage.local.get(SNAP_KEY);
+        const list = [entry, ...(store[SNAP_KEY] || []).filter(x => x !== entry)];
+        await chrome.storage.local.set({ [SNAP_KEY]: list.slice(0, cap) });
+        try { renderSnapshotLog(); } catch (_) { /* the list is a view; the restore point is saved */ }
+        return;
+      } catch (e) { lastErr = e; }
     }
+    if (window.SFToolkitDebug?.enabled) window.SFToolkitDebug.log('fields', 'error', 'snapshot failed', lastErr && lastErr.message);
+    throw new Error(`The restore point for “${name}” could not be saved (${(lastErr && lastErr.message) || 'storage error'}) — nothing was changed. Free some space (History → clear old entries) and try again.`);
   }
 
   // A restore point's kind in words: "🗑 validation rule", "✂ workflow rule", "Layout"…

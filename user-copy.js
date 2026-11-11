@@ -653,6 +653,10 @@ const UserCopy = (() => {
       legs: [{ key: 'ps', label: 'permission sets', weight: 2 }, { key: 'psg', label: 'permission set groups', weight: 1 }, { key: 'locale', label: 'locale & timezone', weight: 1 }, { key: 'groups', label: 'public groups', weight: 1 }, { key: 'perms', label: 'user permissions', weight: 1 }] }) : null;
 
     try {
+      // A READ THAT FAILED IS NOT AN EMPTY ANSWER (QA 2026-11-11): bg() answers { error } and never throws, so none of
+      // these reads was checked — a failed one read "Source user has no permission sets", or listed everything as
+      // "can be copied". ucNeed throws; the catch below says which read failed and nothing is offered.
+      const ucNeed = (r, what) => { if (!r || r.error) throw new Error(`${what} could not be read — ${(r && r.error) || 'no answer'}`); if (r.incomplete) throw new Error(`${what} came back incomplete (${r.incomplete.got} of ${r.incomplete.expected})`); return r; };
       // Permission sets on source
       const spsR = await bg({
         type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
@@ -663,7 +667,7 @@ const UserCopy = (() => {
       });
       // Sorted HERE, never in the query: "ORDER BY PermissionSet.Label" made Salesforce drop every standard,
       // licence-based permission set of the user without a word (live 2026-11-10 on npc: 10 rows, 5 with the sort).
-      sourcePermSets = ucSortByLabel(spsR.records || [], r => r.PermissionSet && (r.PermissionSet.Label || r.PermissionSet.Name));
+      sourcePermSets = ucSortByLabel(ucNeed(spsR, 'The source user’s permission sets').records || [], r => r.PermissionSet && (r.PermissionSet.Label || r.PermissionSet.Name));
 
       // Permission sets already on target
       const tpsR = await bg({
@@ -671,7 +675,7 @@ const UserCopy = (() => {
         query: `SELECT PermissionSetId FROM PermissionSetAssignment ` +
           `WHERE AssigneeId=${soqlLit(targetUser.Id)} AND PermissionSet.IsOwnedByProfile=false`
       });
-      targetPermSetIds = new Set((tpsR.records || []).map(r => r.PermissionSetId));
+      targetPermSetIds = new Set((ucNeed(tpsR, 'The target user’s permission sets').records || []).map(r => r.PermissionSetId));
 
       if (prog) prog.step('psg');
       await loadPermSetGroups();
@@ -683,7 +687,7 @@ const UserCopy = (() => {
         query: `SELECT LocaleSidKey,LanguageLocaleKey,TimeZoneSidKey,EmailEncodingKey ` +
           `FROM User WHERE Id=${soqlLit(sourceUser.Id)}`
       });
-      sourceUserFields = sfR.records?.[0] || {};
+      sourceUserFields = ucNeed(sfR, 'The source user’s locale and time zone').records?.[0] || {};
 
       // Target user locale/tz fields
       const tfR = await bg({
@@ -691,7 +695,7 @@ const UserCopy = (() => {
         query: `SELECT LocaleSidKey,LanguageLocaleKey,TimeZoneSidKey,EmailEncodingKey ` +
           `FROM User WHERE Id=${soqlLit(targetUser.Id)}`
       });
-      targetUserFields = tfR.records?.[0] || {};
+      targetUserFields = ucNeed(tfR, 'The target user’s locale and time zone').records?.[0] || {};
 
       if (prog) prog.step('groups');
       // Source public groups
@@ -700,7 +704,7 @@ const UserCopy = (() => {
         query: `SELECT GroupId,Group.Name FROM GroupMember ` +
           `WHERE UserOrGroupId=${soqlLit(sourceUser.Id)} AND Group.Type='Regular'`
       });
-      sourceGroups = sgR.records || [];
+      sourceGroups = ucNeed(sgR, 'The source user’s public groups').records || [];
 
       // Target public groups
       const tgR = await bg({
@@ -708,7 +712,7 @@ const UserCopy = (() => {
         query: `SELECT GroupId FROM GroupMember ` +
           `WHERE UserOrGroupId=${soqlLit(targetUser.Id)} AND Group.Type='Regular'`
       });
-      targetGroupIds = new Set((tgR.records || []).map(r => r.GroupId));
+      targetGroupIds = new Set((ucNeed(tgR, 'The target user’s public groups').records || []).map(r => r.GroupId));
 
       if (prog) prog.step('perms');
       // User-record permission booleans (Marketing User, Flow User, etc.)
@@ -720,12 +724,12 @@ const UserCopy = (() => {
           type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
           query: `SELECT ${fieldList} FROM User WHERE Id=${soqlLit(sourceUser.Id)}`
         });
-        sourceUserPerms = spR.records?.[0] || {};
+        sourceUserPerms = ucNeed(spR, 'The source user’s user permissions').records?.[0] || {};
         const tpR = await bg({
           type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
           query: `SELECT ${fieldList} FROM User WHERE Id=${soqlLit(targetUser.Id)}`
         });
-        targetUserPerms = tpR.records?.[0] || {};
+        targetUserPerms = ucNeed(tpR, 'The target user’s user permissions').records?.[0] || {};
       }
 
     } catch (e) {

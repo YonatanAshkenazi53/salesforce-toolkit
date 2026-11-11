@@ -2254,6 +2254,9 @@ const LightningPages = (() => {
           type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
           path: `services/data/v62.0/sobjects/${descApiName}/describe/?_=${Date.now()}`
         });
+        // bg() answers { error } and never throws — the catch below could not fire, so a describe that FAILED read
+        // "Not assigned" (QA 2026-11-11). Said as a failed probe: the page's status is then "unknown", not "unassigned".
+        if (!descRes || descRes.error) _lpProbeFailed = String((descRes && descRes.error) || 'no answer');
         const verdict = lpOrgDefaultsFromDescribe(descRes, pageId, devName, allPages);
         Object.assign(log, verdict.log);
         if (verdict.conclusive) {

@@ -2257,9 +2257,18 @@ async function showActiveWarningModal(activeFlows) {
     document.getElementById('backupAllBtn').addEventListener('click', async () => {
       const allBtn = document.getElementById('backupAllBtn');
       allBtn.disabled = true;
+      const notSaved = [];
       for (let i = 0; i < activeFlows.length; i++) {
         allBtn.textContent = `⏳ ${i + 1} / ${activeFlows.length}`;
-        try { await downloadFlowBackup(activeFlows[i]); } catch (_) {}
+        // a backup that FAILED is said (QA 2026-11-11): "All Downloaded" used to show whatever happened, in the
+        // dialog that precedes the delete of ACTIVE flows
+        try { await downloadFlowBackup(activeFlows[i]); } catch (e) { notSaved.push(`${activeFlows[i].MasterLabel || activeFlows[i].Id} (${String((e && e.message) || e).slice(0, 80)})`); }
+      }
+      if (notSaved.length) {
+        allBtn.textContent = `⚠ ${notSaved.length} of ${activeFlows.length} NOT downloaded — try again`;
+        allBtn.title = notSaved.join(' · ');
+        allBtn.disabled = false;
+        return;
       }
       allBtn.textContent = '✅ All Downloaded';
     });
@@ -2863,6 +2872,7 @@ async function deleteOneFlow(flow, done, total, journal, track) {
     // of deleteOneFlow, via performDeletion)
     // The write discipline (sftk-write.js): the DELETE is the write, a
     // Tooling re-query of the version id is the verify — gone = ok.
+    let rereadFailed = '';
     const wr = await sftkWriteVerified({
       describe: `${flow.MasterLabel} v${flow.VersionNumber}`,
       journal,
@@ -2870,11 +2880,20 @@ async function deleteOneFlow(flow, done, total, journal, track) {
       verify: async () => {
         const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true,
           query: `SELECT Id FROM Flow WHERE Id = '${flow.Id}'` });
-        if (!q || q.error) return { ok: false, text: null };
-        return { ok: !(q.records && q.records.length), text: null };
+        // A re-read that FAILED is not "the org still shows it" (QA 2026-11-11): Salesforce accepted the DELETE, so the
+        // version is gone — it used to be reported as still there, kept out of the undo record, and (for an active
+        // flow) a switch-back-on of the deleted version was attempted. Two more tries, then: deleted, not re-read.
+        let q2 = q;
+        for (let t = 0; t < 2 && (!q2 || q2.error); t++) { await wait(1200); q2 = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true, query: `SELECT Id FROM Flow WHERE Id = '${flow.Id}'` }); }
+        if (!q2 || q2.error) { rereadFailed = String((q2 && q2.error) || 'no answer'); return { ok: false, text: null }; }
+        return { ok: !(q2.records && q2.records.length), text: null };
       },
     });
     if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
+    if (!wr.ok && rereadFailed) {
+      if (track) { track.deleted.add(flow.Id); (track.unverified || (track.unverified = [])).push(`${flow.MasterLabel} v${flow.VersionNumber}`); }
+      return;   // deleted (Salesforce accepted it); the re-read could not confirm
+    }
     if (!wr.ok) throw new Error('deleted, but the org still shows this flow version on re-read');
     // History: a deleted flow version is gone for good — no undo can bring
     // it back. Tracked so the journal's undo can say which are permanent.

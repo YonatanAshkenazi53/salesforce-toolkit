@@ -159,7 +159,7 @@ describe('field-cleaner.js executes the plan in the safe order', () => {
   });
 
   it('the new version is re-read for a leftover mention (formula / decision text)', () => {
-    expect(exec).toContain('out.stillMentions = !!(check?.Metadata && flowReferencesField(check.Metadata));');
+    expect(exec).toContain('out.stillMentions = !check || !!check.error || !check.Metadata || flowReferencesField(check.Metadata);');
     expect(one).toContain('the new version still mentions the field');
   });
 

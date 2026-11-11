@@ -13,7 +13,7 @@ describe('no query in the extension sorts by a parent field', () => {
   it('user-copy.js has no ORDER BY <relationship>.<field>', () => {
     expect(UC).not.toContain('ORDER BY PermissionSet.Label`');
     expect(UC).not.toContain('ORDER BY PermissionSetGroup.MasterLabel`');
-    expect(UC).toContain('sourcePermSets = ucSortByLabel(spsR.records || [],');
+    expect(UC).toContain("sourcePermSets = ucSortByLabel(ucNeed(spsR, 'The source user’s permission sets').records || [],");
   });
   it('the rows are sorted in the page', () => {
     const rows = [{ PermissionSet: { Label: 'b' } }, { PermissionSet: { Label: 'A' } }, { PermissionSet: {} }];
