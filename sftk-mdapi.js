@@ -492,6 +492,7 @@ function _sftkMdDeleteTable() {
   EscalationRule:          { parent: 'EscalationRules',  tag: 'escalationRule',       folder: 'escalationRules',   suffix: 'escalationRules',  what: 'escalation rule' },
   MatchingRule:            { parent: 'MatchingRules',    tag: 'matchingRules',        folder: 'matchingRules',     suffix: 'matchingRule',     what: 'matching rule' },
   ApprovalProcess:         { folder: 'approvalProcesses', suffix: 'approvalProcess',  what: 'approval process' },
+  EntitlementProcess:      { folder: 'entitlementProcesses', suffix: 'entitlementProcess', what: 'entitlement process' },   // 2026-11-11: blocks the delete, live
   RestrictionRule:         { folder: 'restrictionRules', suffix: 'rule',              what: 'scoping or restriction rule', tooling: 'RestrictionRule' },
   CustomMetadataRecord:    { mdType: 'CustomMetadata',   folder: 'customMetadata',    suffix: 'md',               what: 'custom metadata record' },
   FlexiPage:               { folder: 'flexipages',       suffix: 'flexipage',         what: 'Lightning page',             tooling: 'FlexiPage' },

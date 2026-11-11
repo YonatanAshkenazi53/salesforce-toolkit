@@ -155,11 +155,11 @@ describe('fcEstimateScanCalls (field-cleaner.js)', () => {
   // query, report-type list, workflow rule + alert + outbound-message lists
   // (3), approval-process list, sharing-rules read, duplicate-rule query,
   // LWC source query, custom-metadata list, Path query. Eight legs fan out.
-  it('pre-scan (nothing discovered yet): the 24-call floor plus eight unknown legs', () => {
+  it('pre-scan (nothing discovered yet): the 25-call floor plus nine unknown legs (2026-11-11: +1, the list of custom settings; one call per setting)', () => {
     const e = fcEstimateScanCalls(null);
-    expect(e.now).toBe(24);   // +2 on 2026-11-10: the check-only delete (Ask Salesforce) rides every scan;   // +1 on 2026-11-10: the email-template read; +1 the same day: the object's search layouts
+    expect(e.now).toBe(25);   // +2 on 2026-11-10: the check-only delete (Ask Salesforce) rides every scan;   // +1 on 2026-11-10: the email-template read; +1 the same day: the object's search layouts
     expect(e.known).toBe(false);
-    expect(e.moreIf).toHaveLength(8);
+    expect(e.moreIf).toHaveLength(9);
     expect(e.moreIf).toContain('Lightning page in the org');
     expect(e.moreIf).toContain('list view on this object');
     expect(e.moreIf).toContain('create/update quick action on this object');
@@ -167,25 +167,25 @@ describe('fcEstimateScanCalls (field-cleaner.js)', () => {
   });
 
   it('every discovered leg moves from "more if" into the floor at 1 call per item', () => {
-    const e = fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0 });
-    expect(e.now).toBe(24 + 40 + 6 + 3 + 2);
+    const e = fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0, customSettings: 0 });
+    expect(e.now).toBe(25 + 40 + 6 + 3 + 2);
     expect(e.known).toBe(true);
     expect(e.moreIf).toEqual([]);
   });
 
   it('a partially known scan counts what it knows and names what it does not', () => {
     const e = fcEstimateScanCalls({ flexiPages: 40 });
-    expect(e.now).toBe(64);
+    expect(e.now).toBe(65);
     expect(e.known).toBe(false);
-    expect(e.moreIf).toHaveLength(7);
+    expect(e.moreIf).toHaveLength(8);
     expect(e.moreIf).not.toContain('Lightning page in the org');
   });
 
   it('junk counts are unknown, not zero — absence of an answer is not an answer', () => {
     const e = fcEstimateScanCalls({ flexiPages: 'many', listViews: -2, quickActions: NaN, reportTypes: 'some', workflowRules: 'few', approvals: -1, duplicateRules: {}, customMetadata: 'none' });
-    expect(e.now).toBe(24);   // +1 on 2026-11-10: the email-template read; +1 the same day: the object's search layouts
+    expect(e.now).toBe(25);   // +1 on 2026-11-10: the email-template read; +1 the same day: the object's search layouts
     expect(e.known).toBe(false);
-    expect(e.moreIf).toHaveLength(8);
+    expect(e.moreIf).toHaveLength(9);
   });
 });
 
@@ -197,7 +197,7 @@ describe('fcScanBudgetLine (field-cleaner.js)', () => {
 
   it('quotes "≈N now, plus 1 for each …" — never a fake total — before discovery', () => {
     const line = fcScanBudgetLine(preScan, null);
-    expect(line.text).toMatch(/^≈24 API calls now, plus 1 for each /);
+    expect(line.text).toMatch(/^≈25 API calls now, plus 1 for each /);
     expect(line.text).toContain('Lightning page in the org');
     expect(line.text).toContain('list view on this object');
     expect(line.text).toContain('create/update quick action on this object');
@@ -205,8 +205,8 @@ describe('fcScanBudgetLine (field-cleaner.js)', () => {
   });
 
   it('a fully known cost drops the conditional clause', () => {
-    const line = fcScanBudgetLine(fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0 }), null);
-    expect(line.text).toBe('≈75 API calls');
+    const line = fcScanBudgetLine(fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0, customSettings: 0 }), null);
+    expect(line.text).toBe('≈76 API calls');
   });
 
   it('no budget reader → just the estimate, no meter and no "unavailable" noise', () => {
@@ -222,7 +222,7 @@ describe('fcScanBudgetLine (field-cleaner.js)', () => {
 
   it('reader answered → the meter rides beside the estimate, labeled', () => {
     const line = fcScanBudgetLine(preScan, { label: 'this org', budget: { max: 100, remaining: 90 } });
-    expect(line.text).toContain('≈24 API calls now');
+    expect(line.text).toContain('≈25 API calls now');
     expect(line.text).toContain('this org has 90 of 100 daily API calls remaining');
     expect(line.warn).toBe(false);
   });
@@ -236,7 +236,7 @@ describe('fcScanBudgetLine (field-cleaner.js)', () => {
   });
 
   it('floor equal to remaining does not warn', () => {
-    const line = fcScanBudgetLine(preScan, { label: 'this org', budget: { max: 100, remaining: 24 } });
+    const line = fcScanBudgetLine(preScan, { label: 'this org', budget: { max: 100, remaining: 25 } });
     expect(line.warn).toBe(false);
   });
 });

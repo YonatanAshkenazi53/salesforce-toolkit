@@ -492,7 +492,8 @@ describe('field-cleaner.js query shape', () => {
   it('no longer excludes custom settings — they have custom fields too', () => {
     // The name may survive in a comment explaining the decision; what must be
     // gone is the WHERE clause that hid them.
-    expect(SRC).not.toMatch(/IsCustomSetting\s*=/);
+    // (2026-11-11: `IsCustomSetting = true` now LISTS the settings whose records are read — that is not the old filter)
+    expect(SRC).not.toMatch(/IsCustomSetting\s*=\s*false/);
   });
 
   it('paginates the object list with SF_QUERY_ALL', () => {

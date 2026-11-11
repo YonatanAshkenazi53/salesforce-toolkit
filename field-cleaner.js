@@ -383,6 +383,10 @@ function fcScopeLegs(scope, objApi) {
     objectRules: blockers && (o === 'lead' || o === 'case'),
     reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions, validationRulesOff: mentions,
     emailTemplates: mentions,
+    // 2026-11-11 (user: "תוסיף את אלו שעלולים לחסום אבל גם custom settings"): entitlement processes run on Case and
+    // WorkOrder only; custom-setting RECORDS are data that can hold the field's name as text (👀)
+    entitlements: blockers && (o === 'case' || o === 'workorder'),
+    customSettings: mentions,
     searchLayouts: mentions,    // the object's search layouts: one metadata read of the object (2026-11-10)   // every template's text is read — Salesforce's index lists few of them (2026-11-10)
   };
 }
@@ -413,11 +417,13 @@ function fcEstimateScanCalls(counts, scope, objApi) {
     L.approvals      && { count: known(c.approvals),      what: '10 approval processes on this object' },
     L.duplicateRules && { count: known(c.duplicateRules), what: '10 duplicate rules on this object' },
     L.customMetadata && { count: known(c.customMetadata), what: '10 custom metadata records in the org (read up to 300)' },
+    L.entitlements   && { count: known(c.entitlements),   what: '10 entitlement processes in the org' },
+    L.customSettings && { count: known(c.customSettings), what: 'custom setting in the org (the first 30)' },
   ].filter(Boolean);
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
   // + the check-only delete (🩺 Ask Salesforce, every scan that looks for blockers): the deploy and its status read
   let now = 2 + (fcScopeNorm(scope) === 'mentions' ? 0 : 2) + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
-    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts].filter(Boolean).length
+    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts, L.entitlements, L.customSettings].filter(Boolean).length
     + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
@@ -1519,6 +1525,7 @@ const FieldCleaner = (() => {
       ['workflow', 'workflow rules', 2], ['approvals', 'approval processes', 2], ['sharingRules', 'sharing rules', 1], ['duplicateRules', 'duplicate rules', 1],
       ['lwc', 'Lightning web components', 2], ['customMetadata', 'custom metadata records', 2], ['leadMapping', 'lead field mappings', 1], ['objectRules', 'assignment, auto-response and escalation rules', 1],
       ['paths', 'Paths', 1], ['validationRulesOff', 'inactive validation rules', 1], ['emailTemplates', 'email templates', 2], ['searchLayouts', 'search layouts', 1],
+      ['entitlements', 'entitlement processes', 1], ['customSettings', 'custom settings', 2],
     ];
     return all.filter(([k]) => k === 'index' || L[k]).map(([key, label, weight]) => ({ key, label, weight }));
   }
@@ -2102,6 +2109,40 @@ const FieldCleaner = (() => {
       }
     } catch (_) {/* non-fatal */}
 
+    // 11b. Entitlement processes (Case / WorkOrder): entry, exit and milestone criteria. Live 2026-11-11 in npc: an
+    // INACTIVE process whose milestone criteria name the field made Salesforce refuse the delete ("This custom field
+    // is referenced elsewhere in salesforce.com. : Entitlement Processes.") and the index returned nothing. No
+    // Tooling read: listMetadata, then readMetadata.
+    if (L.entitlements) try {
+      msg('Scanning entitlement processes…');
+      const names = (await mdList('EntitlementProcess')).map(t => t.fullName);
+      for (const rec of await mdRead('EntitlementProcess', names, (a, b) => msg(`Scanning entitlement processes… ${a}/${b}`))) {
+        if (!mentions(rec.innerXml)) continue;
+        if (String(sftkMdChildText(rec.innerXml, 'SObjectType') || 'Case').toLowerCase() !== objLc) continue;
+        add('EntitlementProcess', rec.fullName, (sftkMdChildText(rec.innerXml, 'name') || rec.fullName) + offTag(rec.innerXml));
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 11c. Custom-setting RECORDS that hold the field's name as text (a "which field to read" setting). Data, not
+    // metadata: nothing blocks, whatever reads the value breaks. One query lists the settings, one per setting reads
+    // its custom fields (FIELDS(CUSTOM), 200 rows); the first 30 settings — more is SAID, not read. A protected
+    // setting of a package refuses the query and is passed over.
+    if (L.customSettings) try {
+      msg('Scanning custom settings…');
+      const sets = (await sfQ('SELECT QualifiedApiName, Label FROM EntityDefinition WHERE IsCustomSetting = true ORDER BY QualifiedApiName LIMIT 200', false))?.records || [];
+      const MAXS = 30;
+      let i = 0;
+      for (const st of sets.slice(0, MAXS)) {
+        msg(`Scanning custom settings… ${++i}/${Math.min(sets.length, MAXS)}`);
+        const r = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true, _silentError: true, query: `SELECT Id, Name, FIELDS(CUSTOM) FROM ${st.QualifiedApiName} LIMIT 200` });
+        for (const row of ((r && !r.error && r.records) || [])) {
+          const cols = Object.entries(row).filter(([k, v]) => k !== 'attributes' && k !== 'Id' && typeof v === 'string' && re.test(v)).map(([k]) => k);
+          if (cols.length) add('CustomSettingRecord', row.Id, `${st.Label || st.QualifiedApiName} · ${row.Name || row.Id} (${cols.join(', ')})`);
+        }
+      }
+      if (sets.length > MAXS) add('CustomSettingRecord', 'cs_unread_more', `${sets.length - MAXS} more custom settings were not read — the scan reads the first ${MAXS}`);
+    } catch (_) {/* non-fatal */}
+
     // 12. Lead field mapping — a mapped Lead field AND its Account/Contact/
     // Opportunity target both refuse the delete.
     if (L.leadMapping) try {
@@ -2403,6 +2444,10 @@ const FieldCleaner = (() => {
                       note: 'Salesforce refuses the delete over this, in its own words, and the scan did not find it. Clear it in Setup; Salesforce is asked again when the list is clear.' },
     AuraDefinitionBundle: { icon: '⚡', label: 'Aura Components', fixable: false, sev: 'blocker',
                       note: 'The component’s markup or JavaScript names the field. Salesforce refused a delete over an Aura expression that reads the field (live-tested); a plain text mention may not block — its own answer in the delete box says which. Found by reading every Aura source in the org, not through Salesforce’s index.' },
+    EntitlementProcess: { icon: '⏱', label: 'Entitlement Processes', fixable: false, sev: 'blocker',
+                      note: 'The process’s entry, exit or milestone criteria name the field — active or not, Salesforce refuses the delete (live-tested). 🗑 deletes the process (a restore point is kept), or change its criteria in Entitlement Processes.' },
+    CustomSettingRecord: { icon: '🧾', label: 'Custom Setting Records', fixable: false, sev: 'silent',
+                      note: 'A record of a custom setting holds the field’s name as text. The delete goes through; whatever reads that value — Apex, a flow, a formula — then looks for a field that is gone. Change the value in the custom setting.' },
     CustomMetadataRecord: { icon: '🗂', label: 'Custom Metadata Records', fixable: false, sev: 'blocker',
                       note: 'A record holds the field’s name. When that value is a Field Definition relationship Salesforce refuses the delete; a plain text value only breaks whatever reads it. Edit the record in Setup → Custom Metadata Types → Manage Records.' },
     LeadConvertSettings: { icon: '🔀', label: 'Lead Field Mapping', fixable: false, sev: 'blocker',
@@ -6877,6 +6922,8 @@ const FieldCleaner = (() => {
       DuplicateRule:  '/lightning/setup/DuplicateRules/home',
       LightningComponentBundle: '/lightning/setup/LightningComponentBundles/home',
       CustomMetadataRecord: '/lightning/setup/CustomMetadata/home',
+      EntitlementProcess: '/lightning/setup/EntitlementProcesses/home',
+      CustomSettingRecord: '/lightning/setup/CustomSettings/home',
       LeadConvertSettings: '/lightning/setup/ObjectManager/Lead/FieldsAndRelationships/view',
       AssignmentRule: obj === 'Case' ? '/lightning/setup/CaseRules/home' : '/lightning/setup/LeadRules/home',
       AutoResponseRule: obj === 'Case' ? '/lightning/setup/CaseResponses/home' : '/lightning/setup/LeadResponses/home',

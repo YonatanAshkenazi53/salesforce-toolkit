@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EntitlementProcess xmlns="http://soap.sforce.com/2006/04/metadata">
+    <SObjectType>Case</SObjectType>
+    <active>false</active>
+    <description>SFTK gap experiment. Safe to delete.</description>
+    <entryStartDateField>Case.CreatedDate</entryStartDateField>
+    <exitCriteriaFilterItems><field>Case.SFTK_Gap__c</field><operation>equals</operation><value>sftk-never</value></exitCriteriaFilterItems>
+    <milestones>
+        <milestoneCriteriaFilterItems><field>Case.SFTK_Gap__c</field><operation>equals</operation><value>sftk-never</value></milestoneCriteriaFilterItems>
+        <milestoneName>Close Case</milestoneName>
+        <minutesToComplete>60</minutesToComplete>
+        <useCriteriaStartTime>false</useCriteriaStartTime>
+    </milestones>
+</EntitlementProcess>

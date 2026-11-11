@@ -16,10 +16,12 @@ export default async function (h) {
   await h.watchErrors();
   if (process.env.DARK) await h.eval("(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.classList.add('dark'); return true; })()");
   await h.waitFor("!!document.querySelector('#fcObjInput')", 60000, 500);
-  await pick(h, '#fcObjInput', '#fcObjDrop', 'Account');
+  await pick(h, '#fcObjInput', '#fcObjDrop', process.env.OBJ || 'Account');
   await pick(h, '#fcFieldInput', '#fcFieldDrop', FIELD);
   await h.eval(`(() => { document.querySelector('#fcScanBtn').click(); return true; })()`);
   await h.waitFor("!document.querySelector('#fcScanBtn')?.disabled", 600000, 1000);
+  h.log('STATUS:', (await h.eval("document.querySelector('.fc-summary, #fcSummary, .fc-status')?.innerText || ''")).replace(/\s+/g, ' ').slice(0, 200));
+  h.log('ALL ROWS:', JSON.stringify(await h.eval("[...document.querySelectorAll('.fc-item')].map(i => (i.closest('.fc-group')?.id || '').replace('fcGroup_', '') + ': ' + (i.querySelector('.fc-item-name')?.innerText.trim() || '') + ' {' + [...i.querySelectorAll('.fc-item-btns button')].map(b => b.innerText.trim()).join(' ') + '}')")));
   const t0 = Date.now();
   // the pre-check walks the rows one by one: wait until the count of notes stops growing
   let last = -1, same = 0;
