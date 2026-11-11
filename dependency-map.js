@@ -1551,6 +1551,18 @@ const DependencyMap = (() => {
 
   function getDependencyMap() { return dependencyMap; }
   function isMetadataFetched() { return metadataFetched; }
+  // "No flow calls this one" is a verdict only over a COMPLETE map (QA 2026-11-11: the floating panel and the report
+  // said a green "low-risk to delete" while the scan was stopped, running, or had versions it could not read).
+  function _noCallerVerdict(active) {
+    const st = getScanStatus();
+    const unread = Math.max(0, Number(st && st.unread) || 0);
+    if (!metadataFetched || unread > 0) {
+      return `⚪ No caller is known — but the dependency map is not complete (${!metadataFetched ? (st && st.running ? 'the scan is still running' : 'the scan did not finish') : `${unread} flow version(s) could not be read`}), so this is NOT a verdict. Finish the scan before deleting.`;
+    }
+    return active
+      ? '🟡 No flow calls this one. Still active though — check buttons/pages that may launch it before deleting.'
+      : '🟢 No flow calls this one and it is not active — low-risk to delete.';
+  }
 
   // What the reverse lookup ("what uses…") can actually see. The full metadata
   // TEXT of every flow is megabytes and is never cached, so after a cache-primed
@@ -4096,9 +4108,7 @@ const DependencyMap = (() => {
         apiName: f.ApiName, masterLabel: f.MasterLabel, status: f.Status, processType: f.ProcessType,
         verdict: callers.length
           ? `⚠ ${callers.length} flow(s) call this as a subflow — deleting or deactivating it can break them.`
-          : (f.Status === 'Active'
-            ? '🟡 No flow calls this one. Still Active though — check buttons/pages that may launch it before deleting.'
-            : '🟢 No flow calls this one and it is not Active — low-risk to delete.'),
+          : _noCallerVerdict(f.Status === 'Active'),
         callers: callers.map(c => ({ apiName: c.apiName, masterLabel: c.masterLabel, status: c.status })),
         refs: refsByFlowId[f.Id] || null
       };
@@ -4164,9 +4174,7 @@ const DependencyMap = (() => {
     const callers = getParentsForApiName(flow.ApiName);
     const verdict = callers.length
       ? `⚠ ${callers.length} flow(s) call this as a subflow — deleting or deactivating it can break them.`
-      : (flow.Status === 'Active'
-        ? '🟡 No flow calls this one. Still active though — check buttons/pages that may launch it before deleting.'
-        : '🟢 No flow calls this one and it is not active — low-risk to delete.');
+      : _noCallerVerdict(flow.Status === 'Active');
     const section = (title, items, fmt) => items && items.length
       ? `<div class="dep-blast-sec"><div class="dep-blast-sec-hdr">${title} (${items.length})</div>
           ${items.map(fmt || (x => `<div class="dep-blast-item">${escHtml(x)}</div>`)).join('')}</div>` : '';

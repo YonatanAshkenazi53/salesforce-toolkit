@@ -65,11 +65,11 @@ although the job may still finish.
 | id | sev | finding | status |
 |---|---|---|---|
 | TK-1 | HIGH | lightning-pages.js ~2253: a failed describe → "Not assigned" (`_lpProbeFailed` set only in a catch that cannot fire) | FIXED: a describe that answers { error } sets `_lpProbeFailed` → status unknown |
-| TK-2 | HIGH | background.js ~4797: a deploy poll timeout / mid-poll error answers "failed" while the job may still land (API versions, restore, org default, clone, flow access) | OPEN |
+| TK-2 | HIGH | background.js ~4797: a deploy poll timeout / mid-poll error answers "failed" while the job may still land (API versions, restore, org default, clone, flow access) | FIXED: three missed polls are retried; then the message names the job and says it MAY STILL FINISH |
 | TK-3 | HIGH | popup.js ~2873: a failed re-read after a flow-version DELETE = "the org still shows it" → no undo step, tries to switch a deleted version back on | FIXED: two more re-reads; then counted deleted (Salesforce accepted), no switch-back-on |
 | TK-4 | HIGH | user-copy.js ~657: none of the seven reads checks `.error` → "Source user has no permission sets", everything "can be copied" | FIXED: `ucNeed` throws on every failed or incomplete read |
 | TK-5 | HIGH | flow-permissions.js ~270/689: a failed access chunk is dropped → ↩ Undo deletes grants the run did not create | FIXED: a failed or incomplete access chunk fails the load |
-| TK-6 | HIGH | dependency-map.js ~4165/4097: "low-risk to delete — nothing calls this" with no caveat when the map is partial | OPEN |
+| TK-6 | HIGH | dependency-map.js ~4165/4097: "low-risk to delete — nothing calls this" with no caveat when the map is partial | FIXED: over an incomplete map the panel and the report say “NOT a verdict” |
 | TK-7 | HIGH | dependency-map.js ~1113: a live-read map is "safe" for delete however old it is | OPEN |
 | TK-8 | HIGH | popup.js ~979: `incomplete` of the flow list ignored; delete not gated on a short list | OPEN |
 | TK-9 | MED | popup.js ~2262: "✅ All Downloaded" after a swallowed backup failure | FIXED: “N of M NOT downloaded — try again” |

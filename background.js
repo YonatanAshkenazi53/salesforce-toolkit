@@ -4776,6 +4776,12 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel, checkOnly) {
   const { id: jobId } = await deployRes.json();
 
   // 2. Poll until done (max ~100 s)
+  // Callers print this error as "the deployment failed — nothing changed". When the job was SUBMITTED and only its
+  // status could not be followed, that is false: the org may still apply it. The message says so and names the job.
+  let pollMisses = 0;
+  const stillRunning = why => checkOnly === true
+    ? `The check could not be followed to its end (${why}) — nothing is changed by a check; ask again.`
+    : `Deployment ${jobId} was submitted but its result could not be read (${why}). It MAY STILL FINISH in Salesforce: look at Setup → Deployment Status, and re-read the org before trying again.`;
   for (let i = 0; i < 40; i++) {
     await new Promise(r => setTimeout(r, 2500));
     const statusUrl = `${orgUrl}/services/data/${API_VERSION}/metadata/deployRequest/${jobId}?includeDetails=true`;
@@ -4792,9 +4798,15 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel, checkOnly) {
       if (e && e.message === 'SESSION_EXPIRED') {
         throw new Error(`Session expired while waiting for deployment ${jobId} — it was submitted and may still finish in Salesforce. Check Setup → Deployment Status before deploying again.`);
       }
-      throw e;
+      // a poll that could not be made is not a deployment that failed (QA 2026-11-11): the job is submitted
+      if (++pollMisses <= 3) continue;
+      throw new Error(stillRunning(String((e && e.message) || e)));
     }
-    if (!statusRes.ok) throw new Error(sfErrorMsg(statusRes.status, statusRes.body, statusUrl));
+    if (!statusRes.ok) {
+      if (++pollMisses <= 3) continue;
+      throw new Error(stillRunning(sfErrorMsg(statusRes.status, statusRes.body, statusUrl)));
+    }
+    pollMisses = 0;
 
     let payload;
     try { payload = JSON.parse(statusRes.body); }
@@ -4816,7 +4828,7 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel, checkOnly) {
       throw new Error(msg);
     }
   }
-  throw new Error('Deployment timed out after 100 seconds');
+  throw new Error(stillRunning('Salesforce had not finished it after 100 seconds'));
 }
 
 // ---------------------------------------------------------------
