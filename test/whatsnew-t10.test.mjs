@@ -293,3 +293,15 @@ describe('sftkWhatsNewBodyHtml — the rendered page', () => {
     expect(sftkWhatsNewBodyHtml([{}], {})).toContain('Unversioned');
   });
 });
+
+// 2026-11-11 (owner): no quote from a conversation is shown anywhere in the app — What's New renders this file verbatim
+import { readFileSync as _rf } from 'node:fs';
+import { describe as _d, it as _i, expect as _e } from 'vitest';
+_d('CHANGELOG.md carries no conversation quotes', () => {
+  const CL = _rf(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
+  _i('no Hebrew, no dated quote, no "the owner"', () => {
+    _e(/[\u0590-\u05ff]/.test(CL)).toBe(false);
+    _e(/\(\s*(?:user |owner )?20\d\d-\d\d-\d\d[^()"]*:\s*"/.test(CL)).toBe(false);
+    _e(/the owner's|owner doubted|hand test/i.test(CL)).toBe(false);
+  });
+});

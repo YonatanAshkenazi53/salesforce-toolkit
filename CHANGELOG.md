@@ -40,7 +40,7 @@ extensions containing root files that start with `_`).
 - **Email rows say what they are** (2026-11-10). Every email template in the list carries its kind — classic text, classic HTML, Lightning or Visualforce — and the email alerts that send it. Each of those alerts also gets a row of its own, under "Email Alerts (send a template that uses the field)": the alert does not name the field, so it does not stop the delete; fixing the template is the fix.
 - **A flow outcome that rests on the field alone can go as a whole** (2026-11-10). When a decision outcome tests nothing but the field, the confirmation offers a third way: keep the flow running without that outcome. What went down it takes the default outcome; the dialog names the elements that are no longer reached and so stop running. A decision left with no outcome goes too, and what pointed at it points at where its default led. Not offered when that decision is all the flow does — Salesforce refuses a flow with nothing after Start.
 - **Flow Access says which flows it leaves out** (2026-11-10). The list holds the flows a person can be given: screen flows and autolaunched flows with no trigger. Under it, one line counts the active flows that start by themselves (record-triggered, scheduled, event) and are therefore not listed. A before-delete record-triggered flow used to slip into the list; it no longer does.
-- **A Lightning page’s visibility rule: the confirm warns when its filter logic goes** (2026-11-10). Taking the field’s criterion out of a rule with a numbered logic ("1 AND (2 OR 3)") drops that logic — the criteria left are joined by AND. The confirmation now says so above the diff.
+- **A Lightning page’s visibility rule: the confirm warns when its filter logic goes** (2026-11-10). Taking the field’s criterion out of a rule with a numbered logic drops that logic — the criteria left are joined by AND. The confirmation now says so above the diff.
 - **✂ / 🗑 on a field set of a custom object works** (2026-11-10). On a custom object — your own or a package’s — the field set was looked up under the object’s internal ID and reported "not found in the org". It is now read under the object’s API name.
 - **A packaged field is never called "safe to delete"** (2026-11-10). A field that belongs to an installed package (its name starts with the package’s prefix, like `dlrs__Color__c`) cannot be deleted from the org, and the package’s own code, flows and rules cannot be read. Field Cleaner now says so: no Delete button, and what it lists is what this org built on the field.
 - **A hand edit counts as done only when it worked** (2026-11-10). After "Deploy my edit" the org is read again: every line you added must be there and every line you took out must be gone. If the component still names the field afterwards (a validation rule: still names it and is still active), the edit stays deployed but the row is not ticked — it keeps its buttons and says the delete is still stopped.
@@ -50,30 +50,27 @@ extensions containing root files that start with `_`).
 - **⏸ The pause panel lists scheduled flows too** (2026-11-10). A schedule-triggered flow that starts on an object the deployment writes is listed under it, marked ⏰ and unticked — it runs on its clock, not on a write; tick it to keep it from firing mid-run. Works on packaged objects like every other kind.
 - **🎭 The PII suggestion window reads at a glance** (2026-11-10). One line on top and the long explanation folded away; a bar that counts the ticked fields with ✓ Suggested / All / None; a card per object; each field is one row — tick, the field and why it is offered, what it is written as — with its examples under it. The Apply button says how many fields it applies to.
 - **The Deploy page's actions sit with the orgs** (2026-11-10). 🎭 Suggest PII, the scan of every object and ✓ Tick every insert moved from under the table into the "Between which orgs" card. Scan all and Rescan all are one button: it reads every object, and says which ones were never read.
-- **⏻ Flow switches shows the switch, not the API version** (2026-11-10: "אין צורך להציג שם גרסאת api"). Each row carries ON/OFF and the flow version that runs; the API version lives in ⚙ API versions.
+- **⏻ Flow switches shows the switch, not the API version** (2026-11-10). Each row carries ON/OFF and the flow version that runs; the API version lives in ⚙ API versions.
 
 ### Data Studio
-- **The matching section reads in layers** (2026-11-08: "זה גם צריך ui יותר טוב. זה מאוד לא ברור"): the key as one
+- **The matching section reads in layers** (2026-11-08): the key as one
   sentence on top — "Key · Account Name · Two records are the same when this field is equal on both sides" — with
   🧪 Test and 💡 Suggestions beside it; the strategy and its fields under it; Normalize and Most specific first
   folded under "Advanced" (open only when something is set); the suggestions as a table — key · score · a short
   reason · Use / Grade — with the grade's detail under each row, the depth sentence said once above the table,
   and the fields that add almost nothing named in ONE line instead of one sentence each.
-- **⏸ The pause panel is three tabs** (2026-11-08: "צריך להראות רק אם מסמנים את המטאדאטה שרוצים לעצור… ולעשות 3
-  טאבים עם פירוט מובן"): ⏸ Flows · ⏸ Validation rules · 🔁 Duplicate rules — a tab appears only when its option is
+- **⏸ The pause panel is three tabs** (2026-11-08): ⏸ Flows · ⏸ Validation rules · 🔁 Duplicate rules — a tab appears only when its option is
   on, carries its count ("2 of 3" once something is unticked), opens with one plain sentence on what the run does
   with that kind and when it comes back, then the objects this run writes with their items, "N of M ticked" and
   all / none per object; the one-line summary stays under the tabs. Live on npc2 (pause-panel.mjs, light + dark).
-- **▸ record: the Owner row** (2026-11-08: "we need to show ownerid and to make sure user can select queues or
-  users"). Right under Record Type: the source owner by name (👤 a user, 👥 a queue), what the run would write by
+- **▸ record: the Owner row** (2026-11-08). Right under Record Type: the source owner by name (👤 a user, 👥 a queue), what the run would write by
   default said in words (the owner mapping is off unless the deployment switched it on; a queue is never matched
   by name), and a search over the target's active users and — where the object can be queue-owned — the queues
   that take it. A pick is stored as the value OwnerId and written after the engine's own owner mapping, like any
   typed value; ✕ forgets it. Live on npc → npc2 (scripts/dev/live/ve-owner.mjs): "Account records cannot be owned
   by a queue — users only", a user picked and stored, cleared.
 - **⏸ The pause panel: what this run switches off in the target, per object, with a tick on every item.**
-  (2026-11-08: "צריך להציג למשתמש את מה שמכבים כשעושים דיפלוי עם אפשרות לבחור לפי האובייקטים" — flows,
-  duplicate rules and validation rules.) With ⏸ pause flows, ⏸ pause validation rules or Duplicate rules =
+  (2026-11-08) With ⏸ pause flows, ⏸ pause validation rules or Duplicate rules =
   Bypass chosen, the Deploy page lists under each object the deployment writes to the record-triggered flows
   and validation rules that go off and the duplicate rules the bypass header passes; every item has a tick,
   each object has all / none, and the unticked stay exactly as they are. The confirmation names what is left
@@ -82,9 +79,8 @@ extensions containing root files that start with `_`).
   off and back on, Contact's flow left on (CLI mid-run), Contact's duplicate rule respected, rollback clean.
 - **🎭 PII suggestions on the Deploy page, with the record each example comes from.** "Suggest PII
   treatment for all N to insert" reads the very records the deployment inserts and proposes a treatment per
-  field, each with real examples and the record they come from ("Omer → Lior, in Omer SFTK CX Lead One").
-  ▸ record shows, under every field the policy covers, the value that is actually written ("🎭 written as
-  Lior"), and offers the same suggestions for that one record.
+  field, each with real examples and the record they come from.
+  ▸ record shows, under every field the policy covers, the value that is actually written, and offers the same suggestions for that one record.
 - **The History export says what an update changed, field by field.** A run that updates records now keeps,
   for every field it changed, the value the target held just before the run and the value written; a
   run's JSON export lists them (`fieldChanges`: object, record, field, before, after). The first 200
@@ -140,16 +136,11 @@ extensions containing root files that start with `_`).
   PII outside the fields the policy fabricates.
 
 ### Toolkit
-- **Field Cleaner: the scan has a progress bar with the time left** (2026-11-08: "can we show a progress bar with
-  estimation?"). Under the cat, one segment per leg of the scope (the index, Lightning pages, report types, list
+- **Field Cleaner: the scan has a progress bar with the time left** (2026-11-08). Under the cat, one segment per leg of the scope (the index, Lightning pages, report types, list
   views… up to 17), filled as each leg ends, the current one pulsing; under it "Step 6 of 17 · quick actions ·
   about 17 s left · 20 places so far" — the time left from the legs already done and a weight per leg, said once
-  two legs are behind. The "Act on everything" fold and the "How each item is fixed" fold are gone ("we dont need
-  this one", "i dont think we need the act on everything").
-- **Field Cleaner: the 👀 mentions get the ways too, the confirm is editable, the gate sits on top** (2026-11-08, the
-  owner's hand test: "why here we can't do anything? i want also email alerts, lightning email templates and classic
-  email templates", "we can't edit here", "the remove all & replace all button … on top of the card", "maybe it
-  should be on top?", "what is the point of all this info").
+  two legs are behind. The "Act on everything" fold and the "How each item is fixed" fold are gone.
+- **Field Cleaner: the 👀 mentions get the ways too, the confirm is editable, the gate sits on top** (2026-11-08).
   - **Email templates** — classic text and HTML, Lightning, Visualforce — get 🔍 (the subject, body, HTML and
     markup with the field's lines marked), ✂ Remove (every merge field that names the field taken out of the
     texts), ⇄ Replace (renamed inside them) and ✎ Edit texts, through the EmailTemplate record; a restore point
@@ -165,9 +156,7 @@ extensions containing root files that start with `_`).
   Live on npc: ⇄ on the three demo templates → the CLI reads the new merge field, undo → the originals; ⇄ on the
   list view (column + filter), the compact layout, the quick action and the inactive rule → CLI, undo; ✂ on a
   validation rule with a hand edit in the dialog → the CLI reads the edited description, undo → original.
-- **Field Cleaner: every kind has its ways, and the page reads in one glance** (2026-11-08, the owner's hand test:
-  "למה אין החלפה פה", "ועריכה של xml", "צריך להיות בכולם", "this section needs to improve… nobody will read it",
-  "we need everything to support replace all, remove all", "we need a collapsable ui there like we did for parents").
+- **Field Cleaner: every kind has its ways, and the page reads in one glance** (2026-11-08).
   - **Code**: an Apex class or trigger, a Visualforce page or component, an LWC or an Aura bundle gets 🔍 with every
     file and the field's lines marked, **⇄ Replace** as a whole-word rename of the field's API name in every file
     (the diff of each changed file confirmed first), and **✎ Edit code** — one box per file, deployed back as the
@@ -187,61 +176,49 @@ extensions containing root files that start with `_`).
   Live on npc (scripts/dev/live/fc-code-edit.mjs): ⇄ on the LWC → the CLI reads the new import, 0 of the old; ⇄ on the
   duplicate rule → the retrieve shows the new field in the filter; both undone through History, the CLI reads the
   originals back.
-- **Every long load shows the cat, a bar, the step and the time left** (2026-11-08: "when we scan these on
-  enterprises it may take time. i want to show the animation and progress + estimation every loading that might
-  take time"). One widget (sftk-progress.js) for three shapes of work — a fixed order of steps (one segment each),
+- **Every long load shows the cat, a bar, the step and the time left** (2026-11-08). One widget (sftk-progress.js) for three shapes of work — a fixed order of steps (one segment each),
   N of M items (a filling bar), or one long call (a sweeping bar, with how long it took last time in this org) —
   on the Flows list, the Dependencies scan (with Stop, in the tab and in the strip above the Flows list), ⏻ Flow
   switches and ⚙ API versions (the three list reads, then one versions page per 100 flows), Lightning Pages, Flow
   Access (three steps) and Copy Permissions (five steps). Nothing is estimated before it can be: the line says
   "estimating…", then the seconds so far, then the time left.
-- **Flows › Versions: a flow tree is a card too** (2026-11-08: "this still looks bad, should look more like the
-  other pages"): the flows the dependency map knows to call each other sit in one bordered card — the root, its
+- **Flows › Versions: a flow tree is a card too** (2026-11-08): the flows the dependency map knows to call each other sit in one bordered card — the root, its
   subflows nested with a twig per level, "tick the whole tree" in the header (half-ticked when only some are),
   "🌳 tree · N flows · M levels deep" — in the list's own alphabetical order.
-- **The packaged fixture has a tree of every flow kind** (2026-11-08: "scheduled triggered. screen flow with child
-  screen flow, record triggered with subflows, record triggered with a scheduled path"): SFTK_Pkg_Screen →
+- **The packaged fixture has a tree of every flow kind** (2026-11-08): SFTK_Pkg_Screen →
   SFTK_Pkg_Screen_Child (a screen flow) → SFTK_Pkg_Screen_Leaf; SFTK_Pkg_Parent_Trigger on the packaged Lookup
   Parent with two subflows — the immediate path calls SFTK_Pkg_Path_Now_Sub, a scheduled path an hour later calls
   SFTK_Pkg_Path_Later_Sub → SFTK_Pkg_Path_Deep_Sub; next to the record-triggered and scheduled trees already there.
   Deployed to npc and npc2.
-- **Field Cleaner: one scan, one list** (2026-11-08: "i dont think we need 3 tabs here. one tab is enough, but
-  should be filtered by must and optional metadata references"). The 🔍 / 🔒 / 👀 scope switch is gone — every
+- **Field Cleaner: one scan, one list** (2026-11-08). The 🔍 / 🔒 / 👀 scope switch is gone — every
   scan reads everything — and the two sections became one list with a filter row: All · 🔒 Must fix · 👀 Might
   break; each group carries its tag. The 👀 sentence in the gate says those kinds WERE read and what happens to
-  them ("do we scan them as well?"); the ⚡ row says why ⇄ counts more than ✂ ("i can replace more than i can
-  remove?": code, formulas, buttons and field updates can only swap the field, not lose it).
-- **Full metadata text scan** (the whole-org sweep, renamed — "it scans a lot more than reports", "change it to
-  full metadata text scan"): the offer says it is expensive and slow and what the cost is made of; pressing it only
-  counts, and the exact API calls and time are shown before anything is read ("say how many api calls it will
-  cost"). A hit the everyday scan already lists is not listed again ("this table should not list whats in the
-  other sheet"); a fresh hit of a kind the list fixes — Apex, Visualforce, LWC, validation rules, buttons, field
+  them; the ⚡ row says why ⇄ counts more than ✂ (code, formulas, buttons and field updates can only swap the field, not lose it).
+- **Full metadata text scan** (the whole-org sweep, renamed): the offer says it is expensive and slow and what the cost is made of; pressing it only
+  counts, and the exact API calls and time are shown before anything is read. A hit the everyday scan already lists is not listed again; a fresh hit of a kind the list fixes — Apex, Visualforce, LWC, validation rules, buttons, field
   sets, formulas, workflow, approvals, sharing, matching and duplicate rules, Lead/Case rules, custom metadata,
-  list views, compact layouts, quick actions — JOINS the list with the ✂ ⇄ ✎ 🗑 of its kind ("Can we do a remove
-  and replace on them as well?"); the rest stay in the box, marked "by hand". ⬇ Export CSV writes every line that
-  names the field ("make sure the user can export this report as well"). A retrieve that runs long says how long
-  it has run ("stuck at 2 prcnt": Salesforce reports nothing until a retrieve lands).
-- **A flow tree is a card** (2026-11-08: "לא רואים שזה עץ. פשוט צריך לעשות tick all ואפשרות לבחור"): in ⏻ Switches
+  list views, compact layouts, quick actions — JOINS the list with the ✂ ⇄ ✎ 🗑 of its kind; the rest stay in the box, marked "by hand". ⬇ Export CSV writes every line that
+  names the field. A retrieve that runs long says how long
+  it has run (Salesforce reports nothing until a retrieve lands).
+- **A flow tree is a card** (2026-11-08): in ⏻ Switches
   and ⚙ API versions a flow with subflows is drawn as a bordered card — a header with "tick the whole tree" (it
   follows the rows: half-ticked when only some are), "🌳 tree · N flows · M levels deep" (API versions: the oldest
   API in the tree), one line saying what switching the root does — and the subflows nested under the root with a
   twig per level; inside a card the chips name only flows outside it. The **Flows › Versions list scrolls again**
-  ("אי אפשר לעשות סקרול למטה"): the view's wrapper did not carry the flex column, so the list grew past the tab and
+: the view's wrapper did not carry the flex column, so the list grew past the tab and
   the flows below the fold could not be reached.
-- **⏻ Flow switches and ⚙ API versions show the flows as a hierarchy** (2026-11-08: "we need to show it as
-  hierarchy on load … both on switchers and api versions", "they look like a normal flow"). A flow that calls
+- **⏻ Flow switches and ⚙ API versions show the flows as a hierarchy** (2026-11-08). A flow that calls
   others has its callees nested under it with a connector, as soon as the dependency map knows the links; a subflow
   leaves its own kind-group for its caller's (so a record-triggered flow on an object shows its subflows under that
   object), each flow placed once — a shared subflow under its triggered caller before a plain autolaunched one. A
   subflow whose caller is not in the list carries an "↳ SUBFLOW" tag; the chips are grouped by direction. Live on
   npc: the four dep-test levels nested under their Account trigger, the packaged SFTK_Pkg_Sub under SFTK_Pkg_Child
-  Trigger ("Lookup Child 2"), SFTK_Pkg_Sched_Sub under the scheduled flow.
-- **⏻ Flow switches: the whole chain** (2026-11-08: "we need a way to select the whole tree or just some of them"):
+  Trigger, SFTK_Pkg_Sched_Sub under the scheduled flow.
+- **⏻ Flow switches: the whole chain** (2026-11-08):
   next to "↳ calls N" a dashed "⇊ whole chain down N" when the chain goes deeper than one level, and "⇈ every
   caller up N" next to "↰ called by"; the tooltip names every flow in order, a click ticks them all; nothing is
   switched until the button is pressed.
-- **🧭 Field Cleaner's whole-org text sweep** (2026-11-08: "מורידים דרך vcs פרויקט שלם של סילספורס ואז מחפשים
-  שם api של שדה… לחלק לדברים שחייב למחוק או לשנות ודברים שטוב לדעת"). Under the scan's results, one button
+- **🧭 Field Cleaner's whole-org text sweep** (2026-11-08). Under the scan's results, one button
   reads the org's own metadata as a whole — the Metadata API lists every kind, then retrieves them a few
   hundred components at a time — and finds every text file that names the field. Each hit is shown with its
   component, file and line, sorted into 🔒 must go or change before the delete (the kinds Salesforce refuses
@@ -318,8 +295,7 @@ extensions containing root files that start with `_`).
   text is well-formed (the box names the line that is not); the component's name cannot change; the
   confirm shows your change line by line; a restore point is kept; if Salesforce refuses the deploy its
   own words appear under the box and nothing changes; ↩ Undo in History deploys the previous XML.
-- **Field Cleaner's "how much data is stored" line was audited** after the owner doubted it on a field
-  deleted at work. Three ways it could be wrong are closed: a count that came back for an earlier pick
+- **Field Cleaner's "how much data is stored" line was audited**. Three ways it could be wrong are closed: a count that came back for an earlier pick
   could land under the next field; a formula field was counted as if it stored data (describe never
   says "formula"); a checkbox was "100% populated" on every org, since false is a value — a checkbox is
   now counted by how many records have it ticked, and says so.
