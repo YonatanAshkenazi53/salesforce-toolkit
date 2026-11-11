@@ -36,6 +36,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   const lkpCfg = node.lookupResolutions || {};
 
   // the source record's own values (one record), and the target's on a Changed row
+  let tgtReadErr = '';   // why the TARGET record could not be read
   let readErr = '';   // why the source record could not be read — said on the page, never shown as "empty" (2026-11-05)
   // columns the org refused for the running user ("No such column 'X'": describe lists a field the user cannot
   // query — screenshot 2026-11-07, SFTK_Dbg_Count__c). They are dropped and the read is tried again, and named.
@@ -92,7 +93,11 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     srcRec = await q(srcSess, ids[0], [...plain, ...extra, ...refIds, ...refs, ...rtCols, ...ownCols]);
     if (!srcRec) srcRec = await q(srcSess, ids[0], [...plain, ...extra, ...refIds, ...rtCols, ...ownCols]);   // a related object without a Name field — read without the lookups' names
     if (!srcRec && ownCols.length) srcRec = await q(srcSess, ids[0], [...plain, ...extra, ...refIds, ...rtCols]);   // an org that refuses Owner.Type — without the owner columns
+    // each side keeps ITS OWN error (QA 2026-11-11): the target read used to overwrite the source's, so a failed source
+    // read was shown as an empty record once the target answered, and a failed target read was blamed on the source
+    const srcReadErr = srcRec ? '' : readErr; readErr = '';
     if (tgtId && tgtSess && tgtSess.sid) { const tp = [...new Set(plain.map(tf))]; tgtRec = await q(tgtSess, tgtId, [...tp, ...refs, ...rtCols, ...ownCols]); if (!tgtRec) tgtRec = await q(tgtSess, tgtId, [...tp, ...rtCols]); }
+    tgtReadErr = (tgtId && !tgtRec) ? readErr : ''; readErr = srcReadErr;
     if (!host.isConnected) return;
   }
   const val = v => (v === null || v === undefined || v === '') ? '<span class="ds-dc-empty">empty</span>' : `<span class="ds-dc-v" title="${esc(String(v))}">${esc(typeof v === 'object' ? JSON.stringify(v) : String(v))}</span>`;
@@ -190,6 +195,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     <div class="ds-merge-wrap ds-ve-wrap"><table class="ds-merge-table ds-ve-table"><thead><tr><th>Field</th>${many ? '' : `<th>${esc(srcL)} <span class="ds-dep-muted">source</span></th>`}${many || !tgtId ? '' : `<th>${esc(tgtL)} <span class="ds-dep-muted">target now</span></th>`}<th>written as <span class="ds-dep-muted">${many ? '(empty box = each record keeps its own value)' : '(the source\'s value unless you change it)'}</span></th></tr></thead>
       <tbody>${rtRow()}${ownerRow()}${fields.map(row).join('') || `<tr><td colspan="4" class="ds-dep-muted">No writable field.</td></tr>`}</tbody></table></div>
     ${!many && unreadable.length ? `<div class="ds-dep-muted ds-ve-note">⚠ ${unreadable.length} field${unreadable.length === 1 ? '' : 's'} could not be read for your user — ${esc(unreadable.join(', '))} — so ${unreadable.length === 1 ? 'its box shows' : 'their boxes show'} "not readable", not empty; a value typed there is still written.</div>` : ''}
+    ${!many && tgtReadErr ? `<div class="ds-drift-compare-err" id="dsVeTgtReadErr">⚠ The record could not be read from ${esc(tgtL)}: ${esc(tgtReadErr)}. Its column is EMPTY because of that, not because the record is.</div>` : ''}
     ${!many && readErr ? `<div class="ds-drift-compare-err" id="dsVeReadErr">⚠ This record could not be read from ${esc(srcL)}: ${esc(readErr)}. The source column and the boxes are EMPTY because of that, not because the record is — a value typed here is still written, but check the record in ${esc(srcL)} first.</div>` : ''}
     <div class="ds-ve-foot">${many ? `<button class="ds-btn ds-btn-sm ds-btn-primary" id="dsVeSave">💾 Save values</button><button class="ds-btn ds-btn-sm" data-dsaction="closeModal">Cancel</button>` : `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="closeModal">Close</button><span class="ds-dep-muted" id="dsVeStatus">${nEdited ? `✏ ${nEdited} changed value${nEdited === 1 ? '' : 's'} — saved` : 'saved as you type'}</span>`}<span class="ds-dep-sp"></span><button class="ds-btn ds-btn-xs" id="dsVeClearAll" ${nEdited ? '' : 'disabled'}>${many ? '✕ Clear every typed value' : '✕ Back to the source on every field'}</button></div>
     <div class="ds-dep-muted ds-ve-note">${many ? 'Typed values are' : 'A changed value is'} written to ${esc(tgtL)} by ▶ Deploy (${mode === 'chg' ? 'the update' : 'the insert'}).${many ? '' : ' A field empty in the source is marked ∅ and written empty; type a value to write one instead.'} ${esc(srcL)} is not changed, so after the run a record with a changed value differs from its source and is listed under 🟡 Changed until the orgs agree.${piiNote} ${many ? 'Lookup picks are saved at once; typed values when you press Save.' : 'Everything here is saved as you type — close the dialog whenever you like, nothing is lost.'}</div>`;

@@ -2389,6 +2389,10 @@ const LightningPages = (() => {
 
     // Page metadata, profiles and record types in parallel.
     const sObjectType = page.EntityDefinitionId || null;
+    // RecordType.SObjectType is the object's API NAME; a custom object's page carries its 01I… entity id here, so the
+    // query found no record type for any custom object's record page (QA 2026-11-11). Resolved to the name first.
+    if (sObjectType) { try { await _lpResolveEntityNames([sObjectType]); } catch (_) { /* the id is tried as it is */ } }
+    const rtObject = sObjectType ? (_lpEntityName(sObjectType) || sObjectType) : '';
     const [metaRes, profileRes, rtRes] = await Promise.all([
       bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
            sobject: 'FlexiPage', id: page.Id }),
@@ -2398,7 +2402,7 @@ const LightningPages = (() => {
                query: `SELECT Id,Name FROM Profile ORDER BY Name` }),
       sObjectType && !recordTypeCache[sObjectType]
         ? bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
-               query: `SELECT DeveloperName,Name FROM RecordType WHERE SObjectType='${sObjectType}' AND IsActive=true ORDER BY Name` })
+               query: `SELECT DeveloperName,Name FROM RecordType WHERE SObjectType='${String(rtObject).replace(/'/g, '')}' AND IsActive=true ORDER BY Name` })
         : Promise.resolve({ records: recordTypeCache[sObjectType] || [], error: null }),
     ]);
 
