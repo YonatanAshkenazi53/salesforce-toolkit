@@ -84,7 +84,7 @@ describe('the wiring', () => {
     expect(FC).toContain('data-way="delete" title="Delete this ${esc(spec.what)} from the org');
     expect(FC).toContain('if (!cfgT.fixable) return codeEdits + edits + del;');   // ✂/⇄ inside the blocker come first; code's ⇄ before them (2026-11-08)
     expect(FC).toContain("const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');");   // the 👀 mention kinds the engine knows get 🗑 too (2026-11-08)
-    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code') ? way : '';");
+    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code' || way === 'askdelete') ? way : '';");
     expect(FC).toContain("if (_fixWay === 'delete') {");
   });
   it('the delete reads the full definition first (no restore point, no delete), deletes with destructiveChanges, verifies gone, and the undo deploys the saved files', () => {

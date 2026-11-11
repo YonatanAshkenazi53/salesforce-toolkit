@@ -564,7 +564,7 @@ describe('Field Cleaner — everything at once', () => {
     expect(FC).toContain("if ((await fixOne(type, it.id, it.name, fieldId, swap, way)) === 'cancel') return 'cancel';");
   });
   it('the count is what is still open, and follows every fix and every mode change', () => {
-    expect(FC).toContain("el.outerHTML = _fixEveryHtml(_openPairs(root), _openPairs(root, true), _openPairs(root, false));");
+    expect(FC).toContain("el.outerHTML = _fixEveryHtml(Math.max(_openPairs(root), _walkPairs(root)), _openPairs(root, true), _walkPairs(root));");
     expect((FC.match(/_refreshFixEvery\(\);/g) || []).length).toBeGreaterThanOrEqual(3);
   });
 });
@@ -586,7 +586,7 @@ describe('a flow that runs on the field — the decision is made on its card', (
     expect(btns).toContain("const move = _replOn() ? `<button class=\"btn btn-primary btn-sm fc-fix-btn\" ${attrs} data-swap=\"1\"");
   });
   it('the button pressed is the way: nothing is asked again in the dialog', () => {
-    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code') ? way : '';");   // +delete 2026-11-07, +edit and +code 2026-11-08
+    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code' || way === 'askdelete') ? way : '';");   // +delete 2026-11-07, +edit and +code 2026-11-08
     expect(FC).toContain("let preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';");
     expect(FC).toContain('if (preset) activeMode = preset;');
     expect(FC).toContain('const asks = hasChoice && !preset;');

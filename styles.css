@@ -6048,6 +6048,10 @@ body.sftk-dark .fc-badge-del { background: #4a1b1f; color: #ffb4b0; border-color
   border-radius: 4px;
   line-height: 1.4;
 }
+/* ✂ Remove known before the click (2026-11-11): the reason under the row, quiet — it is information, not an error */
+.fc-item-pre { flex: 1 1 100%; font-size: 11px; color: var(--subtext); margin-top: 3px; padding: 3px 6px; background: rgba(127,127,127,.08); border-radius: 4px; }
+.fc-cf-why { margin: 0 0 10px; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--warning); background: rgba(221,122,1,.08); font-size: 12.5px; line-height: 1.5; }
+.fc-pre-no[disabled] { opacity: .45; cursor: not-allowed; text-decoration: line-through; }
 .fc-item-err   {
   font-size: 11px; color: var(--danger); margin-top: 3px;
   padding: 3px 6px; background: rgba(194,57,52,.08); border-radius: 4px;

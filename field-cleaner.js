@@ -1215,7 +1215,8 @@ const FieldCleaner = (() => {
     const codeEdits = codeWays && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="1" data-way="code" title="Rename ${esc(_selField.api)} to ${esc(_replField.api)} in every file of this ${esc(spec ? spec.what : 'component')} — whole word, the diff shown first; a restore point is kept">⇄ Replace</button>` : '';
     const edits = ways
       ? (_replOn() && ways.replace ? `<button class="btn btn-primary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="1" data-way="edit" title="Point this at ${esc(_replField.api)} instead of the field — only the field’s own places in the XML change; a restore point is kept">⇄ Replace</button>` : '')
-        + (ways.remove ? `<button class="btn btn-secondary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="0" data-way="edit" title="Take the field out of this — only the field’s own places in the XML change (refused, with the reason, when what is left would not work); a restore point is kept">✂ Remove</button>` : '')
+        + (ways.remove && _preWhy(id) ? `<button class="btn btn-secondary btn-sm fc-pre-no" disabled title="${esc(_preWhy(id))}">✂ Remove</button>` : '')
+        + (ways.remove && !_preWhy(id) ? `<button class="btn btn-secondary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="0" data-way="edit" title="Take the field out of this — only the field’s own places in the XML change (refused, with the reason, when what is left would not work); a restore point is kept">✂ Remove</button>` : '')
       : '';
     // the lead mapping's 🗑 only ever removed the field's line — ✂ Remove is that, said plainly
     const del = (spec && !(ways && ways.remove && type === 'LeadConvertSettings')) ? `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete this ${esc(spec.what)} from the org — its definition is kept as a restore point; ↩ Undo deploys it back">🗑 Delete ${esc(spec.what)}</button>` : '';
@@ -1302,10 +1303,14 @@ const FieldCleaner = (() => {
       paint();
     });
   }
+  // what a ✂ Remove all walk stops on: every open item with a ✂, and every one it will ask to delete as a whole
+  function _walkPairs(root) {
+    return [...(root || document).querySelectorAll('.fc-fix-pair, .fc-del-pair')].filter(p => p.querySelector('.fc-fix-btn[data-swap="0"], .fc-pre-no')).length;
+  }
   function _refreshFixEvery() {
     const el = eid('fcFixEvery');
     const root = eid('fcResults');
-    if (el && !_everyRunning) el.outerHTML = _fixEveryHtml(_openPairs(root), _openPairs(root, true), _openPairs(root, false));
+    if (el && !_everyRunning) el.outerHTML = _fixEveryHtml(Math.max(_openPairs(root), _walkPairs(root)), _openPairs(root, true), _walkPairs(root));
   }
   async function fixEverything(fieldId, swap) {
     if (_everyRunning || _fixSwap !== null) return;
@@ -1322,16 +1327,18 @@ const FieldCleaner = (() => {
           // lose the field; a Replace-only kind on a Remove walk is left out and named
           const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(type) : null;
           const c = typeof sftkMdCodeWays === 'function' ? sftkMdCodeWays(type) : null;
-          if (!w && !c) continue;
+          const canDel = typeof sftkMdDeleteSpec === 'function' && !!sftkMdDeleteSpec(type);
+          if (!w && !c && (swap || !canDel)) { if (!swap && cfg.sev === 'blocker') skipped.push(cfg.label || type); continue; }
           if (swap) way = c ? 'code' : 'edit';
           else if (w && w.remove) way = 'edit';
+          else if (typeof sftkMdDeleteSpec === 'function' && sftkMdDeleteSpec(type)) way = 'askdelete';   // no ✂ for this kind: say so, offer the whole component
           else { skipped.push(cfg.label || type); continue; }
         }
         if ((await fixAll(type, fieldId, swap, way)) === 'cancel') break;
       }
     } finally {
       _everyRunning = false;
-      if (!swap && skipped.length) _everyNote = `✂ Remove all left out what can only be replaced — ${skipped.join(', ')}: pick a replacement field and press ⇄ Replace all for those, or 🗑 delete them.`;
+      if (!swap && skipped.length) _everyNote = `✂ Remove all could not act on ${skipped.join(', ')} — nothing here removes or deletes ${skipped.length === 1 ? 'that kind' : 'those kinds'}; see the note on each.`;
       _refreshFixEvery();
     }
   }
@@ -2835,6 +2842,7 @@ const FieldCleaner = (() => {
     const delBtn = eid('fcDelBtn');
     if (delBtn) delBtn.onclick = () => confirmDelete(fieldId);
     _autoAsk();
+    _preflight();
 
     runDataUsage();              // F1: fill the verdict placeholder asynchronously
     renderDeprecationZone(fieldId);  // F3: stage banner / deprecate button
@@ -4287,7 +4295,7 @@ const FieldCleaner = (() => {
     // a new attempt starts clean: the message of the last one would read as this one's result (seen live 2026-11-10)
     eid(`fcItem_${componentId}`)?.querySelectorAll('.fc-item-err').forEach(e => e.remove());
     _fixSwap = !!swap && _replOn();
-    _fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code') ? way : '';
+    _fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code' || way === 'askdelete') ? way : '';
     // 'cancel' = the user said no in the dialog (a bulk walk stops there)
     try { return await _fixOneRun(type, componentId, componentName, fieldId); }
     finally { _fixSwap = null; _fixWay = ''; }
@@ -4295,8 +4303,9 @@ const FieldCleaner = (() => {
   async function _fixOneRun(type, componentId, componentName, fieldId) {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     // ✂ / ⇄ inside the component, its XML shown (its own confirm, its own restore point)
+    if (_fixWay === 'askdelete') return _walkDeleteInstead(type, componentId, componentName, (type === 'Flow' && _flowCards.some(c => c.pb && c.primaryId === String(componentId))) ? 'a Process Builder process is not rewritten here — its criteria and actions are edited in Process Builder' : _noRemoveWhy(type));
     if (_fixWay === 'edit') {
-      try { const r = await fixEdit(type, componentId, componentName, _fixSwap === true); if (r === 'cancel') return 'cancel'; if (r && r.label) markFixed(componentId, r.label, '', r.detailHtml || ''); }
+      try { const r = await fixEdit(type, componentId, componentName, _fixSwap === true); if (r === 'cancel') return 'cancel'; if (r && r.refusedWhy) return _walkDeleteInstead(type, componentId, componentName, r.refusedWhy); if (r && r.label) markFixed(componentId, r.label, '', r.detailHtml || ''); }
       catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Setup'); }
       return;
     }
@@ -4540,13 +4549,48 @@ const FieldCleaner = (() => {
     const list = type === 'Flow'
       ? _flowCards.filter(c => !c.pb).map(c => ({ id: c.primaryId, name: c.name }))
       : (_groups[type] || []).map(d => ({ id: d.MetadataComponentId, name: d.MetadataComponentName || d.MetadataComponentId }));
-    for (const it of list) {
-      if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;
-      // Cancel in a dialog stops the walk — it is not asked again for every item.
-      // A flow refused before its dialog (the way cannot work there) is left with
-      // its inline error and the walk goes on to the next one.
-      if ((await fixOne(type, it.id, it.name, fieldId, swap, way)) === 'cancel') return 'cancel';
-    }
+    // A walk never passes over an item in silence (user 2026-11-11: "אם זה לא הצליח למחוק, אז למה זה נותן להתקדם לitem
+    // הבא. הוא צריך להגיד … אי אפשר למחוק את זה כי זה הרפרנס היחידי, אז תמחוק את כל הקומפוננטה"): where ✂ cannot work, the
+    // walk stops ON that item and asks — delete the whole component (its own confirm, a restore point), skip it, or
+    // stop the walk.
+    _inWalk++; if (_inWalk === 1) _walkStop = false;
+    try {
+      for (const it of list) {
+        if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;
+        // Cancel in a dialog stops the walk — it is not asked again for every item.
+        if ((await fixOne(type, it.id, it.name, fieldId, swap, way)) === 'cancel') return 'cancel';
+      }
+      // a Process Builder process is never rewritten here: on a ✂ walk it is asked about as a whole
+      if (type === 'Flow' && !swap) {
+        for (const c of _flowCards.filter(x => x.pb)) {
+          if (eid(`fcItem_${c.primaryId}`)?.classList.contains('fc-item-fixed')) continue;
+          if ((await fixOne('Flow', c.primaryId, c.name, fieldId, false, 'askdelete')) === 'cancel') return 'cancel';
+        }
+      }
+    } finally { _inWalk--; }
+  }
+  let _inWalk = 0, _walkStop = false;
+  // ✂ cannot work on this item of a walk: ask for the whole component instead. → 'cancel' (stop the walk) or nothing.
+  async function _walkDeleteInstead(type, componentId, componentName, why) {
+    _fixWay = 'delete';
+    try {
+      const label = await fixDelete(type, componentId, componentName, why);
+      if (label === 'cancel') return 'cancel';
+      if (label === 'skip') {
+        const item = eid(`fcItem_${componentId}`);
+        if (item && !item.querySelector('.fc-item-pre')) { const n = document.createElement('div'); n.className = 'fc-item-pre'; n.textContent = `Left as it is — ✂ Remove is not possible here: ${why}.`; item.appendChild(n); }
+        return;
+      }
+      if (label) markFixed(componentId, label);
+    } catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Setup'); }
+  }
+  // why a whole KIND has no ✂ (the walk says it on each item of the kind)
+  function _noRemoveWhy(type) {
+    const spec = typeof sftkMdDeleteSpec === 'function' ? sftkMdDeleteSpec(type) : null;
+    const what = (spec && spec.what) || (TYPE_CFG[type] || TYPE_CFG_DEFAULT).label || type;
+    const an = /^[aeiou]/i.test(what) ? 'an' : 'a';
+    if (spec && (spec.code || spec.bundle)) return `which line of the code goes is yours to decide — ${an} ${what} with the field cut out would not compile; ⇄ Replace renames the field in it, ✎ edits it`;
+    return `${an} ${what} cannot lose the field and keep working — ⇄ Replace points it at another field`;
   }
 
   // extraLinksHtml (C5a) — optional pre-escaped xlinkHtml() follow-up links
@@ -6099,7 +6143,7 @@ const FieldCleaner = (() => {
     const inBox = !!_RULE_CONTAINERS[type];
     return { files, verify: { msg: _mdReadMsg(type, fullName, spec.mdType), pattern: `<fullName>${_rxEsc(inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName)}</fullName>`, flags: 'i', retries: 3 }, gone: async () => (await read()) === false };
   }
-  async function fixDelete(type, componentId, componentName) {
+  async function fixDelete(type, componentId, componentName, why) {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     const pbCard = type === 'Flow' ? _flowCards.find(c => c.primaryId === String(componentId) && c.pb) : null;
     const spec = pbCard ? { type: 'Flow', mdType: 'Flow', what: 'Process Builder process', special: 'pb', card: pbCard }
@@ -6123,8 +6167,14 @@ const FieldCleaner = (() => {
       revOverride: { html: special, needsCheckbox: true },
       confirmLabel: `${verb === 'Remove' ? '✂' : '🗑'} ${verb} the ${spec.what}`,
       production: gate.production ? { label: gate.label } : null,
+      // asked by a ✂ walk that could not take the field out of this one: the reason first, and the three ways on
+      extraHtml: why ? `<div class="fc-cf-why"><b>✂ Remove is not possible on “${esc(componentName)}”:</b> ${esc(why)}.<br>What clears it without a replacement is to ${verb === 'Remove' ? 'remove' : 'delete'} the whole ${esc(spec.what)} — confirm below. Or <b>Skip</b> it and go on, or <button type="button" class="fc-dd-linkbtn" id="fcWalkStop">stop the walk here</button>.</div>` : '',
+      onRender: why ? () => {
+        const c = document.getElementById('sftkConfirmCancel'); if (c) c.textContent = 'Skip this one';
+        document.getElementById('fcWalkStop')?.addEventListener('click', () => { _walkStop = true; document.getElementById('sftkConfirmCancel')?.click(); });
+      } : null,
     });
-    if (!sure) return 'cancel';
+    if (!sure) return (why && !_walkStop) ? 'skip' : 'cancel';
     _rowBusy(componentId, '⏳ reading…');
     let fullName, plan;
     try {
@@ -6269,6 +6319,8 @@ const FieldCleaner = (() => {
     } catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message); return null; }
     _rowBusy(componentId, null);
     const ed = sftkMdEditField(type, rec.innerXml, obj, field, nf);
+    // in a ✂ walk a refusal is not left behind as a red line: the walk asks about the whole component (above)
+    if (ed.refused && !nf && _inWalk && (typeof sftkMdDeleteSpec === 'function' && (sftkMdDeleteSpec(type) || type === 'LookupFilter'))) return { refusedWhy: ed.refused };
     if (ed.refused || !ed.changed) {
       appendInlineError(componentId, `${ico} ${verb} was not done on "${componentName}": ${ed.refused || 'nothing in it names the field'}. Nothing was changed.`);
       return null;
@@ -6974,6 +7026,54 @@ const FieldCleaner = (() => {
   // 2026-11-11 (user: "אי אפשר לעשות את זה מאחורי הקלעים?" → yes): no button. The question rides every scan; the
   // answer line says it was asked and when, and carries a small "↻ Ask again" for a fix made by hand in Setup.
   const _ASK_AGAIN = '<button type="button" class="fc-ask-again" id="fcAskBtn" title="Ask Salesforce again — a check-only delete: it answers whether it would accept the delete of this field right now. Nothing is deleted.">↻ Ask again</button>';
+  // ✂ Remove, known BEFORE the click (user 2026-11-11, on a matching rule whose only item is the field: "את זה היינו
+  // צריכים לגלות למשתמש כבר בהתחלה, זה הופיע רק אחרי שניסינו למחוק בפועל"). After the list is drawn, every row whose
+  // kind has ✂ is read and run through the SAME pure transform the fix uses (sftkMdEditField, on a copy — nothing is
+  // written). Where it refuses, the button is off from the start and the row says why, with the ways that do work.
+  // Once per scan, one row after the other; a row that cannot be read stays as it was (the click still explains).
+  function _preWhy(id) { return (_lastScan && _lastScan.pre && _lastScan.pre[id]) || ''; }
+  function _paintPre(id) {
+    const item = eid(`fcItem_${id}`);
+    const why = _preWhy(id);
+    if (!item || !why) return;
+    const pair = item.querySelector('.fc-fix-pair, .fc-del-pair');
+    if (pair && !pair.querySelector('.fc-fix-btn[disabled]') && !pair.querySelector('.fc-pre-no')) pair.innerHTML = _fixBtnsHtml(pair.dataset.type, pair.dataset.id, pair.dataset.name);
+    if (!item.querySelector('.fc-item-pre')) {
+      const n = document.createElement('div');
+      n.className = 'fc-item-pre';
+      n.textContent = `✂ Remove is not possible here: ${why}.`;
+      item.appendChild(n);
+    }
+    const group = item.closest('.fc-group');
+    const box = group && group.querySelector('.fc-fix-allbox');
+    if (box && !_walkRunning) {
+      const open = _openPairs(group);
+      if (open < 2) box.remove();
+      else { box.dataset.n = String(open); box.innerHTML = _fixAllHtml(box.dataset.type, open, box.dataset.label); }
+    }
+  }
+  async function _preflight() {
+    const scan = _lastScan;
+    if (!scan || !_selObj || !_selField) return;
+    if (scan.pre) { Object.keys(scan.pre).forEach(_paintPre); _refreshFixEvery(); return; }   // a redraw of the same scan
+    scan.pre = {};
+    _refreshFixEvery();
+    const obj = _selObj.api, field = _selField.api;
+    const rows = scan.deps.filter(d => { const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(d.MetadataComponentType) : null; return !!(w && w.remove); });
+    for (const d of rows) {
+      if (_lastScan !== scan) return;                                  // another field or another scan meanwhile
+      const type = d.MetadataComponentType, id = d.MetadataComponentId;
+      try {
+        const spec = type === 'LookupFilter' ? { type, mdType: 'CustomField', what: 'lookup filter', special: 'lookupFilter' } : sftkMdDeleteSpec(type);
+        if (!spec) continue;
+        const fullName = await _deleteFullName(type, id, spec);
+        const rd = await _mdReadOne(type, fullName, spec.mdType);
+        if (!rd || rd.error || !rd.rec) continue;
+        const ed = sftkMdEditField(type, rd.rec.innerXml, obj, field, null);
+        if (ed && ed.refused && _lastScan === scan) { scan.pre[id] = ed.refused; _paintPre(id); _refreshFixEvery(); }
+      } catch (_) { /* the row stays as it was — the click still reads and explains */ }
+    }
+  }
   function _wireAsk() { const b = eid('fcAskBtn'); if (b) b.onclick = () => askSalesforce(); }
   let _askBusy = false;
   async function askSalesforce() {

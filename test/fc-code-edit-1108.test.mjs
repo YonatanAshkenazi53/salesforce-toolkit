@@ -123,9 +123,12 @@ describe('the wiring in Field Cleaner', () => {
   it('the ⚡ walk and the group buttons cover every kind with a way; a Remove walk names what it left out', () => {
     expect(FC).toContain('function _openPairs(root, swap) {');
     expect(FC).toContain("return [...(root || document).querySelectorAll('.fc-fix-pair, .fc-del-pair')].filter(p => p.querySelector(sel)).length;");
-    expect(FC).toContain("el.outerHTML = _fixEveryHtml(_openPairs(root), _openPairs(root, true), _openPairs(root, false));");   // ⇄ and ✂ counted apart
+    expect(FC).toContain("el.outerHTML = _fixEveryHtml(Math.max(_openPairs(root), _walkPairs(root)), _openPairs(root, true), _walkPairs(root));");   // ⇄ and ✂ counted apart
     expect(FC).toContain("if (swap) way = c ? 'code' : 'edit';");
-    expect(FC).toContain('✂ Remove all left out what can only be replaced — ${skipped.join(\', \')}');
+    // 2026-11-11: one take — a kind with no ✂ is no longer left out, the walk asks to delete each as a whole
+    expect(FC).toContain("else if (typeof sftkMdDeleteSpec === 'function' && sftkMdDeleteSpec(type)) way = 'askdelete';");
+    expect(FC).toContain("if (r && r.refusedWhy) return _walkDeleteInstead(type, componentId, componentName, r.refusedWhy);");
+    expect(FC).toContain("if (!sure) return (why && !_walkStop) ? 'skip' : 'cancel';");
     // the confirm's XML (and a code file's text) can be edited before the deploy (user 2026-11-08: "we can't edit here")
     expect(FC).toContain('function _cfEditBlock(id, proposed, opts) {');
     expect(FC).toContain("const cfEdit = _cfEditBlock('fcCfEdit', vrChoice ? rec.innerXml : ed.xml, { xml: true, what: 'the XML', name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName,");
