@@ -17,6 +17,9 @@ export function restoreFieldCleanerFixture(alias = 'npc', log = () => {}) {
     { cwd, shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const done = [], failed = [];
   const step = (name, fn) => { try { fn(); done.push(name); } catch (e) { failed.push(`${name}: ${String((e && (e.stdout || e.message)) || e).slice(0, 300)}`); } };
+  // the field's access FIRST (QA 2026-11-11): 'replace everything' moves it to the other field, and a field the running
+  // user cannot see is absent from describe — every later Field Replace script then found no candidate and timed out
+  step('field access (permission set)', () => deploy(join(root, 'base'), 'force-app/main/default/permissionsets'));
   step('layout + Lightning page', () => deploy(join(root, 'surfaces'), 'force-app'));
   step('flow 2', () => deploy(join(root, 'flow2'), 'force-app'));
   const flows = join(root, 'base', 'force-app', 'main', 'default', 'flows');
