@@ -158,11 +158,20 @@ async function sftkFlowPauseOn(sess, flows, send) {
   const bg = typeof send === 'function' ? send : sendBg;
   const orgKey = sftkOrgKey(sess.orgUrl);
   const need = flows.filter(f => !f.defId);
+  let unread = [];
   if (need.length) {
     const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: true, _silentError: true,
       query: `SELECT Id, DeveloperName FROM FlowDefinition WHERE DeveloperName IN (${need.map(f => _sftkFpLit(f.apiName)).join(',')})` });
-    const idOf = new Map(((q && q.records) || []).map(r => [r.DeveloperName, r.Id]));
-    for (const f of need) f.defId = idOf.get(f.apiName) || '';
+    // A failed read is NOT "the flow is gone" (audit 2026-11-11): the lines below would call it "not found in the org
+    // any more" and FORGET it, leaving it switched off with no record. They are reported as NOT switched on and stay
+    // in the memory for the next try; the flows that need no lookup still go back on.
+    if (!q || q.error) {
+      unread = need.map(f => `${f.label || f.apiName}: still OFF and still remembered — it could not be looked up (${(q && q.error) || 'no answer'})`);
+      flows = flows.filter(f => f.defId);
+    } else {
+      const idOf = new Map((q.records || []).map(r => [r.DeveloperName, r.Id]));
+      for (const f of need) f.defId = idOf.get(f.apiName) || '';
+    }
   }
   const ready = flows.filter(f => f.defId && f.version);
   const lost = flows.filter(f => !(f.defId && f.version)).map(f => `${f.label || f.apiName}: not found in the org any more — nothing to switch on`);
@@ -172,9 +181,9 @@ async function sftkFlowPauseOn(sess, flows, send) {
     r = ready.length ? await _sftkFpSwitch(sess, ready, true, journal, send) : r;
     if (r.done.length || lost.length) await _sftkFpMemory(m => { for (const f of r.done) delete m[f.apiName]; for (const f of flows) if (!(f.defId && f.version)) delete m[f.apiName]; return m; }, orgKey);
   } finally {
-    await sftkHistoryEnd(journal, { undo: { none: 'switching them off again is what the deployment option does — run it again, or use ⏻ Flow switches' }, errors: lost });
+    await sftkHistoryEnd(journal, { undo: { none: 'switching them off again is what the deployment option does — run it again, or use ⏻ Flow switches' }, errors: [...lost, ...unread] });
   }
-  return { done: r.done, failed: [...r.failed, ...lost] };
+  return { done: r.done, failed: [...r.failed, ...lost, ...unread] };
 }
 
 if (typeof window !== 'undefined') {

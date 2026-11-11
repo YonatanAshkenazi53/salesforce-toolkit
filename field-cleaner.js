@@ -334,6 +334,29 @@ function fcAskNamed(lines) {
   }
   return out;
 }
+// "Flow Version - 301bm00003G5k5w" says nothing a person can match to the list (owner 2026-11-11, five such lines over
+// three flows with five version chips: "we are missing some flow versions here" — none was missing, the ids just
+// could not be read). With the versions looked up, the lines become one per flow: "Flow SFTK Pkg Screen — v1 (not
+// active) · v2 (Active)". A version that could not be looked up keeps Salesforce's own line. Pure.
+//   byId: { <id15>: { flow, version, status } }
+function fcAskFlowLines(lines, byId) {
+  const out = [], at = new Map();
+  for (const raw of (lines || [])) {
+    const m = /^Flow Version - ([A-Za-z0-9]{15,18})$/.exec(String(raw || '').trim());
+    const v = m && byId && byId[m[1].slice(0, 15)];
+    if (!v) { out.push(raw); continue; }
+    if (!at.has(v.flow)) { at.set(v.flow, { i: out.length, vs: [] }); out.push(''); }
+    at.get(v.flow).vs.push(v);
+  }
+  for (const [flow, g] of at) {
+    g.vs.sort((a, b) => (a.version || 0) - (b.version || 0));
+    out[g.i] = `Flow ${flow} — ${g.vs.map(v => `v${v.version} (${/^active$/i.test(v.status) ? 'Active' : 'not active'})`).join(' · ')}`;
+  }
+  return out;
+}
+function fcAskFlowIds(lines) {
+  return [...new Set((lines || []).map(l => (/^Flow Version - ([A-Za-z0-9]{15,18})$/.exec(String(l || '').trim()) || [])[1]).filter(Boolean))];
+}
 // Is a kind-only line ("Field Updates") already a group of the list ("Workflow Field Updates")?
 function fcAskKindListed(line, groupLabels) {
   // word sets, order and punctuation aside: Salesforce says "Criteria-based Sharing Rules" for the list's "Sharing
@@ -7193,7 +7216,17 @@ const FieldCleaner = (() => {
     catch (e) { r = { error: String((e && e.message) || e) }; }
     finally { _askBusy = false; }
     if (!_selField || _selField.api !== field || _lastScan !== scan) return;   // another field or another scan meanwhile
-    const ask = { r, at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+    const ask = { r, at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), flows: {} };
+    // the flow versions Salesforce names by id, read once so the box can say them by name
+    try {
+      const ids = (r && !r.error && !r.success) ? fcAskFlowIds(fcAskVerdict(r, 1).lines) : [];
+      for (let i = 0; i < ids.length; i += 150) {
+        const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+          query: `SELECT Id, MasterLabel, VersionNumber, Status FROM Flow WHERE Id IN (${ids.slice(i, i + 150).map(id => `'${id}'`).join(',')})` });
+        for (const f of ((q && !q.error && q.records) || [])) ask.flows[String(f.Id).slice(0, 15)] = { flow: f.MasterLabel || f.Id, version: Number(f.VersionNumber) || 0, status: f.Status || '' };
+      }
+    } catch (_) { /* the box keeps Salesforce's own lines */ }
+    if (!_selField || _selField.api !== field || _lastScan !== scan) return;
     if (scan) scan.ask = ask;
     // whatever Salesforce names and the list lacks becomes a row of the list
     let joined = 0;
@@ -7247,7 +7280,7 @@ const FieldCleaner = (() => {
     box.hidden = false;
     box.className = `fc-ask-box fc-ask-${view.kind}`;
     box.innerHTML = `<div class="fc-ask-head">${esc(view.head)} <span class="fc-ask-at">Salesforce was asked at ${esc(ask.at)} · nothing was deleted</span>${_ASK_AGAIN}</div>`
-      + (view.lines.length ? `<ul class="fc-ask-list">${view.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : '')
+      + (view.lines.length ? `<ul class="fc-ask-list">${fcAskFlowLines(view.lines, ask.flows).map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : '')
       + (view.foot ? `<div class="fc-ask-foot">${esc(view.foot)}</div>` : '');
     _wireAsk();
     // Salesforce refuses → the delete stays locked whatever the list says

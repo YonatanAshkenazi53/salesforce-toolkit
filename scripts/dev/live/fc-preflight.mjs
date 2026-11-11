@@ -11,7 +11,7 @@ async function pick(h, inputSel, dropSel, api) {
   await h.sleep(800);
 }
 export default async function (h) {
-  await h.login('npc');
+  await h.login(process.env.ORG || 'npc');
   await h.popup('fields');
   await h.watchErrors();
   if (process.env.DARK) await h.eval("(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.classList.add('dark'); return true; })()");
@@ -22,6 +22,8 @@ export default async function (h) {
   await h.waitFor("!document.querySelector('#fcScanBtn')?.disabled", 600000, 1000);
   h.log('STATUS:', (await h.eval("document.querySelector('.fc-summary, #fcSummary, .fc-status')?.innerText || ''")).replace(/\s+/g, ' ').slice(0, 200));
   h.log('ALL ROWS:', JSON.stringify(await h.eval("[...document.querySelectorAll('.fc-item')].map(i => (i.closest('.fc-group')?.id || '').replace('fcGroup_', '') + ': ' + (i.querySelector('.fc-item-name')?.innerText.trim() || '') + ' {' + [...i.querySelectorAll('.fc-item-btns button')].map(b => b.innerText.trim()).join(' ') + '}')")));
+  await h.waitFor("!/⏳/.test(document.querySelector('#fcAskBox')?.innerText || '')", 120000, 1000).catch(() => {});
+  h.log('ASK BOX:', (await h.eval("document.querySelector('#fcAskBox')?.innerText || ''")).split(String.fromCharCode(10)).join(' | ').slice(0, 900));
   const t0 = Date.now();
   // the pre-check walks the rows one by one: wait until the count of notes stops growing
   let last = -1, same = 0;

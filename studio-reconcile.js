@@ -3956,7 +3956,14 @@ async function reconcileStampPairs(p, scan) {
       if (!ids.length) continue;
       const oq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
         query: `SELECT Id, ${idField} FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')})` });
-      if (!oq?.error) for (const r of (oq.records || [])) oldValById.set(r.Id, r[idField] ?? null);
+      // A failed read is NOT "the field was blank" (audit 2026-11-11, after Field Cleaner read a failed lookup as "no
+      // such field"): the undo below writes these values back, so an unread value would be rolled back to blank.
+      // Nothing has been written yet — stop here (the finally below closes the journal).
+      if (!oq || oq.error) {
+        showToast(`🪪 Nothing was stamped: the current ${idField} values of ${objType} could not be read from ${orgLabel(p.targetOrg)} (${(oq && oq.error) || 'no answer'}), and without them the stamp could not be rolled back. Reload the org's tab and try again.`, 'error', 12000);
+        return;
+      }
+      for (const r of (oq.records || [])) oldValById.set(r.Id, r[idField] ?? null);
     }
     for (let i = 0; i < pairs.length; i += 200) {
       const recs = sftkIdStampPayload(objType, pairs.slice(i, i + 200));
@@ -4304,14 +4311,18 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
                  query: `SELECT Id, DeveloperName FROM RecordType WHERE SObjectType = '${objType}'` })
       ]);
       const tgtByName = {};
-      for (const r of (tgtRtRes.records || [])) tgtByName[r.DeveloperName] = r.Id;
+      for (const r of ((tgtRtRes && tgtRtRes.records) || [])) tgtByName[r.DeveloperName] = r.Id;
       rtRemap = {};
       const unmatched = [];
-      for (const r of (srcRtRes.records || [])) {
+      for (const r of ((srcRtRes && srcRtRes.records) || [])) {
         rtRemap[r.Id] = tgtByName[r.DeveloperName] || null;
         if (!rtRemap[r.Id]) unmatched.push(r.DeveloperName);
       }
-      if (unmatched.length) ovwErrors.push(`record type(s) ${unmatched.join(', ')} not in target — left unchanged on those records`);
+      // A failed read is said as a failed read, never as "not in target" (audit 2026-11-11). The record type is left
+      // unchanged either way — an unmapped id is never written.
+      const rtErr = (!srcRtRes || srcRtRes.error) ? `source: ${(srcRtRes && srcRtRes.error) || 'no answer'}` : ((!tgtRtRes || tgtRtRes.error) ? `target: ${(tgtRtRes && tgtRtRes.error) || 'no answer'}` : '');
+      if (rtErr) ovwErrors.push(`the record types could not be read (${rtErr}) — RecordTypeId left unchanged on every record of this write`);
+      else if (unmatched.length) ovwErrors.push(`record type(s) ${unmatched.join(', ')} not in target — left unchanged on those records`);
     }
   }
 
