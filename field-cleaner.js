@@ -2596,7 +2596,7 @@ const FieldCleaner = (() => {
           : `<div class="fc-clean-icon">✅</div>
           <div class="fc-clean-title">No dependencies found</div>
           <div class="fc-clean-sub">The scan found nothing that uses this field. Salesforce is asked below whether it would accept the delete.</div>
-          <div class="fc-clean-btns">${_askHtml().split('\n')[0]}<button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button></div>
+          <div class="fc-clean-btns"><button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button></div>
           <div class="fc-ask-box" id="fcAskBox" hidden></div>`}
         </div>
         <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
@@ -2761,7 +2761,6 @@ const FieldCleaner = (() => {
                 ? '✅ The scan lists no blocker (the references below simply go with the field).'
                 : '✅ The scan lists no blocker.'}
         </div>
-        ${pkgNs ? '' : _askHtml().split('\n')[0]}
         <button class="btn btn-danger" id="fcDelBtn" ${delDisabled ? 'disabled' : ''}>
           🗑 Delete Field
         </button>
@@ -6972,19 +6971,18 @@ const FieldCleaner = (() => {
   // "Ask Salesforce" (user 2026-11-10: "If we can ask Salesforce directly why we didn't do it?"). A CHECK-ONLY delete
   // of the field: Salesforce validates it, deletes nothing, and names in its own words what refuses it. It answers
   // only "what BLOCKS" — what the delete would break silently (👀) Salesforce does not mention.
-  const _ASK_BTN = '🩺 Ask Salesforce';
-  function _askHtml() {
-    return `<button type="button" class="btn btn-secondary fc-ask-btn" id="fcAskBtn" title="A check-only delete: Salesforce answers whether it would accept the delete of this field right now, and names what blocks it. Nothing is deleted.">${_ASK_BTN}</button>
-        <div class="fc-ask-box" id="fcAskBox" hidden></div>`;
-  }
+  // 2026-11-11 (user: "אי אפשר לעשות את זה מאחורי הקלעים?" → yes): no button. The question rides every scan; the
+  // answer line says it was asked and when, and carries a small "↻ Ask again" for a fix made by hand in Setup.
+  const _ASK_AGAIN = '<button type="button" class="fc-ask-again" id="fcAskBtn" title="Ask Salesforce again — a check-only delete: it answers whether it would accept the delete of this field right now. Nothing is deleted.">↻ Ask again</button>';
   function _wireAsk() { const b = eid('fcAskBtn'); if (b) b.onclick = () => askSalesforce(); }
   let _askBusy = false;
   async function askSalesforce() {
-    const btn = eid('fcAskBtn');
-    if (!btn || !_selObj || !_selField || _askBusy) return;
+    const box0 = eid('fcAskBox');
+    if (!box0 || !_selObj || !_selField || _askBusy) return;
     const obj = _selObj.api, field = _selField.api, scan = _lastScan;
     _askBusy = true;
-    btn.disabled = true; btn.textContent = '⏳ Asking Salesforce…';
+    box0.hidden = false; box0.className = 'fc-ask-box fc-ask-asking';
+    box0.innerHTML = `<div class="fc-ask-head">⏳ Asking Salesforce whether it would accept the delete… <span class="fc-ask-at">a check only · nothing is deleted</span>${_ASK_AGAIN.replace('id="fcAskBtn"', 'id="fcAskBtn" disabled')}</div>`;
     let r;
     try { r = await _deleteFieldViaMetadata(`${obj}.${field}`, true); }
     catch (e) { r = { error: String((e && e.message) || e) }; }
@@ -7037,16 +7035,16 @@ const FieldCleaner = (() => {
     return n;
   }
   function _paintAsk(ask) {
-    const btn = eid('fcAskBtn'), box = eid('fcAskBox');
-    if (btn) { btn.disabled = false; btn.textContent = _ASK_BTN; }
+    const box = eid('fcAskBox');
     if (!box || !ask) return;
     const listed = (_manualBlockers || []).reduce((n, b) => n + b.count, 0) + new Set([...document.querySelectorAll('#fcResults .fc-fix-btn:not([disabled])')].filter(b => (TYPE_CFG[b.dataset.type] || TYPE_CFG_DEFAULT).sev === 'blocker').map(b => b.dataset.id)).size;
     const view = fcAskVerdict(ask.r, listed);
     box.hidden = false;
     box.className = `fc-ask-box fc-ask-${view.kind}`;
-    box.innerHTML = `<div class="fc-ask-head">${esc(view.head)} <span class="fc-ask-at">checked ${esc(ask.at)} · nothing was deleted</span></div>`
+    box.innerHTML = `<div class="fc-ask-head">${esc(view.head)} <span class="fc-ask-at">Salesforce was asked at ${esc(ask.at)} · nothing was deleted</span>${_ASK_AGAIN}</div>`
       + (view.lines.length ? `<ul class="fc-ask-list">${view.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : '')
       + (view.foot ? `<div class="fc-ask-foot">${esc(view.foot)}</div>` : '');
+    _wireAsk();
     // Salesforce refuses → the delete stays locked whatever the list says
     if (view.kind === 'blocked') {
       for (const id of ['fcDelBtn', 'fcDelFreeBtn']) { const d = eid(id); if (d) d.disabled = true; }
@@ -7058,7 +7056,7 @@ const FieldCleaner = (() => {
   // packaged field (no button there). A redraw of the same scan shows the answer it already has.
   function _autoAsk() {
     _wireAsk();
-    if (!eid('fcAskBtn') || !_lastScan) return;
+    if (!eid('fcAskBox') || !_lastScan) return;
     if (_lastScan.ask) { _paintAsk(_lastScan.ask); return; }
     if (fcScopeNorm(_lastScan.scope) === 'mentions') return;
     askSalesforce();

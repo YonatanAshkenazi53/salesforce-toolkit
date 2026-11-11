@@ -59,7 +59,12 @@ describe('the check-only deploy writes nothing', () => {
   it('Field Cleaner asks with the same zip the delete uses, and a packaged field has no button', () => {
     expect(FC).toContain("if (checkOnly === true) return bg({ type: 'SF_METADATA_VALIDATE',");
     expect(FC).toContain("try { r = await _deleteFieldViaMetadata(`${obj}.${field}`, true); }");
-    expect(FC).toContain("${pkgNs ? '' : _askHtml().split('\\n')[0]}");
+    // 2026-11-11: no button any more — the box alone, and "↻ Ask again" inside the answer line
+    expect(FC).toContain(`\${pkgNs ? '' : '<div class="fc-ask-box" id="fcAskBox" hidden></div>'}`);
+    expect(FC).not.toContain('_askHtml');
+    expect(FC).not.toContain('🩺 Ask Salesforce</button>');
+    expect(FC).toContain('class="fc-ask-again" id="fcAskBtn"');
+    expect(FC).toContain("if (!eid('fcAskBox') || !_lastScan) return;");
     expect(FC).not.toContain('This field can be safely deleted');
   });
 });
