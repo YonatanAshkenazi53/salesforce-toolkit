@@ -38,7 +38,7 @@ export default async function (h) {
   h.log('SWEEP fact:', await txt(h, '#fcOrgSweep', 500));
 
   // the plan
-  await h.eval(`document.querySelector('#fcSweepPlan').click()`);
+  await h.eval(`document.querySelector('${process.env.PKG === '1' ? '#fcSweepPlanPkg' : '#fcSweepPlan'}').click()`);   // PKG=1: your objects + packaged objects
   await h.waitFor("!!document.querySelector('#fcSweepGo') || /could not be read/.test(document.querySelector('#fcOrgSweep')?.innerText || '')", 600000, 1000);
   h.log('PLAN:', await txt(h, '#fcOrgSweep', 1800));
   await shot(h, 'sweep-1-plan');

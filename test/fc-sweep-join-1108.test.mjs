@@ -43,7 +43,7 @@ describe('wiring (pins)', () => {
   it('the name and the cost up front', () => {
     expect(FC).toContain('<b>Full metadata text scan</b>');
     expect(FC).toContain('<strong>Expensive and slow:</strong> one API call per metadata type to list it, then several Metadata API retrieves — hundreds of calls and many minutes on a large org.');
-    expect(FC).toContain('id="fcSweepPlan">🧭 Count the cost…</button>');
+    expect(FC).toContain('id="fcSweepPlan" data-pkg="0"'); expect(FC).toContain('id="fcSweepPlanPkg" data-pkg="1"');   // 2026-11-11: two scopes
     expect(FC).toContain("'Look further than the index', 'every report, and a full metadata text scan — on request'");
     expect(FC).toContain('a large org: expect many minutes, and the bar to stand still while a big retrieve runs');
     expect(FC).not.toContain('Whole-org text sweep');

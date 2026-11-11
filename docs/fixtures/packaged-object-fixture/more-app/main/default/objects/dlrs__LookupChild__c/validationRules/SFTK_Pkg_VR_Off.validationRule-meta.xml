@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata"><fullName>SFTK_Pkg_VR_Off</fullName><active>false</active><description>SFTK packaged-object demo, inactive.</description><errorConditionFormula>SFTK_Pkg_Tag__c = &apos;sftk-never&apos;</errorConditionFormula><errorMessage>SFTK demo</errorMessage></ValidationRule>

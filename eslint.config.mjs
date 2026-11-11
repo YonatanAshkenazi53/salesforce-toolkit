@@ -42,7 +42,7 @@ export default [
     ignores: ['node_modules/**', '_harness*', '_smoketest*', '*.min.js', 'eslint-globals.json',
       'Saleforce Toolkit/**',   // stale nested copy (June 2026) — not part of the build
       'dist/**',
-      'scripts/dev/live/demo/live*/**'],   // the demo fixture builders' generated source (gitignored)
+      'scripts/dev/live/demo/live*/**', 'docs/fixtures/**/lwc/**', 'docs/fixtures/**/aura/**'],   // the demo fixture builders' generated source (gitignored)
   },
   {
     files: ['**/*.js'],

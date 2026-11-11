@@ -1,0 +1,4 @@
+<apex:component>
+    <apex:attribute name="rec" type="dlrs__LookupChild__c" description="the record"/>
+    <apex:outputText value="{!rec.SFTK_Pkg_Tag__c}"/>
+</apex:component>

@@ -44,3 +44,14 @@ sf project deploy start -o npc -d fc-app
 ```
 
 Redeploy after a Field Cleaner write test to put the references back.
+
+## The rest of the kinds (2026-11-11)
+
+`node build-more.mjs` writes `more-app/` — everything the Account demo has that this field did not: an Apex class and
+trigger, a Visualforce page and component, an LWC with a schema import, an Aura component, a custom button, a lookup
+filter (Contact.SFTK_Pkg_Lk__c → the packaged object), a scoping rule, an approval process, a quick action, an inactive
+validation rule, a custom metadata record (SFTK_Live_Cmt.PkgRef), and an outbound message in fc-app's workflow file.
+
+Deploy: `sf project deploy start -o npc --source-dir more-app --test-level NoTestRun`, then
+`--source-dir fc-app/main/default/workflows`. Field Cleaner then reads `dlrs__LookupChild__c.SFTK_Pkg_Tag__c` in 32
+places. Not possible here: an email alert whose recipient is the field (Email fields only).

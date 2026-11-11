@@ -1988,11 +1988,14 @@ const FieldCleaner = (() => {
       await eachMetadata('WorkflowRule', rules,
         m => (m.criteriaItems || []).some(c => sameField(c.field)) || (typeof m.formula === 'string' && re.test(m.formula)),
         'WorkflowRule', (r, m) => r.Name + (m.active === false ? ' (inactive)' : ''), 'workflow rules');
-      const alerts = (await sfQ(`SELECT Id, DeveloperName FROM WorkflowAlert WHERE EntityDefinitionId = '${obj}'`, true))?.records || [];
+      // EntityDefinitionId is the API name for a standard object but the object's 01I… id for a custom one — a filter
+      // by name found NO alert and NO outbound message on any custom or packaged object (found 2026-11-11 building the
+      // packaged-object demo: "SFTK Pkg OM" was in the org and not in the list). The relationship's name works for both.
+      const alerts = (await sfQ(`SELECT Id, DeveloperName FROM WorkflowAlert WHERE EntityDefinition.QualifiedApiName = '${obj}'`, true))?.records || [];
       await eachMetadata('WorkflowAlert', alerts,
         m => (m.recipients || []).some(rc => sameField(rc.field)),
         'WorkflowAlert', r => r.DeveloperName, 'email alerts');
-      const oms = (await sfQ(`SELECT Id, Name FROM WorkflowOutboundMessage WHERE EntityDefinitionId = '${obj}'`, true))?.records || [];
+      const oms = (await sfQ(`SELECT Id, Name FROM WorkflowOutboundMessage WHERE EntityDefinition.QualifiedApiName = '${obj}'`, true))?.records || [];
       await eachMetadata('WorkflowOutboundMessage', oms,
         m => (m.fields || []).some(sameField),
         'WorkflowOutboundMessage', r => r.Name, 'outbound messages');
@@ -3019,8 +3022,10 @@ const FieldCleaner = (() => {
     const N = x => Number(x).toLocaleString();
     if (!s) {
       el.innerHTML = `<div class="fc-fact fc-sweep-fact"><span class="fc-fact-ico">🧭</span><span class="fc-fact-text"><b>Full metadata text scan</b> — the scan above asks Salesforce’s index and reads the kinds it knows. This retrieves the org’s own metadata as a whole, like a project pulled from version control, and finds every file that names <code>${esc(_selField.api)}</code>: what must go or change before the delete (🔒), and what only breaks later (👀) — search layouts, related-list columns, record-type picklist values, Aura markup, templates, translations, permission sets and the rest. What it finds joins the list above with ✂ ⇄ ✎ 🗑 where its kind has them. <strong>Expensive and slow:</strong> one API call per metadata type to list it, then several Metadata API retrieves — hundreds of calls and many minutes on a large org. Pressing the button only counts: the exact calls and time are shown before anything is read. Nothing is written.</span>
-        <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcSweepPlan">🧭 Count the cost…</button></span></div>`;
+        <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcSweepPlan" data-pkg="0" title="Your org’s own components, on standard objects and on the objects your org created. Counts the cost first.">🧭 Your objects — count the cost…</button>
+        <button class="btn btn-secondary btn-sm" id="fcSweepPlanPkg" data-pkg="1" title="The same, plus the objects that came with installed packages: what YOUR org added inside them — fields, validation rules, list views, buttons, field sets, workflow and sharing rules. The package’s own parts cannot name your field. Longer in an org with big packages. Counts the cost first.">🧭 Your objects + packaged objects…</button></span></div>`;
       eid('fcSweepPlan').addEventListener('click', _sweepPlan);
+      eid('fcSweepPlanPkg').addEventListener('click', _sweepPlan);
       return;
     }
     if (s.status === 'planning') {
@@ -3039,7 +3044,7 @@ const FieldCleaner = (() => {
     if (s.status === 'ready') {
       const calls = s.groups.length * 2 + s.listCalls;
       const est = s.total ? Math.max(15, Math.round(s.total / FC_SWEEP_RATE) + s.groups.length * 6) * 1000 : null;
-      el.innerHTML = `<div class="fc-sweep">🧭 This org has <strong>${N(s.total)}</strong> of its own component${s.total === 1 ? '' : 's'} in <strong>${N(s.types.length)}</strong> kind${s.types.length === 1 ? '' : 's'} worth reading${s.skippedManaged ? ` (${N(s.skippedManaged)} from installed packages left out — the platform will not let you change those)` : ''}.
+      el.innerHTML = `<div class="fc-sweep">🧭 This org has <strong>${N(s.total)}</strong> of its own component${s.total === 1 ? '' : 's'} in <strong>${N(s.types.length)}</strong> kind${s.types.length === 1 ? '' : 's'} worth reading${s.pkg ? ` — ${N(s.pkgBoxes)} of them packaged objects and their rule files, read for what your org added inside them` : ''}${s.skippedManaged ? ` (${N(s.skippedManaged)} ${s.pkg ? 'other components' : 'components'} from installed packages left out — the platform will not let you change those${s.pkg ? '' : '; what your org added inside packaged objects is read with “+ packaged objects”'})` : ''}.
         Reading them takes <strong>${N(s.groups.length)}</strong> retrieve${s.groups.length === 1 ? '' : 's'} of the Metadata API — <strong>${N(calls)} API calls</strong> in all (${N(s.listCalls)} already spent on the listing) and roughly <strong>${sftkSweepFmtMs(est)}</strong>${s.total > 3000 ? ' — a large org: expect many minutes, and the bar to stand still while a big retrieve runs' : ''}. Nothing is written.
         <div class="fc-sweep-types">${esc(s.types.map(t => `${t.name} ${N((s.listed[t.name] || []).length)}`).join(' · '))}</div>
         <button class="btn btn-primary btn-sm" id="fcSweepGo">▶ Read ${N(s.total)} component${s.total === 1 ? '' : 's'}</button>
@@ -3152,8 +3157,17 @@ const FieldCleaner = (() => {
 
   // Step 1 — the plan: describeMetadata, then listMetadata per type (folder
   // kinds folder by folder), so the cost is exact before anything is retrieved.
-  async function _sweepPlan() {
-    const s = _orgSweep = { status: 'planning', planDone: 0, planTotal: 0, listedCount: 0, stop: false, notes: [], listCalls: 0, skippedManaged: 0 };
+  // Two scopes (user 2026-11-11: "אנחנו צריכים להציע סריקה כזו, אובייקטים רגילים או אובייקטים רגילים וחבילתיים"). A
+  // packaged object used to be left out whole — with it went what the org itself had added INSIDE it (its file holds
+  // the org's fields, validation rules, list views, buttons and field sets next to the package's). With the wider
+  // scope the packaged objects are named in the retrieve, like the standard ones; so are their workflow and sharing
+  // rule files. A package's own parts cannot name a field of the org, so a hit in such a file is the org's own.
+  let _sweepPkg = false;
+  const _SWEEP_PKG_BOXES = new Set(['CustomObject', 'Workflow', 'SharingRules']);
+  async function _sweepPlan(ev) {
+    const asked = ev && ev.currentTarget && ev.currentTarget.dataset ? ev.currentTarget.dataset.pkg : undefined;
+    if (asked === '1' || asked === '0') _sweepPkg = asked === '1';
+    const s = _orgSweep = { status: 'planning', planDone: 0, planTotal: 0, listedCount: 0, stop: false, notes: [], listCalls: 0, skippedManaged: 0, pkg: _sweepPkg, pkgBoxes: 0 };
     renderOrgSweep();
     const fail = why => { if (_orgSweep === s) { _orgSweep = { status: 'error', error: why }; renderOrgSweep(); } };
     const d = await bg({ type: 'SF_MD_DESCRIBE', orgUrl: _orgUrl, sid: _sid, _suppressError: true });
@@ -3174,7 +3188,10 @@ const FieldCleaner = (() => {
       s.planNote = t.name;
       renderOrgSweep();
       const members = [];
-      const take = items => { for (const it of items) { if (!sftkSweepOwn(it)) { s.skippedManaged++; continue; } members.push(it.fullName); } };
+      const take = items => { for (const it of items) {
+        if (!sftkSweepOwn(it)) { if (s.pkg && _SWEEP_PKG_BOXES.has(t.name)) { members.push(it.fullName); s.pkgBoxes++; } else s.skippedManaged++; continue; }
+        members.push(it.fullName);
+      } };
       if (t.how === 'folders') {
         const f = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType: t.folderType, _suppressError: true });
         s.listCalls++;

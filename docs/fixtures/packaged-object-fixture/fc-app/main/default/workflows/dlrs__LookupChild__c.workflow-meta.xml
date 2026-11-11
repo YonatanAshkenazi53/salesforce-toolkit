@@ -21,6 +21,18 @@
         <protected>false</protected>
         <reevaluateOnChange>false</reevaluateOnChange>
     </fieldUpdates>
+    <outboundMessages>
+        <fullName>SFTK_Pkg_OM</fullName>
+        <apiVersion>62.0</apiVersion>
+        <endpointUrl>https://example.invalid/sftk</endpointUrl>
+        <fields>Id</fields>
+        <fields>SFTK_Pkg_Tag__c</fields>
+        <includeSessionId>false</includeSessionId>
+        <integrationUser>yonash53.b2512850f759@agentforce.com</integrationUser>
+        <name>SFTK Pkg OM</name>
+        <protected>false</protected>
+        <useDeadLetterQueue>false</useDeadLetterQueue>
+    </outboundMessages>
     <rules>
         <fullName>SFTK_Pkg_WR</fullName>
         <active>false</active>

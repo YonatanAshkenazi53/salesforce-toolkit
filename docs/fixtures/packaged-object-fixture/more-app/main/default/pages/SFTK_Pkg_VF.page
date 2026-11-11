@@ -1,0 +1,3 @@
+<apex:page standardController="dlrs__LookupChild__c">
+    <apex:outputField value="{!dlrs__LookupChild__c.SFTK_Pkg_Tag__c}"/>
+</apex:page>

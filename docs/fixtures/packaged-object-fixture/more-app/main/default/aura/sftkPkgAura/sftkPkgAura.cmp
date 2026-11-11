@@ -1,0 +1,4 @@
+<aura:component>
+    <aura:attribute name="rec" type="dlrs__LookupChild__c"/>
+    <span>{!v.rec.SFTK_Pkg_Tag__c}</span>
+</aura:component>

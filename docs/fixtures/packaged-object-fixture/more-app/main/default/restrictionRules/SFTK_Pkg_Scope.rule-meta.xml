@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RestrictionRule xmlns="http://soap.sforce.com/2006/04/metadata"><active>false</active><enforcementType>Scoping</enforcementType><description>SFTK packaged-object demo, matches no user. Safe to delete.</description><masterLabel>SFTK Pkg Scope</masterLabel><recordFilter>SFTK_Pkg_Tag__c = &apos;sftk-never&apos;</recordFilter><targetEntity>dlrs__LookupChild__c</targetEntity><userCriteria>$User.Username = &apos;nobody@sftk.invalid&apos;</userCriteria><version>1</version></RestrictionRule>
