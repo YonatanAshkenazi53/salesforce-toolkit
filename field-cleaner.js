@@ -5062,32 +5062,56 @@ const FieldCleaner = (() => {
     const li = (x, tail) => `<li><b>${esc(x.kind)}</b> “${esc(x.label || x.name || '?')}”${x.name ? ` <code>${esc(x.name)}</code>` : ''} — ${esc(x.where)}${tail ? `: <code>${esc(tail)}</code>` : ''}</li>`;
     const list = (arr, tailKey) => arr.length ? `<ul class="fc-prev-list">${arr.slice(0, 12).map(x => li(x, x[tailKey])).join('')}${arr.length > 12 ? `<li>… +${arr.length - 12} more</li>` : ''}</ul>` : '';
     const open = fp.builderUrl ? `<a href="${esc(fp.builderUrl)}" target="_blank" rel="noopener" class="fc-prev-open">↗ Open v${act.num} in Flow Builder</a>` : '';
-    const sum = [`${pv.removed.length} come${pv.removed.length === 1 ? 's' : ''} out`, pv.remaining.length ? `${pv.remaining.length} stay${pv.remaining.length === 1 ? 's' : ''} — by hand` : '', pv.emptied.length ? `${pv.emptied.length} left empty` : ''].filter(Boolean).join(' · ');
+    const sum = [`${pv.removed.length} come${pv.removed.length === 1 ? 's' : ''} out`, pv.remaining.length ? `${pv.remaining.length} the tool cannot take out` : '', pv.emptied.length ? `${pv.emptied.length} left with nothing in ${pv.emptied.length === 1 ? 'it' : 'them'}` : ''].filter(Boolean).join(' · ');
     return `<div class="fc-prev">
-      <details class="fc-prev-more"><summary>Inside the active v${act.num}: ${sum}</summary>
-      ${pv.removed.length ? `<div class="fc-prev-sec fc-prev-ok"><b>✂ Comes out automatically (${pv.removed.length})</b>${list(pv.removed, 'what')}</div>`
-        : `<div class="fc-prev-sec fc-prev-bad"><b>✂ Nothing can be taken out automatically.</b></div>`}
-      ${pv.remaining.length ? `<div class="fc-prev-sec fc-prev-bad"><b>✋ Cannot be removed automatically (${pv.remaining.length}) — these KEEP the field locked</b>
-        <div class="fc-prev-note">A decision outcome loses the field’s condition when it has other conditions to stand on, and a yes/no formula loses the field’s part when the rest still tests something. What is listed here could not be done that way: an outcome that rests on the field alone (it can go as a whole — the option for that is below), a numbered condition logic, or a formula that is not a plain yes/no test. Until these are changed by hand, Salesforce will still refuse to delete the field.</div>${list(pv.remaining, 'value')}</div>` : ''}
-      ${pv.emptied.length ? `<div class="fc-prev-sec fc-prev-warn"><b>⚠ Left empty by the fix (${pv.emptied.length}) — Salesforce is likely to refuse the new version</b>${list(pv.emptied, '')}
-        <div class="fc-prev-note">An element with nothing left to do is invalid. If the deploy is refused, nothing is deleted and the message says so.</div></div>` : ''}
-      <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); change or remove the reference, reconnect anything you delete, then Save As a new version and Activate. Run ✂ Remove here again afterwards — it will find the active version clean and only remove the old versions.</div>
+      <details class="fc-prev-more"><summary>Inside the active v${act.num} — where it uses the field: ${sum}</summary>
+      ${pv.removed.length ? `<div class="fc-prev-sec fc-prev-ok"><b>✂ The tool takes these out (${pv.removed.length})</b>
+        <div class="fc-prev-note">Each line is one place where the flow uses the field. The fix removes it for you.</div>${list(pv.removed, 'what')}</div>`
+        : `<div class="fc-prev-sec fc-prev-bad"><b>✂ The tool cannot take anything out of this version.</b></div>`}
+      ${pv.remaining.length ? `<div class="fc-prev-sec fc-prev-bad"><b>✋ The tool cannot take these out (${pv.remaining.length})</b>
+        <div class="fc-prev-note">While they stay, Salesforce refuses to delete the field. This happens when a decision outcome depends on this field alone, when a decision uses numbered condition logic, or when a formula is more than a simple yes/no test. What you can do: remove the whole outcome (an option below, when it is offered), or change it yourself in Flow Builder.</div>${list(pv.remaining, 'value')}</div>` : ''}
+      ${pv.emptied.length ? `<div class="fc-prev-sec fc-prev-warn"><b>⚠ Left with nothing in them after the fix (${pv.emptied.length})</b>
+        <div class="fc-prev-note">Once the field is taken out, these elements have nothing left to do. Salesforce usually refuses to save a flow like that. If it refuses, nothing is changed and nothing is deleted.</div>${list(pv.emptied, '')}</div>` : ''}
+      <div class="fc-prev-sec"><b>Prefer to fix it yourself in Flow Builder?</b> ${open}
+        <ol class="fc-prev-steps"><li>Open <i>Toolbox → Manager</i> and search for each API name shown above (<code>like_this</code>).</li><li>Change or remove the reference, and reconnect anything you delete.</li><li>Save as a new version and activate it.</li><li>Run ✂ Remove here again: it finds the active version clean and only removes the old versions.</li></ol></div>
       </details>
-      ${preset === 'replace' ? `<div class="fc-prev-sec">${pv.emptied.length ? ` <em>Salesforce is likely to refuse it: ${pv.emptied.length} element(s) would be left empty. If it does, nothing is deleted.</em>` : ''}${pv.remaining.length ? ` <em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : ''} To switch the flow off instead, cancel and press <b>🗑 Delete versions · flow off</b> on its card.</div>` : `<div class="fc-prev-hd">The active version — choose</div>
-      <label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? (pv.emptied.length ? '' : 'checked') : 'disabled'}>
-        <span><b>Keep the flow running</b> — deploy a new active v${fp.plan.expectNew} without what comes out above, verify it is active, then delete v${act.num}.
-        ${canReplace && pv.emptied.length ? `<em>Likely refused: ${pv.emptied.length} element(s) would be left empty. Pick this only if you will fix them in Flow Builder; otherwise choose delete.</em> ` : ''}${canReplace ? (pv.remaining.length ? `<em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : '') : '<em>Not available: there is nothing the automatic fix can take out of this version.</em>'}</span></label>
-      ${fp.previewOutcomes ? (() => {
-        const po = fp.previewOutcomes;
-        const outs = po.outcomes.map(o => `“${esc(o.outcomeLabel)}” of ${esc(o.decisionLabel)}${o.decisionGone ? ' (its last outcome — the decision goes too)' : ` → ${esc(o.defaultLabel)}`}`).join('; ');
-        if (po.empty) return `<label class="fc-prev-opt fc-prev-opt-off"><input type="radio" name="fcActiveMode" value="replace" data-outcomes="1" disabled>
-        <span><b>Keep the flow running, without the outcome that rests on the field</b> — ${outs}. <em>Not available: that decision is all this flow does. Without it nothing is connected to Start, and Salesforce refuses a flow like that. Switch the flow off below, or change it in Flow Builder.</em></span></label>`;
-        return `<label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="replace" data-outcomes="1">
-        <span><b>Keep the flow running, without the outcome${po.outcomes.length === 1 ? '' : 's'} that rest${po.outcomes.length === 1 ? 's' : ''} on the field</b> — ${outs}. What went down ${po.outcomes.length === 1 ? 'it' : 'them'} takes the default outcome instead; a new active v${fp.plan.expectNew} is deployed and verified, then v${act.num} is deleted.
-        <em>${po.disconnected.length ? `No longer reached, so ${po.disconnected.length === 1 ? 'it stops' : 'they stop'} running: ${po.disconnected.slice(0, 8).map(n => `<code>${esc(n)}</code>`).join(', ')}${po.disconnected.length > 8 ? ` … +${po.disconnected.length - 8} more` : ''}.` : 'Every other element is still reached.'}${po.remaining.length ? ` The field stays locked until you also fix the ${po.remaining.length} manual place(s) left.` : ''}</em></span></label>`;
-      })() : ''}
-      <label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="delete">
-        <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>`}
+      ${preset === 'replace' ? `<div class="fc-prev-sec">${pv.emptied.length ? ` <em>Salesforce is likely to refuse it: ${pv.emptied.length} element(s) would be left empty. If it does, nothing is deleted.</em>` : ''}${pv.remaining.length ? ` <em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : ''} To switch the flow off instead, cancel and press <b>🗑 Delete versions · flow off</b> on its card.</div>` : `<div class="fc-prev-hd">The active v${act.num} — choose what happens to it</div>
+      ${(() => {
+        // Every scenario answers the same three questions in the same order (owner 2026-11-11: "kind of hard to
+        // understand each scenario here"): what happens · what the flow does afterwards · what it means for the field.
+        const row = (k, v, cls) => `<span class="fc-opt-row${cls ? ' ' + cls : ''}"><i>${k}</i><span>${v}</span></span>`;
+        const tag = (t, cls) => `<span class="fc-opt-tag fc-opt-tag-${cls}">${t}</span>`;
+        const free = 'No longer used by this flow.';
+        const locked = n => `<b>Still locked</b> — ${n} place${n === 1 ? '' : 's'} in the new version still use${n === 1 ? 's' : ''} it and must be changed by hand (see “Inside the active version” above).`;
+        const nOut = pv.removed.length, nEmpty = pv.emptied.length, nLeft = pv.remaining.length;
+        const a = `<label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? (pv.emptied.length ? '' : 'checked') : 'disabled'}>
+        <span class="fc-opt"><span class="fc-opt-hd"><b>Keep the flow running — only the field comes out</b>${!canReplace ? tag('not available', 'off') : nEmpty ? tag('⚠ likely refused', 'warn') : nLeft ? tag('🔒 field stays locked', 'warn') : tag('✓ recommended', 'ok')}</span>
+        ${!canReplace ? row('Why not', 'There is nothing the automatic fix can take out of this version.') : `
+        ${row('What happens', `A new v${fp.plan.expectNew} is deployed without the ${nOut} reference${nOut === 1 ? '' : 's'} to the field, checked to be active, and then v${act.num} is deleted.`)}
+        ${row('The flow', 'Keeps running, with the same logic minus the field.')}
+        ${nEmpty ? row('Risk', `Salesforce will probably refuse: ${nEmpty} element${nEmpty === 1 ? '' : 's'} would be left with nothing in ${nEmpty === 1 ? 'it' : 'them'}. If it refuses, nothing is changed. Pick this only if you will fix ${nEmpty === 1 ? 'it' : 'them'} in Flow Builder.`, 'fc-opt-row-warn') : ''}
+        ${row('The field', nLeft ? locked(nLeft) : free)}`}</span></label>`;
+        let b = '';
+        if (fp.previewOutcomes) {
+          const po = fp.previewOutcomes, one = po.outcomes.length === 1;
+          const outs = po.outcomes.map(o => `“${esc(o.outcomeLabel)}” of the decision “${esc(o.decisionLabel)}”${o.decisionGone ? ' (its last outcome, so the decision goes too)' : ''}`).join('; ');
+          const title = `Keep the flow running — the whole outcome${one ? '' : 's'} that rest${one ? 's' : ''} on the field come${one ? 's' : ''} out`;
+          if (po.empty) b = `<label class="fc-prev-opt fc-prev-opt-off"><input type="radio" name="fcActiveMode" value="replace" data-outcomes="1" disabled>
+        <span class="fc-opt"><span class="fc-opt-hd"><b>${title}</b>${tag('not available', 'off')}</span>
+        ${row('Why not', `${outs}: that decision is all this flow does. Without it nothing is connected to Start, and Salesforce refuses a flow like that. Switch the flow off below, or change it in Flow Builder.`)}</span></label>`;
+          else b = `<label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="replace" data-outcomes="1">
+        <span class="fc-opt"><span class="fc-opt-hd"><b>${title}</b>${po.remaining.length ? tag('🔒 field stays locked', 'warn') : tag('changes what the flow does', 'info')}</span>
+        ${row('What happens', `${outs} ${one ? 'is' : 'are'} removed. A record that took ${one ? 'that outcome' : 'one of them'} takes the default outcome instead. A new v${fp.plan.expectNew} is deployed and checked, then v${act.num} is deleted.`)}
+        ${row('The flow', `Keeps running. ${po.disconnected.length ? `<b>No longer reached, so ${po.disconnected.length === 1 ? 'it stops' : 'they stop'} running:</b> ${po.disconnected.slice(0, 8).map(n => `<code>${esc(n)}</code>`).join(', ')}${po.disconnected.length > 8 ? ` … +${po.disconnected.length - 8} more` : ''}.` : 'Every other element is still reached.'}`)}
+        ${row('The field', po.remaining.length ? locked(po.remaining.length) : free)}</span></label>`;
+        }
+        const c = `<label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="delete">
+        <span class="fc-opt"><span class="fc-opt-hd"><b>Switch the flow off and delete its versions</b>${tag('flow stops', 'bad')}</span>
+        ${row('What happens', `The flow is switched off, the org is read again to confirm nothing is active, and v${act.num} is deleted with every other version that mentions the field.`)}
+        ${row('The flow', '<b>Stops running.</b>')}
+        ${row('The field', free)}</span></label>`;
+        return a + b + c;
+      })()}`}
     </div>`;
   }
 
@@ -5272,7 +5296,7 @@ const FieldCleaner = (() => {
       delete metadata.fullName;
       const deployRes = await deployFlowViaMetadataApi(apiNameOf(plan.active.id), metadata);
       if (!deployRes || !deployRes.success) {
-        const e = new Error(`Salesforce refused the fixed "${flowName}"${swapping ? ` (the version that uses ${_replField.api})` : ''}: ${deployRes?.error ? String(deployRes.error).replace(/\s+/g, ' ').slice(0, 300) : 'deploy failed'}. Nothing was deleted. Press 🗑 Delete versions · flow off on this flow (in a walk over all items: “Delete the active version too”), or open in Flow Builder to ${swapping ? 'change' : 'remove'} the field reference by hand.`);
+        const e = new Error(`Salesforce refused the fixed "${flowName}"${swapping ? ` (the version that uses ${_replField.api})` : ''}: ${deployRes?.error ? String(deployRes.error).replace(/\s+/g, ' ').slice(0, 300) : 'deploy failed'}. Nothing was deleted. Press 🗑 Delete versions · flow off on this flow (in a walk over all items: “Switch the flow off and delete its versions”), or open in Flow Builder to ${swapping ? 'change' : 'remove'} the field reference by hand.`);
         const u = _flowBuilderUrl(plan.active.id); if (u) e.setupUrl = u;
         throw e;
       }

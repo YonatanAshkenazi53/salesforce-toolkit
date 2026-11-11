@@ -27,9 +27,12 @@ describe('flow fix dialog — the active-version choice', () => {
     expect(choice).toMatch(/value="replace" \$\{canReplace \? \(pv\.emptied\.length \? '' : 'checked'\) : 'disabled'\}/);
   });
   it('with emptied elements: replace stays available but says why it is likely refused', () => {
-    expect(choice).toMatch(/Likely refused: \$\{pv\.emptied\.length\} element\(s\) would be left empty/);
-    expect(choice).toMatch(/otherwise choose delete/);
-    expect(choice).toMatch(/Left empty by the fix/);
+    // 2026-11-11: the wording was redone ("kind of hard to understand each scenario here", "we need phrase it better")
+    expect(choice).toContain('Salesforce will probably refuse: ${nEmpty} element');
+    expect(choice).toContain('If it refuses, nothing is changed.');
+    expect(choice).toContain('Left with nothing in them after the fix');
+    // every scenario answers the same three questions
+    for (const k of ["row('What happens'", "row('The flow'", "row('The field'"]) expect(choice.split(k).length).toBeGreaterThanOrEqual(3);
   });
   it('the preselected mode in the handler follows the same rule', () => {
     const i = SRC.indexOf("const replaceLikelyRefused = canReplace && !!pv && (pv.emptied || []).length > 0;");
@@ -45,7 +48,7 @@ describe('flow fix — the deploy refusal', () => {
     expect(win).toMatch(/String\(deployRes\.error\)/);
     expect(win).not.toMatch(/_feText\(deployRes\.error\)/);
     expect(win).toMatch(/Nothing was deleted/);
-    expect(win).toMatch(/Delete the active version too/);
+    expect(win).toMatch(/Switch the flow off and delete its versions/);
     expect(win).toMatch(/Flow Builder/);
     expect(SRC).not.toMatch(/Couldn't deploy the fixed/);
   });

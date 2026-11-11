@@ -309,6 +309,6 @@ describe('field-cleaner.js: the preview comes from the REAL remover, and the cho
   it('the manual route names the locations and links to Flow Builder', () => {
     expect(FC2).toContain('Toolbox → Manager');
     expect(FC2).toContain('↗ Open v${act.num} in Flow Builder');
-    expect(FC2).toContain('these KEEP the field locked');
+    expect(FC2).toContain('While they stay, Salesforce refuses to delete the field.');
   });
 });

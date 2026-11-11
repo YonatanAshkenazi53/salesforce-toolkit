@@ -7083,6 +7083,21 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .fc-prev-opt input { margin-top: 3px; }
 .fc-prev-opt em { display: block; font-style: normal; opacity: .85; font-size: 11.5px; margin-top: 2px; }
 .fc-prev-opt-off { opacity: .6; cursor: not-allowed; }
+.fc-prev-steps { margin: 4px 0 0; padding-left: 20px; }
+.fc-prev-steps li { margin: 2px 0; }
+/* a scenario = a card answering the same three questions (2026-11-11) */
+.fc-prev-opt:has(input:checked) { border-color: var(--brand, #0176d3); box-shadow: inset 0 0 0 1px var(--brand, #0176d3); }
+.fc-opt { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.fc-opt-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+.fc-opt-hd b { font-size: 13px; }
+.fc-opt-tag { font-size: 10.5px; font-weight: 600; padding: 1px 8px; border-radius: 9px; border: 1px solid currentColor; white-space: nowrap; }
+.fc-opt-tag-ok { color: var(--success, #2e844a); }
+.fc-opt-tag-warn { color: var(--c-warn-fg, #a86403); }
+.fc-opt-tag-bad { color: var(--danger, #ba0517); }
+.fc-opt-tag-info, .fc-opt-tag-off { color: var(--subtext, #5c6670); }
+.fc-opt-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; font-size: 12px; line-height: 1.45; }
+.fc-opt-row > i { font-style: normal; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; padding-top: 2px; }
+.fc-opt-row-warn > span { color: var(--c-warn-fg, #a86403); }
 .fc-prev-open { font-weight: 600; margin-right: 6px; }
 .sftk-confirm-word { margin-top: 8px; }
 .sftk-confirm-prodnote { margin-top: 8px; font-size: 12px; color: var(--danger, #ea001e); }
