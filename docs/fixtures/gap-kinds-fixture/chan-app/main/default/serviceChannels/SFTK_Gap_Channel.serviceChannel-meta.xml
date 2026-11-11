@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ServiceChannel xmlns="http://soap.sforce.com/2006/04/metadata"><doesMinimizeWidgetOnAccept>false</doesMinimizeWidgetOnAccept><hasAfterConvoWorkTimer>false</hasAfterConvoWorkTimer><hasAutoAcceptEnabled>false</hasAutoAcceptEnabled><isInterruptible>false</isInterruptible><label>SFTK Gap Channel</label><relatedEntityType>Case</relatedEntityType><secondaryRoutingPriorityField>SFTK_Gap_Pri__c</secondaryRoutingPriorityField></ServiceChannel>

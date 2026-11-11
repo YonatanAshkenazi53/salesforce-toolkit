@@ -2123,6 +2123,20 @@ const FieldCleaner = (() => {
       }
     } catch (_) {/* non-fatal */}
 
+    // 11b-2. Omni-Channel service channels: a picklist on the routed object can be the channel's secondary routing
+    // priority field. Live 2026-11-11 in npc: Salesforce refused the delete ("This custom field is used by the service
+    // channel: SFTK_Gap_Channel. : This field is used as the secondary routing priority field.") and the index
+    // returned nothing. Only a picklist can be that field, so the one query is spent for picklists only.
+    if (L.workflow && fid15 && /picklist/i.test(String(_selField.type || ''))) try {
+      msg('Scanning service channels…');
+      // readMetadata does not return the priority field (seen live); the ServiceChannel record holds the field's ID
+      const chans = (await sfQ('SELECT Id, DeveloperName, MasterLabel, RelatedEntity, SecRoutingPriorityField FROM ServiceChannel', false))?.records || [];
+      for (const c of chans) {
+        if (String(c.SecRoutingPriorityField || '').slice(0, 15).toLowerCase() !== fid15) continue;
+        add('ServiceChannel', c.DeveloperName, c.MasterLabel || c.DeveloperName);
+      }
+    } catch (_) {/* non-fatal — an org without Omni-Channel has no such object */}
+
     // 11c. Custom-setting RECORDS that hold the field's name as text (a "which field to read" setting). Data, not
     // metadata: nothing blocks, whatever reads the value breaks. One query lists the settings, one per setting reads
     // its custom fields (FIELDS(CUSTOM), 200 rows); the first 30 settings — more is SAID, not read. A protected
@@ -2446,6 +2460,8 @@ const FieldCleaner = (() => {
                       note: 'The component’s markup or JavaScript names the field. Salesforce refused a delete over an Aura expression that reads the field (live-tested); a plain text mention may not block — its own answer in the delete box says which. Found by reading every Aura source in the org, not through Salesforce’s index.' },
     EntitlementProcess: { icon: '⏱', label: 'Entitlement Processes', fixable: false, sev: 'blocker',
                       note: 'The process’s entry, exit or milestone criteria name the field — active or not, Salesforce refuses the delete (live-tested). 🗑 deletes the process (a restore point is kept), or change its criteria in Entitlement Processes.' },
+    ServiceChannel: { icon: '🎧', label: 'Service Channels', fixable: false, sev: 'blocker',
+                      note: 'The Omni-Channel service channel uses the field as its secondary routing priority — Salesforce refuses the delete (live-tested). 🗑 deletes the channel (a restore point is kept), or pick another priority field on the channel.' },
     CustomSettingRecord: { icon: '🧾', label: 'Custom Setting Records', fixable: false, sev: 'silent',
                       note: 'A record of a custom setting holds the field’s name as text. The delete goes through; whatever reads that value — Apex, a flow, a formula — then looks for a field that is gone. Change the value in the custom setting.' },
     CustomMetadataRecord: { icon: '🗂', label: 'Custom Metadata Records', fixable: false, sev: 'blocker',
@@ -6923,6 +6939,7 @@ const FieldCleaner = (() => {
       LightningComponentBundle: '/lightning/setup/LightningComponentBundles/home',
       CustomMetadataRecord: '/lightning/setup/CustomMetadata/home',
       EntitlementProcess: '/lightning/setup/EntitlementProcesses/home',
+      ServiceChannel: '/lightning/setup/ServiceChannelSettings/home',
       CustomSettingRecord: '/lightning/setup/CustomSettings/home',
       LeadConvertSettings: '/lightning/setup/ObjectManager/Lead/FieldsAndRelationships/view',
       AssignmentRule: obj === 'Case' ? '/lightning/setup/CaseRules/home' : '/lightning/setup/LeadRules/home',

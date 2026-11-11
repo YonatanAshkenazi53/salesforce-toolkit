@@ -1,1 +1,1 @@
-{"packageDirectories":[{"path":"force-app","default":true}],"sourceApiVersion":"62.0"}
+{"packageDirectories":[{"path":"force-app","default":true},{"path":"omni-app"},{"path":"chan-app"}],"sourceApiVersion":"62.0"}
