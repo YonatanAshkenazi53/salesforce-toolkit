@@ -64,7 +64,7 @@ describe('wiring (2026-11-08: one scan, one list — "i dont think we need 3 tab
     expect(FC).not.toContain('sftk_fc_scope');
     expect(FC).toContain("const _scope = 'both';");
     expect(FC).toContain('const scope = _scope, L = fcScopeLegs(scope, _selObj.api);');
-    expect(FC).toContain('_lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };');
+    expect(FC).toContain('_lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope, unread: scanUnread };');
     for (const leg of ['listViews', 'compactLayouts', 'quickActions', 'matchingRules', 'workflowFieldUpdates', 'workflow', 'approvals', 'sharingRules', 'duplicateRules', 'lwc', 'customMetadata', 'leadMapping', 'objectRules', 'paths']) expect(FC).toContain(`if (L.${leg}) try {`);
   });
   it('one list, the blockers first, each group tagged 🔒 must fix / 👀 might break; a filter row: All · Must fix · Might break', () => {
@@ -86,7 +86,7 @@ describe('wiring (2026-11-08: one scan, one list — "i dont think we need 3 tab
     expect(FC).not.toContain('hidden by the 👀 scope');
     expect(FC).not.toContain('fc-scope-jump');
     expect(FC).not.toContain('<strong>The other mentions were not read</strong>');
-    expect(FC).toContain('const delDisabled = autoCount > 0 || blockerTotal > 0;');
+    expect(FC).toContain('const delDisabled = autoCount > 0 || blockerTotal > 0 || unread.length > 0;');
     expect(FC).toContain('read too — list views, quick actions and the like. Salesforce lets the delete through with');
     expect(FC).toContain('⚠ Fix the <span title="the flows, layouts, Lightning pages and reports the tool rewrites itself');
   });

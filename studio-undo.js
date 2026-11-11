@@ -365,7 +365,10 @@ async function sftkUndoLoadRun(runId) {
   if (!run || !run.undo) return { error: 'This run has no restore point.' };
   const evidenceId = run.undo.evidenceId || run.id;
   let ev = null;
-  try { ev = await sftkUndoStoreGet(evidenceId); } catch (_) { ev = null; }
+  // A store that could not be READ is not "the restore point is gone" (QA 2026-11-11): it used to be marked expired for
+  // good while the evidence was still on disk. Nothing is changed; the user can try again.
+  try { ev = await sftkUndoStoreGet(evidenceId); }
+  catch (e) { return { error: `The restore point could not be read from this browser's storage (${(e && e.message) || e}) — it is still kept; close other Data Studio tabs and try again.` }; }
   if (!ev) {
     run.undo.status = 'expired';
     await _sftkUndoPersist([run]);

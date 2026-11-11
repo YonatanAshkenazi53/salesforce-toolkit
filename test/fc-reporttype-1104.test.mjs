@@ -174,7 +174,7 @@ describe('the wiring', () => {
     expect(FC).toMatch(/ReportType:\s*\{ icon: '📑', label: 'Report Types',\s*fixable: true, sev: 'silent'/);
     expect(FC).not.toContain('no modern API');
     expect(FC).toContain('if (L.reportTypes) rtHits = await scanReportTypes([...deps, ...flexiHits]);');   // within the scope's legs (2026-11-05)
-    expect(FC).toContain('_lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };');
+    expect(FC).toContain('_lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope, unread: scanUnread };');
     expect(FC).toContain("mdType: 'ReportType'");
     expect(FC).toContain("if (type === 'ReportType') label = (await fixReportType(componentId, componentName)) || label;");
     expect(FC).toContain("['Report', 'ReportType', 'Layout', 'FlexiPage'].includes(type)");

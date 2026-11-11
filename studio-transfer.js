@@ -1133,6 +1133,14 @@ async function sftkPiiMaskSampleRows(rows, plan, salt) {
 async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMapping, piiPolicy, piiSalt, upsertField) {
   const logRow = log;
   let issues = 0, checked = 0, unchecked = 0;
+  // A CHECK THAT COULD NOT RUN IS NOT A CHECK THAT PASSED (QA 2026-11-11): a failed describe or sample used to skip
+  // the null / value / lookup / record-type checks in silence, and the verdict stayed "clean … including value-level
+  // checks". Each object whose checks were cut short counts once in `unchecked`, with a line saying which check.
+  const _cutShort = new Set();
+  const cutShort = (obj, what, err, said) => {
+    if (!_cutShort.has(obj)) { _cutShort.add(obj); unchecked++; }
+    if (!said && typeof logRow === 'function') logRow('⚠️', `${obj}: ${what} could NOT be checked — ${String(err || 'no answer').slice(0, 200)}`, 'ds-prog-warn');
+  };
   // Every node in a subtree, itself included — when a node's source query
   // fails we bail before recursing, and its NEVER-VISITED children must land
   // in `unchecked`, not silently vanish from both counters.
@@ -1257,6 +1265,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
         path: `services/data/v62.0/sobjects/${obj}/describe`
       });
       if (srcDescPii.error) {
+        cutShort(obj, 'masked values', srcDescPii.error, true);
         logRow('⚠️', `${obj}: PII masking is configured here but the source describe failed (${srcDescPii.error}) — masked values could NOT be validated on this object.`, 'ds-prog-warn');
       } else {
         piiPlan = sftkPiiDryPlan(piiPolicy, obj, srcDescPii.fields);
@@ -1366,7 +1375,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
               });
             }
           }
-        }
+        } else cutShort(obj, 'empty required fields', sampleRes.error);
       }
     }
 
@@ -1465,6 +1474,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
             query: `SELECT ${['Id', ...new Set(capped.map(c => c.srcField))].join(', ')} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 200`,
           });
           if (sampleQ.error) {
+            cutShort(obj, 'values', sampleQ.error, true);
             logRow('⚠️', `${obj}: value preflight sample failed — ${sampleQ.error}`, 'ds-prog-warn');
           } else {
             // PII MASKING v1 — the checks below must see the MASKED values:
@@ -1525,7 +1535,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
             }
           }
         }
-      }
+      } else cutShort(obj, 'values (restricted picklists, state/country, field lengths)', srcDescFull.error);
     }
 
     // ── Step 4d: what a dry run CANNOT test — say so, with names ──
@@ -1561,7 +1571,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
           orgUrl: srcSess.orgUrl, sid: srcSess.sid,
           query: `SELECT ${fieldName} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 50`
         });
-        if (sampleRes.error) continue;
+        if (sampleRes.error) { cutShort(obj, `the lookup ${fieldName}`, sampleRes.error); continue; }
 
         const sampleIds = [...new Set(
           (sampleRes.records || []).map(r => r[fieldName]).filter(Boolean)
@@ -1575,7 +1585,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
           orgUrl: srcSess.orgUrl, sid: srcSess.sid,
           query: `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE Id IN (${idList})`
         });
-        if (srcLookup.error) continue;
+        if (srcLookup.error) { cutShort(obj, `the lookup ${fieldName}`, srcLookup.error); continue; }
 
         const anchorValues = [...new Set(
           (srcLookup.records || []).map(r => r[res.matchField]).filter(Boolean)
@@ -1677,7 +1687,8 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
             orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
             query: `SELECT DeveloperName FROM RecordType WHERE SObjectType = '${obj}'`
           });
-          const tgtNames = new Set((tgtRtRes.records || []).map(r => r.DeveloperName));
+          if (!tgtRtRes || tgtRtRes.error) cutShort(obj, 'record types', tgtRtRes && tgtRtRes.error);
+          const tgtNames = new Set(((tgtRtRes && !tgtRtRes.error && tgtRtRes.records) || usedNames.map(n => ({ DeveloperName: n }))).map(r => r.DeveloperName));   // unread → no false "no match in target"
           const matchedRt   = usedNames.filter(n => tgtNames.has(n));
           const unmatchedRt = usedNames.filter(n => !tgtNames.has(n));
           if (unmatchedRt.length) {

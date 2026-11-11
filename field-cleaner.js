@@ -278,6 +278,12 @@ function fcPickerSummary(state) {
 // What the check-only delete answered, as the box shows it (pure). r = the background's answer; listedBlockers =
 // how many blockers the scan's list still shows.
 //   → { kind: 'ok' | 'blocked' | 'error', head, lines: [Salesforce's own words, once each], foot }
+// Does this error only say that the org has no such object, field or feature? Then the leg's answer is "none" — not
+// a failed read (an org without Omni-Channel has no ServiceChannel; a setting may not be queryable). Pure.
+function fcAbsentFeatureError(err) {
+  return /INVALID_TYPE|sObject type '[^']*' is not supported|is not supported|INVALID_FIELD|No such column|FUNCTIONALITY_NOT_ENABLED|not enabled|NOT_FOUND|does not exist|INSUFFICIENT_ACCESS/i.test(String(err || ''))
+    && !/INVALID_SESSION|REQUEST_LIMIT|timed? ?out|UNABLE_TO_LOCK|SERVER_UNAVAILABLE|HTTP 5\d\d/i.test(String(err || ''));
+}
 function fcAskVerdict(r, listedBlockers) {
   if (!r || r.error) return { kind: 'error', head: '⚠ Salesforce could not be asked', lines: [String((r && r.error) || 'no answer')], foot: '' };
   if (r.success) {
@@ -1661,11 +1667,13 @@ const FieldCleaner = (() => {
       _scanProgFound(deps.length);
       _scanMsg('Scanning Lightning pages…');
       const scope = _scope, L = fcScopeLegs(scope, _selObj.api);
+      const scanUnread = [];   // [{ leg, why }] — what this scan could not read
+      if (depRes.incomplete) scanUnread.push({ leg: 'Salesforce’s dependency index', why: `the read came back incomplete (${depRes.incomplete.got} of ${depRes.incomplete.expected})` });
       let flexiHits = [];
       try {
-        if (L.flexiPages) flexiHits = await scanFlexiPages(deps);
+        if (L.flexiPages) { flexiHits = await scanFlexiPages(deps); if (flexiHits.unread) scanUnread.push(...flexiHits.unread); }
       } catch (e) {
-        // Non-fatal — fall back to whatever MetadataComponentDependency found
+        scanUnread.push({ leg: 'Lightning pages', why: String((e && e.message) || e).slice(0, 160) });
         if (window.SFToolkitDebug?.enabled) {
           window.SFToolkitDebug.log('fields', 'error',
             'Supplemental FlexiPage scan failed', e.message);
@@ -1682,6 +1690,7 @@ const FieldCleaner = (() => {
       try {
         if (L.reportTypes) rtHits = await scanReportTypes([...deps, ...flexiHits]);
       } catch (e) {
+        scanUnread.push({ leg: 'custom report types', why: String((e && e.message) || e).slice(0, 160) });
         if (window.SFToolkitDebug?.enabled) {
           window.SFToolkitDebug.log('fields', 'error',
             'Supplemental report-type scan failed', e.message);
@@ -1698,7 +1707,9 @@ const FieldCleaner = (() => {
       let supHits = [];
       try {
         supHits = await scanSupplemental([...deps, ...flexiHits, ...rtHits], fieldId, L);
+        if (supHits.unread) scanUnread.push(...supHits.unread);
       } catch (e) {
+        scanUnread.push({ leg: 'the kinds outside Salesforce’s index', why: String((e && e.message) || e).slice(0, 160) });
         if (window.SFToolkitDebug?.enabled) {
           window.SFToolkitDebug.log('fields', 'error',
             'Supplemental dependency scan failed', e.message);
@@ -1706,7 +1717,7 @@ const FieldCleaner = (() => {
       }
 
       _rptScan = null; _orgSweep = null; _rtScanned = null; _everyNote = '';
-      _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };
+      _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope, unread: scanUnread };
       await renderResults(_lastScan.deps, fieldId);
     } catch (e) {
       const fe = sftkFriendlyError(e.message);
@@ -1725,6 +1736,7 @@ const FieldCleaner = (() => {
       type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
       query: 'SELECT Id, DeveloperName, MasterLabel FROM FlexiPage'
     });
+    if (listRes && listRes.error && !fcAbsentFeatureError(listRes.error)) throw new Error(listRes.error);
     if (listRes.error || !Array.isArray(listRes.records) || !listRes.records.length) {
       return [];
     }
@@ -1851,7 +1863,19 @@ const FieldCleaner = (() => {
     // Shared by the legs below — Tooling where it exists; readMetadata (SOAP, last resort) for the types that have no Tooling read.
     const objLc = obj.toLowerCase();
     const sameField = v => { const f = String(v || '').toLowerCase(); return f === fieldLc || f === `${objLc}.${fieldLc}`; };
-    const sfQ = (query, tooling) => bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: !!tooling, _suppressError: true, query });
+    // A LEG THAT FAILS IS SAID (QA 2026-11-11, the class of "Could not locate this field"): every leg used to swallow
+    // its failure, so a refused or timed-out read left its kind out of the list and the gate said "the scan lists no
+    // blocker". Now a failed leg lands in `unread` — shown in the gate, and Delete stays locked until Salesforce's own
+    // check-only delete accepts. An error that only says the org has no such object or feature is an empty answer.
+    const unread = [];
+    const miss = (leg, e) => { if (fcAbsentFeatureError((e && e.message) || e)) return; const why = String((e && e.message) || e || 'no answer').replace(/\s+/g, ' ').slice(0, 160); if (!unread.some(u => u.leg === leg)) unread.push({ leg, why }); };
+    const sfQ = async (query, tooling) => {
+      const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: !!tooling, _suppressError: true, query });
+      if (r && r.error && fcAbsentFeatureError(r.error)) return { records: [] };
+      if (!r || r.error) throw new Error((r && r.error) || 'no answer');
+      if (r.incomplete) throw new Error(`the read came back incomplete (${r.incomplete.got} of ${r.incomplete.expected})`);
+      return r;
+    };
     const mdList = async mdType => {
       const r = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType, _suppressError: true });
       if (!r || r.error) throw new Error(r?.error || `${mdType} could not be listed`);
@@ -1876,7 +1900,7 @@ const FieldCleaner = (() => {
         const slice = rows.slice(i, i + BATCH);
         const rs = await Promise.allSettled(slice.map(r => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject, id: r.Id, _suppressError: true })));
         rs.forEach((r, j) => {
-          if (r.status !== 'fulfilled' || r.value?.error) return;
+          if (r.status !== 'fulfilled' || !r.value || r.value.error) { miss(`${what} (some could not be opened)`, r.status === 'fulfilled' ? (r.value && r.value.error) : r.reason); return; }
           const m = r.value.Metadata || {};
           if (test(m)) add(type, slice[j].Id, nameOf(slice[j], m));
         });
@@ -1907,7 +1931,7 @@ const FieldCleaner = (() => {
         });
         msg(`Scanning list views… ${Math.min(i + BATCH, lvs.length)}/${lvs.length}`);
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('list views', e); }
 
     // 2. Compact layouts. describe/compactLayouts lists only the ASSIGNED ones
     // (live 2026-11-06, npc: a compact layout with the field that no record
@@ -1920,7 +1944,7 @@ const FieldCleaner = (() => {
       if (names.length) for (const rec of await mdRead('CompactLayout', names.map(n => `${obj}.${n}`), (d, t) => msg(`Scanning compact layouts… ${d}/${t}`))) {
         if (mentions(rec.innerXml)) add('CompactLayout', rec.fullName, sftkMdChildText(rec.innerXml, 'label') || rec.fullName);
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('compact layouts', e); }
 
     // 3. Quick actions — each action's mini-layout can place the field.
     // The /quickActions list returns EVERY action available on the object,
@@ -1973,7 +1997,7 @@ const FieldCleaner = (() => {
         const have = live && !live.error ? new Set((live.records || []).map(r => String(r.DeveloperName || '').toLowerCase())) : null;
         for (const qa of qaHits) if (!have || have.has(bare(qa.name).toLowerCase())) add('QuickAction', qa.name, qa.label || qa.name);
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('quick actions', e); }
 
     // 4. Matching rules — MatchingRule/MatchingRuleItem are STANDARD data
     // objects, not Tooling (the Tooling query 400'd "sObject type
@@ -1994,7 +2018,7 @@ const FieldCleaner = (() => {
           }
         }
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('matching rules', e); }
 
     // 5. Workflow field updates — FieldDefinitionId carries the field's id.
     if (L.workflowFieldUpdates) try {
@@ -2007,7 +2031,7 @@ const FieldCleaner = (() => {
         if (id15 && fd.includes(id15)) add('WorkflowFieldUpdate', fu.Id, fu.Name);
         else if (fd.toLowerCase().endsWith('.' + fieldLc)) add('WorkflowFieldUpdate', fu.Id, fu.Name);
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('workflow field updates', e); }
 
     // ── The legs below were added 2026-11-06, each after a live test in npc:
     // one fixture per reference type, then a destructive delete of the field.
@@ -2034,7 +2058,7 @@ const FieldCleaner = (() => {
       await eachMetadata('WorkflowOutboundMessage', oms,
         m => (m.fields || []).some(sameField),
         'WorkflowOutboundMessage', r => r.Name, 'outbound messages');
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('workflow rules', e); }
 
     // 7. Approval processes on this object (entry and step criteria; active
     // or not). No Tooling read exists: listMetadata, then readMetadata.
@@ -2047,7 +2071,7 @@ const FieldCleaner = (() => {
         const top = rec.innerXml.replace(/<approvalStep>[\s\S]*?<\/approvalStep>/g, '');
         add('ApprovalProcess', rec.fullName, (sftkMdChildText(top, 'label') || rec.fullName.replace(/^[^.]+\./, '')) + offTag(top));
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('approval processes', e); }
 
     // 8. Criteria-based sharing rules (and guest-user rules): one read of the
     // object's SharingRules container.
@@ -2060,7 +2084,7 @@ const FieldCleaner = (() => {
           }
         }
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('sharing rules', e); }
 
     // 9. Duplicate rules whose record filter names the field (active or not).
     // The list is plain SOQL; the filter lives in the rule's metadata.
@@ -2080,7 +2104,7 @@ const FieldCleaner = (() => {
         const r = byName.get(rec.fullName.toLowerCase());
         add('DuplicateRule', r?.Id || rec.fullName, (r?.MasterLabel || sftkMdChildText(rec.innerXml, 'masterLabel') || rec.fullName) + (r && r.IsActive === false ? ' (inactive)' : ''));
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('duplicate rules', e); }
 
     // 10. Lightning web components: a schema import of the field is compiled
     // into the component, so Salesforce refuses the delete. (A field named
@@ -2099,7 +2123,7 @@ const FieldCleaner = (() => {
         seenBundle.add(bid);
         add('LightningComponentBundle', bid, r.LightningComponentBundle?.MasterLabel || r.LightningComponentBundle?.DeveloperName || r.FilePath);
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('Lightning web components', e); }
 
     // 10b. Aura components (2026-11-10). Salesforce's index is supposed to return them and did not: live on npc it
     // returned NO row for a field that an Aura bundle's markup ({!v.account.Field__c}) and controller name, and
@@ -2118,7 +2142,7 @@ const FieldCleaner = (() => {
         seenBundle.add(bid);
         add('AuraDefinitionBundle', bid, r.AuraDefinitionBundle?.DeveloperName || bid);
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('Aura components', e); }
 
     // 11. Custom metadata records whose value holds the field: a Field
     // Definition relationship makes Salesforce refuse the delete (and SOQL on
@@ -2135,7 +2159,7 @@ const FieldCleaner = (() => {
           if (holding.length) add('CustomMetadataRecord', rec.fullName, `${rec.fullName} (${holding.join(', ')})`);
         }
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('custom metadata records', e); }
 
     // 11b. Entitlement processes (Case / WorkOrder): entry, exit and milestone criteria. Live 2026-11-11 in npc: an
     // INACTIVE process whose milestone criteria name the field made Salesforce refuse the delete ("This custom field
@@ -2149,7 +2173,7 @@ const FieldCleaner = (() => {
         if (String(sftkMdChildText(rec.innerXml, 'SObjectType') || 'Case').toLowerCase() !== objLc) continue;
         add('EntitlementProcess', rec.fullName, (sftkMdChildText(rec.innerXml, 'name') || rec.fullName) + offTag(rec.innerXml));
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('entitlement processes', e); }
 
     // 11b-2. Omni-Channel service channels: a picklist on the routed object can be the channel's secondary routing
     // priority field. Live 2026-11-11 in npc: Salesforce refused the delete ("This custom field is used by the service
@@ -2183,7 +2207,7 @@ const FieldCleaner = (() => {
         }
       }
       if (sets.length > MAXS) add('CustomSettingRecord', 'cs_unread_more', `${sets.length - MAXS} more custom settings were not read — the scan reads the first ${MAXS}`);
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('custom settings', e); }
 
     // 12. Lead field mapping — a mapped Lead field AND its Account/Contact/
     // Opportunity target both refuse the delete.
@@ -2193,7 +2217,7 @@ const FieldCleaner = (() => {
         const maps = sftkMdLeadMappingsFor(rec.innerXml, obj, _selField.api);
         if (maps.length) add('LeadConvertSettings', 'LeadConvertSettings', maps.map(m => `${m.inputObject}.${m.inputField} → ${m.outputObject}.${m.outputField}`).join(', '));
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('lead field mappings', e); }
 
     // 13. Lead/Case assignment, auto-response and escalation rules (active or
     // not): one read per container.
@@ -2207,7 +2231,7 @@ const FieldCleaner = (() => {
           }
         }
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('assignment, auto-response and escalation rules', e); }
 
     // 14. Paths (a mention, not a blocker): live-tested, the delete goes
     // through and the Path stays ACTIVE on a field that no longer exists.
@@ -2215,7 +2239,7 @@ const FieldCleaner = (() => {
       msg('Scanning Paths…');
       const rows = (await sfQ(`SELECT Id, DeveloperName, MasterLabel, IsActive, SobjectProcessField FROM PathAssistant WHERE SobjectType = '${obj}'`, true))?.records || [];
       for (const p of rows) if (sameField(p.SobjectProcessField)) add('PathAssistant', p.Id, (p.MasterLabel || p.DeveloperName) + (p.IsActive === false ? ' (inactive)' : ''));
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('Paths', e); }
 
     // 15. Inactive validation rules (a mention: live-tested, an inactive rule
     // lets the delete through; the index returns only active ones — the demo
@@ -2258,7 +2282,7 @@ const FieldCleaner = (() => {
         const owner = (r.EntityDefinition && r.EntityDefinition.QualifiedApiName) || '';
         add('EmailAlertViaTemplate', r.Id, `${owner}${owner ? '.' : ''}${r.DeveloperName} → sends “${tplName[id15(r.TemplateId)] || 'the template'}”`);
       }
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('email templates', e); }
 
     // Search layouts (a mention: the delete goes through and the field drops out of the layout). They are part of
     // the object's own metadata, so the object is read once (user 2026-11-10: "also, what about search layouts?").
@@ -2270,14 +2294,14 @@ const FieldCleaner = (() => {
       // the same read holds the object's picklists: the ones this field controls (live 2026-11-10: the delete goes
       // through and they silently lose their dependency)
       for (const n of sftkDependentPicklists(rec ? rec.innerXml : '', _selField.api)) add('DependentPicklist', `dp_${obj}_${n}`, `${n} — its values depend on this field`);
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('search layouts', e); }
 
     if (L.validationRulesOff) try {
       msg('Scanning inactive validation rules…');
       const rows = (await sfQ(`SELECT Id, ValidationName FROM ValidationRule WHERE EntityDefinition.QualifiedApiName = '${obj}' AND Active = false`, true))?.records || [];
       await eachMetadata('ValidationRule', rows, m => re.test(String(m.errorConditionFormula || '')) || sameField(m.errorDisplayField),
         'ValidationRuleInactive', r => `${r.ValidationName} (inactive)`, 'inactive validation rules');
-    } catch (_) {/* non-fatal */}
+    } catch (e) { miss('inactive validation rules', e); }
 
     // A scoping rule and a restriction rule are one kind to Salesforce (RestrictionRule) and one group here: each
     // row says which it is, and whether it is on (user 2026-11-10: "גם אני לא רואה ברשימה scoping rule" — the
@@ -2307,6 +2331,7 @@ const FieldCleaner = (() => {
       }
     } catch (_) {/* non-fatal */}
 
+    hits.unread = unread;
     return hits;
   }
 
@@ -2590,7 +2615,7 @@ const FieldCleaner = (() => {
       : '';
     return `
       <div class="fc-unscanned-note">
-        ℹ️ <strong>What blocks the delete is read in full</strong> (each kind live-tested against a real delete):
+        ℹ️ <strong>${(_lastScan && _lastScan.unread && _lastScan.unread.length) ? 'What blocks the delete is normally read in full — this time some kinds could not be read (see the ⚠ note above)' : 'What blocks the delete is read in full'}</strong> (each kind live-tested against a real delete):
         Apex, Visualforce, formula and roll-up fields, validation rules, flows and Process Builder, workflow rules,
         field updates, alerts and outbound messages, matching and duplicate rules, approval processes, sharing and
         scoping rules, Lightning pages, Lightning web components, custom metadata records, lead field mappings and
@@ -2853,7 +2878,13 @@ const FieldCleaner = (() => {
     const silentManual = Object.entries(_groups)
       .filter(([t]) => { const c = TYPE_CFG[t] || TYPE_CFG_DEFAULT; return c.sev === 'silent' && !c.fixable; })
       .reduce((n, [, arr]) => n + arr.length, 0);
-    const delDisabled = autoCount > 0 || blockerTotal > 0;
+    const unread = (_lastScan && _lastScan.unread) || [];
+    const delDisabled = autoCount > 0 || blockerTotal > 0 || unread.length > 0;   // unread: until Salesforce's own check accepts (_paintAsk)
+    const unreadBlock = unread.length ? `
+        <div class="fc-unread-note" id="fcUnreadNote">
+          <strong>⚠ ${unread.length} kind${unread.length === 1 ? '' : 's'} of metadata could not be read in this scan</strong> — so the list below may be missing something that blocks the delete. Press 🔍 Re-scan. Delete Field stays locked until they are read, or until Salesforce itself says it would accept the delete.
+          <ul>${unread.slice(0, 12).map(u => `<li><b>${esc(u.leg)}</b> — ${esc(u.why)}</li>`).join('')}${unread.length > 12 ? `<li>… and ${unread.length - 12} more</li>` : ''}</ul>
+        </div>` : '';
 
     // one header, one chip per kind (click → its group below; the tooltip says its ways), ONE sentence about the
     // ways (user 2026-11-08: "this section needs to improve. its very hard to understand and nobody will read it")
@@ -2869,12 +2900,15 @@ const FieldCleaner = (() => {
     const gateHtml = `
       <div class="fc-delete-zone" id="fcDeleteZone">
         ${blockerBlock}
+        ${unreadBlock}
         ${silentNote}
         <div class="fc-delete-note" id="fcDeleteNote">
           ${autoCount > 0
             ? `⚠ Fix the <span title="the flows, layouts, Lightning pages and reports the tool rewrites itself — the blockers above have ✂ ⇄ ✎ 🗑 of their own">${autoCount} fixable item${autoCount === 1 ? '' : 's'}</span> below first.`
             : blockerTotal > 0
               ? '🔒 Delete is blocked until the blockers below are cleared.'
+              : unread.length
+                ? '🔒 The scan could not read everything — see above. Asking Salesforce whether it would accept the delete…'
               : silentManual > 0
                 ? '✅ The scan lists no blocker (the references below simply go with the field).'
                 : '✅ The scan lists no blocker.'}
@@ -4817,7 +4851,7 @@ const FieldCleaner = (() => {
     // F2: even with every auto-fix done, manual blockers still make Salesforce
     // reject the delete — keep the button locked and say why.
     if (remaining.length === 0 && blockerTotal === 0) {
-      delBtn.disabled = false;
+      delBtn.disabled = !!(_lastScan && _lastScan.unread && _lastScan.unread.length);   // _paintAsk unlocks it when Salesforce accepts
       const note = eid('fcDeleteNote');
       if (note) note.textContent = 'Everything listed is resolved — asking Salesforce whether anything else blocks…';
       if (_lastScan) _lastScan.ask = null;
@@ -7307,6 +7341,13 @@ const FieldCleaner = (() => {
       + (view.lines.length ? `<ul class="fc-ask-list">${fcAskFlowLines(view.lines, ask.flows).map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : '')
       + (view.foot ? `<div class="fc-ask-foot">${esc(view.foot)}</div>` : '');
     _wireAsk();
+    const partial = !!(_lastScan && _lastScan.unread && _lastScan.unread.length);
+    if (partial) {
+      const d = eid('fcDelBtn'), note = eid('fcDeleteNote');
+      const open = document.querySelectorAll('#fcResults .fc-fix-btn:not([disabled])').length + (_manualBlockers || []).reduce((n, b) => n + b.count, 0);
+      if (view.kind === 'ok' && open === 0) { if (d) d.disabled = false; if (note) note.textContent = '✅ The scan could not read everything, but Salesforce itself says it would accept the delete.'; }
+      else if (view.kind === 'error') { if (d) d.disabled = true; if (note && open === 0) note.textContent = '🔒 The scan could not read everything and Salesforce could not be asked — press 🔍 Re-scan.'; }
+    }
     // Salesforce refuses → the delete stays locked whatever the list says
     if (view.kind === 'blocked') {
       for (const id of ['fcDelBtn', 'fcDelFreeBtn']) { const d = eid(id); if (d) d.disabled = true; }

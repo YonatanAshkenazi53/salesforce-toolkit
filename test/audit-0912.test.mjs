@@ -298,7 +298,7 @@ describe('13 · delete-error guidance matches what is scanned now', () => {
     expect(fn).toContain('Salesforce refuses the delete: the field is still used by');
     expect(fn).toContain('the scan reads every kind that blocks');
     expect(fn).not.toContain('criteria-based sharing rule');   // sharing rules are read now, not "may not report"
-    expect(FC).toContain('<strong>What blocks the delete is read in full</strong>');
+    expect(FC).toContain("'What blocks the delete is read in full'}</strong>");
   });
 });
 

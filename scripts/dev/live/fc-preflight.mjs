@@ -23,6 +23,7 @@ export default async function (h) {
   h.log('STATUS:', (await h.eval("document.querySelector('.fc-summary, #fcSummary, .fc-status')?.innerText || ''")).replace(/\s+/g, ' ').slice(0, 200));
   h.log('ALL ROWS:', JSON.stringify(await h.eval("[...document.querySelectorAll('.fc-item')].map(i => (i.closest('.fc-group')?.id || '').replace('fcGroup_', '') + ': ' + (i.querySelector('.fc-item-name')?.innerText.trim() || '') + ' {' + [...i.querySelectorAll('.fc-item-btns button')].map(b => b.innerText.trim()).join(' ') + '}')")));
   await h.waitFor("!/⏳/.test(document.querySelector('#fcAskBox')?.innerText || '')", 120000, 1000).catch(() => {});
+  h.log('UNREAD NOTE:', (await h.eval("document.querySelector('#fcUnreadNote')?.innerText || '(none)'")).split(String.fromCharCode(10)).join(' | ').slice(0, 900), '· delete locked:', await h.eval("!!document.querySelector('#fcDelBtn')?.disabled"));
   h.log('ASK BOX:', (await h.eval("document.querySelector('#fcAskBox')?.innerText || ''")).split(String.fromCharCode(10)).join(' | ').slice(0, 900));
   const t0 = Date.now();
   // the pre-check walks the rows one by one: wait until the count of notes stops growing

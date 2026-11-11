@@ -259,7 +259,7 @@ async function sftkMergeRead(ctx) {
   const cols = ['Id', 'CreatedDate', 'LastModifiedDate', ...(c.fields || []).filter(sftkMergeFieldOk).map(f => f.name)].filter((x, i, a) => a.indexOf(x) === i);
   const q = await c.send({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: c.orgUrl, sid: c.sid, query: `SELECT ${cols.join(', ')} FROM ${c.obj} WHERE Id IN (${ids.map(id => `'${id}'`).join(',')})` });
   if (!q || q.error) return { error: (q && q.error) || 'no answer' };
-  return { records: ids.map(id => (q.records || []).find(r => r && r.Id === id)).filter(Boolean) };
+  return { records: ids.map(id => (q.records || []).find(r => r && String(r.Id).slice(0, 15) === String(id).slice(0, 15))).filter(Boolean) };
 }
 
 // The merge, written and verified step by step.
@@ -272,7 +272,7 @@ async function sftkMergeRun(ctx) {
   const label = String(c.label || obj);
   const name = String(c.name || '');
   const survivorId = String(c.survivorId || '');
-  const dupIds = (c.dupIds || []).filter(id => id && id !== survivorId);
+  const dupIds = [...new Map((c.dupIds || []).filter(id => id && String(id).slice(0, 15) !== survivorId.slice(0, 15)).map(id => [String(id).slice(0, 15), id])).values()];   // 15- and 18-char forms of one record are one record (QA 2026-11-11)
   const body = (c.body && typeof c.body === 'object') ? c.body : {};
   const lines = [], deleted = [], kept = [];
   const soql = async q => { const r = await send({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: c.orgUrl, sid: c.sid, query: q }); if (r && r.error) throw new Error(String(r.error)); return (r && r.records) || []; };
@@ -336,7 +336,15 @@ async function sftkMergeRun(ctx) {
       for (const rel of rels) {
         let rows;
         try { rows = await soql(`SELECT Id FROM ${rel.child} WHERE ${rel.field} = '${dup}'`); }
-        catch (e) { lines.push(`${rel.child}.${rel.field}: could not be read (${(e && e.message) || e}) — skipped, nothing moved from it`); continue; }
+        catch (e) {
+          const why = String((e && e.message) || e);
+          // Salesforce does not let this relationship be queried at all (history, feed and share objects…): nothing
+          // of ours can hang on it. ANY OTHER failure — session, limit, timeout — is not "no children" (QA 2026-11-11:
+          // the copy was deleted after a failed read, and its children with it).
+          if (/Implementation restriction|INVALID_TYPE|is not supported|INVALID_FIELD|No such column|cannot be filtered|MALFORMED_QUERY|not queryable/i.test(why) && !/INVALID_SESSION|REQUEST_LIMIT|timed? ?out/i.test(why)) { lines.push(`${rel.child}.${rel.field}: Salesforce does not let it be read (${why}) — skipped, nothing moved from it`); continue; }
+          blocked = `${rel.child}.${rel.field} could not be read (${why}), so its records could not be moved first`;
+          break;
+        }
         if (!rows.length) continue;
         // confirmed-by: sftkConfirmDestructive in _depMergeCopies (studio-deploy.js) — the picker, then the shared confirmation with "cannot be undone", before sftkMergeRun is called
         const r = await sftkWriteVerified({
