@@ -1591,6 +1591,11 @@ const FieldCleaner = (() => {
           );
           return;
         }
+        if (_resolveErr) {
+          const fe = sftkFriendlyError(_resolveErr);
+          showScanError(`Salesforce did not answer the field lookup, so nothing was scanned — ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}. Reload the org's tab and press Re-scan.`);
+          return;
+        }
         showScanError(
           'Could not locate this field in the Tooling API. ' +
           'Verify the field API name and that you have Customize Application permission.'
@@ -2356,8 +2361,14 @@ const FieldCleaner = (() => {
   }
 
   // Look up the 15-char CustomField.Id needed for MetadataComponentDependency
+  // The last error a lookup query answered with — said to the user instead of "could not locate" (owner 2026-11-11:
+  // dlrs__LookupChild__c.SFTK_Pkg_Tag__c, a field that exists, answered "Could not locate this field": every query's
+  // error was swallowed and the three failures read as "no such field").
+  let _resolveErr = '';
   async function resolveCustomFieldId() {
     const devName = deriveDevName(_selField.api);
+    _resolveErr = '';
+    const note = r => { if (r && r.error) _resolveErr = String(r.error); };
 
     // Attempt 1: use EntityDefinition.DurableId as TableEnumOrId (works for both standard + custom)
     const res1 = await bg({
@@ -2366,6 +2377,17 @@ const FieldCleaner = (() => {
              `AND TableEnumOrId = '${_selObj.durableId}'`
     });
     if (!res1.error && res1.records?.length) return res1.records[0].Id;
+    note(res1);
+
+    // Attempt 1b: by the object's API NAME through the relationship — no id of ours in the query, so a stale or
+    // missing DurableId cannot fail it (works for standard, custom and packaged objects; proven on npc 2026-11-11).
+    const res1b = await bg({
+      type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
+      query: `SELECT Id FROM CustomField WHERE DeveloperName = '${devName.split('__').pop()}' ` +
+             `AND EntityDefinition.QualifiedApiName = ${fcSoqlLit(_selObj.api)}`
+    });
+    if (!res1b.error && res1b.records?.length) return res1b.records[0].Id;
+    note(res1b);
 
     // Attempt 2: try with QualifiedApiName (fallback for standard objects)
     if (_selObj.durableId !== _selObj.api) {
@@ -2375,6 +2397,7 @@ const FieldCleaner = (() => {
                `AND TableEnumOrId = '${_selObj.api}'`
       });
       if (!res2.error && res2.records?.length) return res2.records[0].Id;
+      note(res2);
     }
 
     // Attempt 3: try stripping namespace from devName (e.g. ns__My_Field → My_Field)
@@ -2386,6 +2409,7 @@ const FieldCleaner = (() => {
                `AND TableEnumOrId = '${_selObj.durableId}'`
       });
       if (!res3.error && res3.records?.length) return res3.records[0].Id;
+      note(res3);
     }
 
     return null;
