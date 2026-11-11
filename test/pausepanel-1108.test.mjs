@@ -123,6 +123,12 @@ describe('the wiring', () => {
     expect(DEP).toContain('<div class="ds-dep-pause-pane" data-pane="${t.kind}"${t.kind === _depPauseTab ? \'\' : \' hidden\'}>');
     expect(DEP).toContain('No rule is switched off or changed. Untick an object to respect its rules as they are.');
     expect(DEP).toContain('switched back on when the run ends — also when it fails or is cancelled.');
+    // 2026-11-11: one row per item with what happens to it in words — never items side by side
+    expect(DEP).toContain('class="ds-dep-pause-row${x.on ? \'\' : \' ds-dep-pause-off\'}"');
+    expect(DEP).toContain('⏸ Off during the run, back on after');
+    expect(DEP).toContain('▶ Stays on');
+    expect(DEP).not.toContain('ds-dep-pause-item');
+    expect(read('studio.css')).toMatch(/\.ds-dep-pause-row \{ display: grid;/);
     expect(DEP).not.toContain('kindLine(');
     expect(DEP).not.toContain('dsDepFlowPauseList');
     expect(DEP).not.toContain('dsDepRulePauseList');

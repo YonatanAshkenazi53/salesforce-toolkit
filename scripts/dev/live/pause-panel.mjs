@@ -74,7 +74,7 @@ export default async function (h) {
     await h.sleep(300);
   }
   h.log('PANEL (Contact narrowed):', await dump(h, '#dsDepPausePanel', 1500));
-  h.log('summary line:', await dump(h, '.ds-dep-pause-sum', 400));
+  h.log('row states:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.ds-dep-pause-row')].map(r => r.querySelector('.ds-dep-pause-name').innerText + ' → ' + r.querySelector('.ds-dep-pause-state').innerText)`)));
   await shot(h, 'pp-2-narrowed');
 
   const histBefore = await h.eval('_history.length');

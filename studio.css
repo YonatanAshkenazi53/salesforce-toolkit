@@ -6504,33 +6504,48 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 /* ⏸ the pause panel (2026-11-08): what the run switches off, per object, a tick on every item */
 .ds-ve-own-hd { font-size: 10.5px; font-weight: 700; color: var(--subtext); padding: 4px 8px 2px; }
 .ds-ve-own-hd + .ds-ve-own-hd { margin-top: 2px; }
-.ds-dep-pause { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--bg); color: var(--text); font-size: 12px; }
-.ds-dep-pause-hd { font-weight: 600; margin-bottom: 4px; }
-.ds-dep-pause-line { color: var(--subtext); margin: 2px 0 4px; }
-.ds-dep-pause-obj { border-top: 1px solid var(--border); padding: 6px 0; }
-.ds-dep-pause-objhd { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
-.ds-dep-pause-acts { margin-left: auto; display: inline-flex; gap: 4px; }
-.ds-dep-pause-all { font: inherit; font-size: 10.5px; line-height: 1.5; padding: 0 8px; border: 1px solid var(--border); border-radius: 9px; background: transparent; color: var(--subtext); cursor: pointer; }
-.ds-dep-pause-all:hover { color: var(--text); border-color: var(--text); }
-.ds-dep-pause-kind { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; padding: 2px 0 2px 10px; }
-.ds-dep-pause-kindlbl { color: var(--subtext); min-width: 180px; }
-.ds-dep-pause-item { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
-.ds-dep-pause-item input { margin: 0; }
-.ds-dep-pause-off { text-decoration: line-through; color: var(--subtext); }
-.ds-dep-pause-off.ds-dep-pause-sched { text-decoration: none; }   /* a scheduled flow is unticked by default — "left as it is", not "crossed out" */
-.ds-dep-pause-unwritten { opacity: .6; }
-.ds-dep-pause-sum { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); color: var(--subtext); }
+.ds-dep-pause { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--bg); color: var(--text); font-size: 12.5px; }
+.ds-dep-pause-hd { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.ds-dep-pause-title { font-weight: 600; font-size: 13.5px; }
+.ds-dep-pause-sub { color: var(--subtext); }
+.ds-dep-pause-line { color: var(--subtext); margin: 2px 0 6px; }
 .ds-dep-pause-none { color: var(--subtext); }
-/* the three tabs (2026-11-08): one per kind whose option is on */
-.ds-dep-pause-tabs { display: flex; gap: 4px; margin: 6px 0 8px; border-bottom: 1px solid var(--border); }
-.ds-dep-pause-tab { font: inherit; font-size: 12px; padding: 5px 12px; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; background: transparent; color: var(--subtext); cursor: pointer; margin-bottom: -1px; }
+/* the tabs — one per kind, a count on each */
+.ds-dep-pause-tabs { display: flex; gap: 4px; margin: 0 0 10px; border-bottom: 1px solid var(--border); }
+.ds-dep-pause-tab { font: inherit; font-size: 12.5px; padding: 6px 12px; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--subtext); cursor: pointer; margin-bottom: -1px; }
 .ds-dep-pause-tab:hover { color: var(--text); }
-.ds-dep-pause-tab[aria-selected="true"] { color: var(--text); font-weight: 600; border-color: var(--border); background: var(--bg); }
-.ds-dep-pause-tabn { font-size: 10.5px; color: var(--subtext); margin-left: 4px; }
+.ds-dep-pause-tab[aria-selected="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--brand); }
+.ds-dep-pause-tabn { font-size: 10.5px; font-weight: 500; color: var(--subtext); margin-left: 5px; padding: 1px 7px; border-radius: 9px; background: var(--surface2); }
 .ds-dep-pause-pane[hidden] { display: none; }
-.ds-dep-pause-why { color: var(--subtext); margin: 0 0 6px; line-height: 1.5; }
-.ds-dep-pause-pane .ds-dep-pause-kind { padding-left: 10px; }
-.ds-dep-pause-empty { color: var(--subtext); padding: 6px 0 2px; border-top: 1px solid var(--border); }
+/* one sentence; the long explanation opens on "more" */
+.ds-dep-pause-why { color: var(--subtext); margin: 0 0 10px; line-height: 1.5; }
+.ds-dep-pause-why > summary { list-style: none; cursor: pointer; }
+.ds-dep-pause-why > summary::-webkit-details-marker { display: none; }
+.ds-dep-pause-morelink { color: var(--brand); text-decoration: underline; margin-left: 4px; }
+.ds-dep-pause-why[open] .ds-dep-pause-morelink { display: none; }
+.ds-dep-pause-whybody { margin-top: 4px; }
+/* an object = a card: its name, its count, all / none, then ONE ROW PER ITEM */
+.ds-dep-pause-obj { border: 1px solid var(--border); border-radius: 6px; margin: 0 0 8px; overflow: hidden; }
+.ds-dep-pause-objhd { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--surface2); border-bottom: 1px solid var(--border); }
+.ds-dep-pause-count { color: var(--subtext); font-size: 11.5px; }
+.ds-dep-pause-acts { margin-left: auto; display: inline-flex; gap: 4px; }
+.ds-dep-pause-all { font: inherit; font-size: 10.5px; line-height: 1.5; padding: 0 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--subtext); cursor: pointer; }
+.ds-dep-pause-all:hover { color: var(--text); border-color: var(--text); }
+.ds-dep-pause-row { display: grid; grid-template-columns: 16px minmax(120px, 1fr) auto minmax(210px, auto); gap: 10px; align-items: center; padding: 7px 10px; cursor: pointer; }
+.ds-dep-pause-row + .ds-dep-pause-row { border-top: 1px solid var(--border-light, var(--border)); }
+.ds-dep-pause-row:hover { background: var(--surface2); }
+.ds-dep-pause-row input { margin: 0; }
+.ds-dep-pause-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-dep-pause-meta { display: inline-flex; gap: 4px; }
+.ds-dep-pause-badge { font-size: 10.5px; color: var(--subtext); border: 1px solid var(--border); border-radius: 9px; padding: 0 7px; line-height: 1.6; white-space: nowrap; }
+.ds-dep-pause-state { font-size: 11.5px; white-space: nowrap; text-align: right; }
+.ds-dep-pause-state-off { color: var(--c-warn-fg, var(--warning)); font-weight: 600; }
+.ds-dep-pause-state-on { color: var(--success); }
+.ds-dep-pause-state-idle { color: var(--subtext); }
+.ds-dep-pause-off .ds-dep-pause-name { color: var(--subtext); font-weight: 400; }
+.ds-dep-pause-unwritten .ds-dep-pause-rows { opacity: .6; }
+.ds-dep-pause-empty { color: var(--subtext); padding: 2px 2px 0; font-size: 11.5px; }
+.ds-dep-pause-emptynames { opacity: .8; }
 @media (max-width: 900px) { .ds-dep-row { grid-template-columns: auto 1fr; } .ds-dep-mid, .ds-dep-tail { grid-column: 2; } }
 
 /* Deploy view polish (2026-09-19, first live look): one column with one width;

@@ -2044,39 +2044,56 @@ function _depPausePaint(p) {
   const tip = kind => kind === 'dupe'
     ? 'Ticked: the writes on this object carry the duplicate-rule header, so a rule set to Alert lets the records through (a rule set to Block still blocks). Unticked: the rule is respected and a record it flags is refused. The rule itself is never switched off.'
     : 'Ticked: switched off before the first write and back on when the run ends. Unticked: stays on for this run.';
-  const item = (kind, x) => `<label class="ds-dep-pause-item${x.on ? '' : ' ds-dep-pause-off'}${kind === 'flow' && x.scheduled ? ' ds-dep-pause-sched' : ''}" title="${esc(kind === 'flow' && x.scheduled ? tipSched : tip(kind))}"><input type="checkbox" class="ds-dep-pause-cb" data-key="${esc(x.key)}" data-obj="${esc(x.object)}" ${x.on ? 'checked' : ''}> ${esc(sftkPauseItemName(kind, x))}</label>`;
+  // ONE ROW PER ITEM (owner 2026-11-11: "ה-UI ממש לא טוב ולא מובן. פלואו מוצג ליד פלואו") — the items used to wrap side
+  // by side under a paragraph. Now a list: tick · name · what it is · what happens to it during this run, in words.
+  const state = (kind, x, written) => {
+    if (!written) return { cls: 'idle', text: 'Not written in this run — stays as it is' };
+    if (kind === 'dupe') return x.on ? { cls: 'off', text: 'Bypassed — an Alert lets records through' } : { cls: 'on', text: 'Respected' };
+    if (x.on) return { cls: 'off', text: '⏸ Off during the run, back on after' };
+    return { cls: 'on', text: kind === 'flow' && x.scheduled ? 'Left as it is' : '▶ Stays on' };
+  };
+  const meta = (kind, x) => kind === 'flow'
+    ? `${x.scheduled ? '<span class="ds-dep-pause-badge">⏰ scheduled</span>' : '<span class="ds-dep-pause-badge">record-triggered</span>'}${x.version ? `<span class="ds-dep-pause-badge">v${esc(String(x.version))}</span>` : ''}`
+    : (kind === 'dupe' ? '<span class="ds-dep-pause-badge">duplicate rule</span>' : '');
+  const itemName = (kind, x) => kind === 'flow' ? (x.label || x.apiName) : sftkPauseItemName(kind, x);
+  const item = (kind, x, written) => {
+    const st = state(kind, x, written);
+    return `<label class="ds-dep-pause-row${x.on ? '' : ' ds-dep-pause-off'}" title="${esc(kind === 'flow' && x.scheduled ? tipSched : tip(kind))}"><input type="checkbox" class="ds-dep-pause-cb" data-key="${esc(x.key)}" data-obj="${esc(x.object)}" ${x.on ? 'checked' : ''}><span class="ds-dep-pause-name">${esc(itemName(kind, x))}</span><span class="ds-dep-pause-meta">${meta(kind, x)}</span><span class="ds-dep-pause-state ds-dep-pause-state-${st.cls}">${esc(st.text)}</span></label>`;
+  };
   // one tab per kind whose option is on (user 2026-11-08: "להראות רק אם מסמנים את המטאדאטה שרוצים לעצור… ולעשות
   // 3 טאבים עם פירוט מובן"); inside a tab, the objects this run writes to, each with its items and all / none.
   // Every tab's pane is in the DOM (hidden when not chosen) so a tick anywhere keeps its key.
   const TAB = {
-    flow: { label: '⏸ Flows', field: 'flows', why: `These record-triggered flows on the objects this run writes are switched off before the first write and switched back on when the run ends — also when it fails or is cancelled. Untick a flow to leave it running for this run. A ⏰ scheduled flow that starts on one of these objects is listed too, unticked: it runs on its clock, not on a write — tick it to keep it from firing while the records land.` },
-    rule: { label: '⏸ Validation rules', field: 'rules', why: `These validation rules on the objects this run writes are switched off before the first write and switched back on when the run ends. Untick a rule to keep it enforcing for this run.` },
-    dupe: { label: '🔁 Duplicate rules', field: 'dupes', why: `The writes on these objects carry the duplicate-rule header: a rule set to Alert lets the records through, a rule set to Block still blocks. No rule is switched off or changed. Untick an object to respect its rules as they are.` },
+    flow: { label: 'Flows', noun: 'flows', verb: 'switched off', short: 'A ticked flow is switched off before the first write and back on when the run ends.', why: `These record-triggered flows on the objects this run writes are switched off before the first write and switched back on when the run ends — also when it fails or is cancelled. Untick a flow to leave it running for this run. A ⏰ scheduled flow that starts on one of these objects is listed too, unticked: it runs on its clock, not on a write — tick it to keep it from firing while the records land.`, field: 'flows' },
+    rule: { label: 'Validation rules', noun: 'validation rules', verb: 'switched off', short: 'A ticked rule is switched off before the first write and back on when the run ends.', why: `These validation rules on the objects this run writes are switched off before the first write and switched back on when the run ends. Untick a rule to keep it enforcing for this run.`, field: 'rules' },
+    dupe: { label: 'Duplicate rules', noun: 'duplicate rules', verb: 'bypassed', short: 'A ticked rule is bypassed: set to Alert it lets the records through, set to Block it still blocks. Nothing is switched off.', why: `The writes on these objects carry the duplicate-rule header: a rule set to Alert lets the records through, a rule set to Block still blocks. No rule is switched off or changed. Untick an object to respect its rules as they are.`, field: 'dupes' },
   };
   const tabs = active.map(k => ({ kind: k.kind, ...TAB[k.kind], st: k.st, n: rows.reduce((s, r) => s + ((r[TAB[k.kind].field] || []).length), 0), off: rows.reduce((s, r) => s + ((r[TAB[k.kind].field] || []).filter(x => !x.on).length), 0), lines: lines.filter(t => t.kind === k.kind).map(t => t.text) }));
   if (!tabs.some(t => t.kind === _depPauseTab)) _depPauseTab = tabs[0].kind;
   const pane = t => {
     const objs = rows.map(r => ({ r, items: r[t.field] }));
     const withItems = objs.filter(o => o.items && o.items.length), without = objs.filter(o => !o.items || !o.items.length);
+    const noneNames = [...new Set(without.map(o => o.r.object))];
     return `<div class="ds-dep-pause-pane" data-pane="${t.kind}"${t.kind === _depPauseTab ? '' : ' hidden'}>
-      <div class="ds-dep-pause-why">${esc(t.why)}</div>
+      <details class="ds-dep-pause-why"><summary>${esc(t.short)} <span class="ds-dep-pause-morelink">more</span></summary><div class="ds-dep-pause-whybody">${esc(t.why)}</div></details>
       ${t.lines.map(x => `<div class="ds-dep-pause-line">${x}</div>`).join('')}
       ${t.st.list ? '' : (t.st.error ? '' : `<div class="ds-dep-pause-line">⏳ reading…</div>`)}
       ${withItems.map(({ r, items }) => `
         <div class="ds-dep-pause-obj${r.written ? '' : ' ds-dep-pause-unwritten'}">
-          <div class="ds-dep-pause-objhd"><strong>${esc(r.object)}</strong><span class="ds-subtext">${r.written ? `${items.filter(x => x.on).length} of ${items.length} ticked` : 'nothing selected to write here — its automation stays on'}</span>
-            <span class="ds-dep-pause-acts"><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-kind="${t.kind}" data-want="on" title="Tick every ${esc(t.label.replace(/^\S+ /, '').toLowerCase())} on ${esc(r.object)}">all</button><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-kind="${t.kind}" data-want="off" title="Untick every ${esc(t.label.replace(/^\S+ /, '').toLowerCase())} on ${esc(r.object)} — they stay as they are">none</button></span></div>
-          <div class="ds-dep-pause-kind">${items.map(x => item(t.kind, x)).join('')}</div>
+          <div class="ds-dep-pause-objhd"><strong>${esc(r.object)}</strong><span class="ds-dep-pause-count">${r.written ? `${items.filter(x => x.on).length} of ${items.length} ${t.verb}` : 'no record of it is selected — nothing changes here'}</span>
+            <span class="ds-dep-pause-acts"><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-kind="${t.kind}" data-want="on" title="Tick every ${esc(t.noun)} on ${esc(r.object)}">all</button><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-kind="${t.kind}" data-want="off" title="Untick every ${esc(t.noun)} on ${esc(r.object)} — they stay as they are">none</button></span></div>
+          <div class="ds-dep-pause-rows">${items.map(x => item(t.kind, x, r.written)).join('')}</div>
         </div>`).join('')}
-      ${t.st.list && without.length ? `<div class="ds-dep-pause-empty">None active on ${esc(without.map(o => o.r.object).join(', '))}.</div>` : ''}
+      ${t.st.list && !withItems.length ? `<div class="ds-dep-pause-empty">No active ${esc(t.noun)} on the objects of this deployment — nothing to do here.</div>` : ''}
+      ${t.st.list && withItems.length && noneNames.length ? `<div class="ds-dep-pause-empty" title="${esc(noneNames.join(', '))}">No active ${esc(t.noun)} on the other ${noneNames.length} object${noneNames.length === 1 ? '' : 's'} <span class="ds-dep-pause-emptynames">(${esc(noneNames.slice(0, 4).join(', '))}${noneNames.length > 4 ? '…' : ''})</span></div>` : ''}
     </div>`;
   };
+  const tabN = t => t.st.list ? (t.n ? `${t.n - t.off} of ${t.n}` : 'none') : (t.st.error ? '⚠' : '…');
   host.innerHTML = `
     <div class="ds-dep-pause">
-      <div class="ds-dep-pause-hd">⏸ What this run changes in <strong>${esc(tgt)}</strong> while it writes — untick anything that should stay as it is</div>
-      <div class="ds-dep-pause-tabs" role="tablist">${tabs.map(t => `<button type="button" role="tab" class="ds-dep-pause-tab" data-tab="${t.kind}" aria-selected="${t.kind === _depPauseTab}">${t.label} <span class="ds-dep-pause-tabn">${t.st.list ? `${t.n - t.off}${t.off ? ` of ${t.n}` : ''}` : (t.st.error ? '⚠' : '…')}</span></button>`).join('')}</div>
+      <div class="ds-dep-pause-hd"><span class="ds-dep-pause-title">⏸ During this run, in ${esc(tgt)}</span><span class="ds-dep-pause-sub">Untick anything that should stay as it is</span></div>
+      <div class="ds-dep-pause-tabs" role="tablist">${tabs.map(t => `<button type="button" role="tab" class="ds-dep-pause-tab" data-tab="${t.kind}" aria-selected="${t.kind === _depPauseTab}">${t.label} <span class="ds-dep-pause-tabn">${tabN(t)}</span></button>`).join('')}</div>
       ${tabs.map(pane).join('')}
-      ${rows.every(r => !r.total) ? '' : `<div class="ds-dep-pause-sum">${esc(sftkPauseSummary(rows.filter(r => r.total)))}</div>`}
     </div>`;
   host.querySelectorAll('.ds-dep-pause-tab').forEach(b => b.addEventListener('click', () => { _depPauseTab = b.dataset.tab; _depPausePaint(p); }));
   host.querySelectorAll('.ds-dep-pause-cb').forEach(cb => cb.addEventListener('change', () => {
