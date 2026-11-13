@@ -2505,6 +2505,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             // (nothing exists in the target for a failed insert).
             failedSourceIds.push({
               id: recs[i + j].Id,
+              ...(((result.errors || [])[0] || {}).statusCode ? { code: String(result.errors[0].statusCode) } : {}),   // Salesforce's own code — the page says WHAT refused (2026-11-13)
               // The bulk layer already writes an accurate per-record message
               // for the cancelled case (including the "we can't tell" one) —
               // never paper over it with a generic string.
@@ -3014,7 +3015,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             const named = [];
             for (const e of (v.errors || [])) for (const fn of (Array.isArray(e.fields) ? e.fields : [])) if (fn && !named.includes(fn)) named.push(fn);
             const notes = named.slice(0, 5).map(fn => Object.prototype.hasOwnProperty.call(row.payload, fn) ? { field: fn, sent: sftkTruncValue(row.payload[fn], 120) } : { field: fn, absent: true });
-            if (fails.length < 2000) fails.push({ id: row.srcId, error: msg, label: row.label || row.srcId, ...(notes.length ? { fields: notes } : {}) });
+            if (fails.length < 2000) fails.push({ id: row.srcId, error: msg, label: row.label || row.srcId, ...(((v.errors || [])[0] || {}).statusCode ? { code: String(v.errors[0].statusCode) } : {}), ...(notes.length ? { fields: notes } : {}) });
           }
           else if (v.state === 'cascade') agg.cascade++;
           else agg.unreached++;

@@ -250,7 +250,7 @@ describe('the engine in probe mode', () => {
     expect(r.status).toBe('partial');
     expect(r.probe.rounds).toBe(2);
     expect(r.summary.Contact).toMatchObject({ failed: 1, probe: { probed: 2, wouldWrite: 1, refused: 1, cascade: 0 } });
-    expect(r.summary.Contact.failedSourceIds).toEqual([{ id: 'C2', error: 'a Lab lead needs a Phone', label: 'Cohen', fields: [{ field: 'Phone', absent: true }] }]);
+    expect(r.summary.Contact.failedSourceIds).toEqual([{ id: 'C2', error: 'a Lab lead needs a Phone', label: 'Cohen', code: 'FIELD_CUSTOM_VALIDATION_EXCEPTION', fields: [{ field: 'Phone', absent: true }] }]);
     expect(r.summary.Case.probe).toMatchObject({ probed: 2, wouldWrite: 1, refused: 0, cascade: 1 });
     expect(r.errors).toContain('Contact: a Lab lead needs a Phone');
     expect(r.errors.some(e => /Case: 2 record\(s\) in a transaction .* 1 would be written, 0 refused, 1 not checked \(their parent would be refused\)/.test(e))).toBe(true);

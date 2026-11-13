@@ -3055,7 +3055,7 @@ async function runReconcile(profile, objType, buckets, opts) {
           cSum.failed ? 'ds-prog-err' : '');
       }
       (res.errors || []).forEach(e => allErrors.push(`insert: ${e}`));
-      _recLogRefused(log, res.summary, PROBE);
+      await _recLogRefused(log, res.summary, PROBE, tgtSess);
       _recLogEngineLines(log, res.errors);
     } catch (e) { allErrors.push(`Push failed: ${e?.message || e}`); log('❌', `Push failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
@@ -3154,7 +3154,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         else log('  ' + (rs.failed ? '⚠' : '✅'), `${rObj}: ${rs.created || 0} created under the new ${obj}${rs.failed ? `, ${rs.failed} failed` : ''}`, rs.failed ? 'ds-prog-err' : '');
       }
       (res.errors || []).forEach(e => allErrors.push(`insert ${obj}: ${e}`));
-      _recLogRefused(log, res.summary, PROBE);
+      await _recLogRefused(log, res.summary, PROBE, tgtSess);
       _recLogEngineLines(log, res.errors);
     } catch (e) { allErrors.push(`Insert ${obj} failed: ${e?.message || e}`); log('❌', `Insert ${obj} failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
@@ -4916,19 +4916,74 @@ function sftkParentPairsOf(res, by) {
 // to say why they are refused" — the log said "3 refused" and showed one reason of two). From the engine's summary:
 // failedSourceIds = [{ id, label, error }]. One line per reason, the records it stopped after it.
 const _recRefusedShown = new Set();
-function _recLogRefused(log, summary, probe) {
+// WHAT refused a record, from Salesforce's own status code and message (owner 2026-11-13, on a dry run: "why we dont
+// say its a validation rule?" · "there can be many different scenarios of failure" · "we need to show the error from
+// salesforce somehow"). PURE. rules: [{ name, message }] — the target's active validation rules on this object.
+//   → { what, by } — what kind of thing refused, and its name when Salesforce or the org's rules give one
+function sftkRefusalSource(code, why, rules) {
+  const c = String(code || ''), w = String(why || '');
+  const is = (re) => re.test(c) || re.test(w);
+  const norm = x => String(x || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (is(/DUPLICATES_DETECTED/)) return { what: 'a duplicate rule', by: '' };
+  if (is(/CANNOT_EXECUTE_FLOW_TRIGGER/)) { const m = /[“"]([^”"]+)[”"] (?:process|flow)/i.exec(w); return { what: 'a record-triggered flow that failed', by: m ? m[1] : '' }; }
+  if (is(/CANNOT_INSERT_UPDATE_ACTIVATE_ENTITY/) || /Apex trigger (\S+) caused/i.test(w)) { const m = /Apex trigger (\S+) caused/i.exec(w) || /^(\w+): execution of/i.exec(w); return { what: 'an Apex trigger that failed', by: m ? m[1] : '' }; }
+  if (is(/REQUIRED_FIELD_MISSING/) || /required fields? (?:is|are) missing/i.test(w)) { const m = /\[([^\]]+)\]/.exec(w); return { what: 'a required field that is empty', by: m ? m[1] : '' }; }
+  if (is(/INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST/) || /restricted picklist/i.test(w)) { const m = /picklist field: ([\w .]+?):/i.exec(w); return { what: 'a restricted picklist that does not have this value', by: m ? m[1].trim() : '' }; }
+  if (is(/FIELD_FILTER_VALIDATION_EXCEPTION/) || /does not match filter criteria/i.test(w)) return { what: 'a lookup filter', by: '' };
+  if (is(/STRING_TOO_LONG/) || /data value too large/i.test(w)) return { what: 'a value longer than the field allows', by: '' };
+  if (is(/DUPLICATE_VALUE/) || /duplicate value found/i.test(w)) { const m = /duplicate value found: (\w+)/i.exec(w); return { what: 'a unique field that already has this value', by: m ? m[1] : '' }; }
+  if (is(/INVALID_CROSS_REFERENCE_KEY|MALFORMED_ID|INVALID_FIELD_FOR_INSERT_UPDATE/)) return { what: 'a reference or field this org does not accept', by: '' };
+  if (is(/INSUFFICIENT_ACCESS|INVALID_FIELD\b|CANNOT_UPDATE_CONVERTED_LEAD|ENTITY_IS_LOCKED/) || /insufficient access/i.test(w)) return { what: 'your user’s access', by: '' };
+  if (is(/UNABLE_TO_LOCK_ROW/)) return { what: 'a record lock (another process was writing the same records)', by: '' };
+  if (is(/STORAGE_LIMIT_EXCEEDED/)) return { what: 'the org’s storage limit', by: '' };
+  if (is(/NUMBER_OUTSIDE_VALID_RANGE|INVALID_TYPE_ON_FIELD_IN_RECORD|INVALID_EMAIL_ADDRESS|FIELD_INTEGRITY_EXCEPTION/)) return { what: 'a value the field does not accept', by: '' };
+  // a custom message: a validation rule of this org says exactly it — else it is a flow's or a trigger's own error
+  if (!c || /FIELD_CUSTOM_VALIDATION_EXCEPTION/.test(c)) {
+    const hit = (rules || []).find(r => r && r.message && norm(w).includes(norm(r.message)));
+    if (hit) return { what: 'a validation rule', by: hit.name };
+    if (Array.isArray(rules)) return { what: 'a custom error of a flow or an Apex trigger (no active validation rule here has this message)', by: '' };
+    return { what: 'a validation rule, or a custom error of a flow or an Apex trigger', by: '' };
+  }
+  return { what: 'Salesforce', by: '' };
+}
+// The target's active validation rules on an object, with their messages — one Tooling query, once per object and run.
+const _recRuleMsgs = new Map();   // `${orgUrl}|${obj}` → [{ name, message }] | null (could not be read)
+async function _recRulesFor(sess, obj) {
+  if (!sess || !sess.sid) return null;
+  const k = `${sess.orgUrl}|${obj}`;
+  if (_recRuleMsgs.has(k)) return _recRuleMsgs.get(k);
+  let out = null;
+  try {
+    const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
+      query: `SELECT ValidationName, ErrorMessage FROM ValidationRule WHERE Active = true AND EntityDefinition.QualifiedApiName = ${soqlStrLit(obj)}` });
+    if (q && !q.error) out = (q.records || []).map(r => ({ name: r.ValidationName, message: r.ErrorMessage }));
+  } catch (_) { out = null; }
+  _recRuleMsgs.set(k, out);
+  return out;
+}
+// Every refused record BY NAME, under what refused it. From the engine's summary: failedSourceIds = [{ id, label,
+// error, code }]. Per reason: what refused (its kind and name) · Salesforce's own code and words · the records.
+async function _recLogRefused(log, summary, probe, tgtSess) {
   for (const [obj, s] of Object.entries(summary || {})) {
     const list = (s && s.failedSourceIds) || [];
     if (!list.length) continue;
     const by = new Map();
     for (const f of list) {
       const why = String((f && typeof f === 'object' && f.error) || 'Salesforce gave no reason');
-      if (!by.has(why)) by.set(why, []);
-      by.get(why).push((f && typeof f === 'object' && (f.label || f.id)) || String(f));
+      if (!by.has(why)) by.set(why, { names: [], code: '' });
+      const g = by.get(why);
+      g.names.push((f && typeof f === 'object' && (f.label || f.id)) || String(f));
+      if (!g.code && f && f.code) g.code = String(f.code);
     }
-    for (const [why, names] of by) {
+    const needRules = [...by.entries()].some(([why, g]) => { const k = sftkRefusalSource(g.code, why, undefined); return /validation rule/.test(k.what); });
+    const rules = needRules ? await _recRulesFor(tgtSess, obj) : undefined;
+    for (const [why, g] of by) {
       _recRefusedShown.add(why);
-      log('  ✗', `${names.length} ${obj} ${probe ? 'would be refused' : 'failed'} — ${why}  →  ${names.slice(0, 12).join(' · ')}${names.length > 12 ? ` · and ${names.length - 12} more (⬇ Report lists them all)` : ''}`, 'ds-prog-err');
+      const src = sftkRefusalSource(g.code, why, rules === null ? undefined : rules);
+      const n = g.names.length;
+      log('  ✗', `${n} ${obj} ${probe ? 'would be refused' : (n === 1 ? 'was refused' : 'were refused')} by ${src.what}${src.by ? `: ${src.by}` : ''}`, 'ds-prog-err');
+      log('     ', `Salesforce says${g.code ? ` (${g.code})` : ''}: “${why}”`, 'ds-prog-err');
+      log('     ', `Record${n === 1 ? '' : 's'}: ${g.names.slice(0, 12).join(' · ')}${n > 12 ? ` · and ${n - 12} more (⬇ Report lists them all)` : ''}`, 'ds-prog-err');
     }
   }
 }
