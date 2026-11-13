@@ -212,6 +212,43 @@ function sftkFieldChanges(before, after, piiFields) {
   return out;
 }
 // The before/after lines of one run, flat: one line per changed field of every updated record. PURE.
+// ── the before/after of EVERY updated record of a run (owner 2026-11-13: the first 200 per object was "not good") ──
+// One chrome.storage.local key per run — sftk_fc_<runId> = { at, changes: [{ object, id, label, changes }] } — read only
+// when a run is exported, never at boot. Retention follows History: removed with "delete after N days", with Clear
+// History / Clear cached data, and never written in counts-only mode.
+function sftkFcKey(runId) { return `sftk_fc_${runId}`; }
+async function sftkFcSave(runId, list) {
+  if (!runId || !Array.isArray(list) || !list.length) return false;
+  if (typeof _settings !== 'undefined' && _settings && _settings.countsOnly) return false;
+  try { await chrome.storage.local.set({ [sftkFcKey(runId)]: { at: new Date().toISOString(), changes: list } }); return true; }
+  catch (_) { return false; }
+}
+// → { <runId>: [{ object, id, label, field, before, after, … }] } for the runs that have a stored list
+async function sftkFcLoad(runIds) {
+  const out = {};
+  const keys = (runIds || []).filter(Boolean).map(sftkFcKey);
+  if (!keys.length) return out;
+  let got = {};
+  try { got = await chrome.storage.local.get(keys); } catch (_) { return out; }
+  for (const id of runIds) {
+    const v = got[sftkFcKey(id)];
+    if (!v || !Array.isArray(v.changes)) continue;
+    // the same lines histFieldChanges writes, from the full list
+    const summary = {};
+    for (const r of v.changes) { if (!r) continue; (summary[r.object] || (summary[r.object] = { targetRecords: [] })).targetRecords.push({ id: r.id, label: r.label, changes: r.changes }); }
+    out[id] = histFieldChanges({ summary });
+  }
+  return out;
+}
+// Retention. { all: true } removes every list; { olderThanIso } the lists saved before that moment.
+async function sftkFcSweep(opts) {
+  const o = opts || {};
+  let all = {};
+  try { all = await chrome.storage.local.get(null); } catch (_) { return 0; }
+  const drop = Object.keys(all).filter(k => k.indexOf('sftk_fc_') === 0 && (o.all || (o.olderThanIso && String((all[k] && all[k].at) || '') < o.olderThanIso)));
+  if (drop.length) { try { await chrome.storage.local.remove(drop); } catch (_) { return 0; } }
+  return drop.length;
+}
 function histFieldChanges(entry) {
   const out = [];
   for (const [obj, s] of Object.entries((entry && entry.summary) || {})) {
@@ -248,14 +285,16 @@ function histExportPayload(entries, settings, opts) {
       totals: { created: t.created, updated: t.updated, deleted: t.deleted, pulled: t.pulled, failed: t.failed, notConfirmedWritten: t.notProcessed },
       ...(note ? { recordDetailNote: note } : {}),
       // every changed field of every updated record: old and new value (none in counts-only mode — never kept)
-      fieldChanges: s.countsOnly ? [] : histFieldChanges(e),
+      // the run's full list when it has one (1.1: every updated record); else the records History keeps by name
+      fieldChanges: s.countsOnly ? [] : ((o.fullChanges && e && o.fullChanges[e.id]) || histFieldChanges(e)),
+      ...(!s.countsOnly && e && e.fieldChangesNotStored ? { fieldChangesNote: `The full list of ${e.fieldChangesNotStored} updated record(s) could not be saved in this browser; fieldChanges holds the first 200 per object.` } : {}),
     };
   });
   const retentionNote = (days > 0
     ? `This file contains the ${runs.length} run(s) passed to this export. Runs older than ${days} day(s) are DELETED automatically per the retention setting (from the hot tier AND the on-PC archive) and cannot appear in any export.`
     : `This file contains the ${runs.length} run(s) passed to this export. Retention is "keep forever": the newest 100 runs stay hot, older runs move to the on-PC 📦 archive — the History page's "Export all (incl. archive)" bundles both.`)
     + (s.countsOnly ? ' Counts-only mode is ON: per-record ids and labels are stripped from history at write time, so runs carry counts and errors but no record-level detail.' : '')
-    + (s.countsOnly ? ' fieldChanges is empty: counts-only mode keeps no values.' : ' fieldChanges lists, per run, every field an update changed — its value in the target just before the run and the value written (the first 200 updated records per object; a field under the PII policy keeps no before value).');
+    + (s.countsOnly ? ' fieldChanges is empty: counts-only mode keeps no values.' : ' fieldChanges lists, per run, every field an update changed — its value in the target just before the run and the value written — for every updated record of a run made with version 1.1 or later (earlier runs: the first 200 updated records per object); a field under the PII policy keeps no before value.');
   return {
     format: 'sftk-history-export',
     version: 1,
@@ -846,6 +885,7 @@ function renderHistory() {
         chrome.storage.local.set({ ds_activity_log: {} }),
         (typeof sftkArchClear === 'function') ? sftkArchClear() : Promise.resolve(),
         (typeof sftkUndoStoreClear === 'function') ? sftkUndoStoreClear() : Promise.resolve(),
+        sftkFcSweep({ all: true }),
       ]);
       showToast(`Cleared: history, ${scans} scan result${scans !== 1 ? 's' : ''}, match memory on ${mems} deployment${mems !== 1 ? 's' : ''}, activity log, ${cachedKeys.length} cached org-data entr${cachedKeys.length !== 1 ? 'ies' : 'y'}`, 'success');
       renderHistory();
@@ -866,6 +906,7 @@ Delete all transfer history records?`,
       _archShown = [];
       if (typeof sftkArchClear === 'function') await sftkArchClear();   // "all" includes the 📦 archive
       if (typeof sftkUndoStoreClear === 'function') await sftkUndoStoreClear();   // …and the ↩ restore points
+      await sftkFcSweep({ all: true });                                            // …and every run's before/after list
       await storageSaveHistory();
       renderHistory();
     });
@@ -990,8 +1031,8 @@ function _histShowRunExportModal(run) {
     `,
       actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsRunExportCsv', label: `⬇ CSV`, kind: 'secondary' }, { id: 'dsRunExportJson', label: `⬇ JSON`, kind: 'primary' }],
     });
-  eid('dsRunExportJson')?.addEventListener('click', () => {
-    const payload = histExportPayload([run], _settings, { labels: _histLabelsMap([run]) });
+  eid('dsRunExportJson')?.addEventListener('click', async () => {
+    const payload = histExportPayload([run], _settings, { labels: _histLabelsMap([run]), fullChanges: await sftkFcLoad([run.id]) });
     _histDownload(`${fnameBase}.json`, JSON.stringify(payload, null, 2), 'application/json');
     closeModal();
     showToast('Run report exported (JSON)', 'success', 3000);
@@ -1044,7 +1085,7 @@ async function _histFillArchBar() {
         .sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
       const nowIso = new Date().toISOString();
       const stamp = `${nowIso.slice(0, 10)}-${nowIso.slice(11, 19).replace(/:/g, '')}`;
-      const payload = histExportPayload(entries, _settings, { labels: _histLabelsMap(entries), nowIso });
+      const payload = histExportPayload(entries, _settings, { labels: _histLabelsMap(entries), nowIso, fullChanges: await sftkFcLoad(entries.map(h => h.id)) });
       _histDownload(`sftk-history-full-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
       showToast(`Exported ${entries.length} run(s) — retained + archived`, 'success', 4000);
     } catch (e) {
@@ -1078,8 +1119,8 @@ function _histShowExportAllModal() {
     `,
       actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsHistExportAllCsv', label: `⬇ CSV`, kind: 'secondary' }, { id: 'dsHistExportAllJson', label: `⬇ JSON`, kind: 'primary' }],
     });
-  eid('dsHistExportAllJson')?.addEventListener('click', () => {
-    const payload = histExportPayload(sorted, _settings, { labels: _histLabelsMap(sorted), nowIso });
+  eid('dsHistExportAllJson')?.addEventListener('click', async () => {
+    const payload = histExportPayload(sorted, _settings, { labels: _histLabelsMap(sorted), nowIso, fullChanges: await sftkFcLoad(sorted.map(h => h.id)) });
     _histDownload(`sftk-history-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
     closeModal();
     showToast(`History exported (JSON, ${sorted.length} run(s))`, 'success', 3000);

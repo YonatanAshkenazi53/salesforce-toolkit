@@ -535,6 +535,7 @@ async function storageLoad() {
     }
     if (typeof sftkArchDeleteOlderThan === 'function') {
       sftkArchDeleteOlderThan(new Date(cutoff).toISOString()).catch(() => {});
+      if (typeof sftkFcSweep === 'function') sftkFcSweep({ olderThanIso: new Date(cutoff).toISOString() }).catch(() => {});   // the runs' before/after lists follow the same retention
     }
     // ↩ restore points hold record data about the orgs — same retention.
     if (typeof sftkUndoStoreDeleteOlderThan === 'function') {
@@ -601,6 +602,7 @@ async function storageSaveWorkingPair() {
 // to BOTH tiers — the archive stores exactly what the hot tier would.
 function _historyStripCountsOnly(entries) {
   if (!_settings.countsOnly) return;
+  if (typeof sftkFcSweep === 'function') sftkFcSweep({ all: true }).catch(() => {});   // counts-only keeps no values: the runs' before/after lists go too
   for (const h of (entries || [])) {
     delete h.failedSourceIds;
     if (h.summary) for (const obj of Object.values(h.summary)) {

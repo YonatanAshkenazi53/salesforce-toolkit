@@ -3517,6 +3517,16 @@ async function runReconcile(profile, objType, buckets, opts) {
     },
     errors: allErrors.slice(0, 50)
   });
+  // the before/after of EVERY updated record of this run, under its own key (never loaded at boot)
+  if (!PROBE) {
+    const fc = window._sftkRunFieldChanges || [];
+    window._sftkRunFieldChanges = [];
+    if (fc.length && typeof sftkFcSave === 'function') {
+      const saved = await sftkFcSave(runId, fc);
+      const entry = _history[_history.length - 1];
+      if (entry && entry.id === runId) { if (saved) entry.fieldChangesStored = fc.length; else entry.fieldChangesNotStored = fc.length; }
+    }
+  }
   await storageSaveHistory();
 
   if (PROBE) {
@@ -4444,15 +4454,20 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // accepted-but-unchanged taught elsewhere.
   const writeFields = [...new Set(payloads.flatMap(p => Object.keys(p).filter(k => k !== 'Id' && k !== 'attributes')))];
   // History's before/after (user 2026-11-07, promised on r/salesforce 2026-11-03): the target's values of the written
-  // fields, read just before the write — the first 200 records, the ones History keeps by name. Counts-only mode keeps
-  // no values, so nothing is read for it; a read that fails leaves "before" unread, never guessed.
+  // fields, read just before the write — for EVERY record of the update (owner 2026-11-13: "only 200 records.. not
+  // good"; it used to be the first 200), one query per 200 records. Counts-only mode keeps no values, so nothing is
+  // read for it; a read that fails leaves "before" unread for its 200, never guessed. The History card keeps the first
+  // 200 records by name as before; the full list goes to its own storage key (sftkFcSave) and into the JSON export.
   const keepValues = !(typeof _settings !== 'undefined' && _settings && _settings.countsOnly);
   const beforeById = new Map();
   if (keepValues && writeFields.length) {
-    const ids = payloads.map(x => x.Id).filter(Boolean).slice(0, 200);
-    const bq = ids.length ? await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
-      query: `SELECT Id, ${writeFields.join(', ')} FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')})` }) : null;
-    if (bq && !bq.error) for (const r of (bq.records || [])) beforeById.set(r.Id, r);
+    const allIds = payloads.map(x => x.Id).filter(Boolean);
+    for (let i = 0; i < allIds.length; i += 200) {
+      const ids = allIds.slice(i, i + 200);
+      const bq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
+        query: `SELECT Id, ${writeFields.join(', ')} FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')})` });
+      if (bq && !bq.error) for (const r of (bq.records || [])) beforeById.set(r.Id, r);
+    }
   }
   // confirmed-by: every caller (runReconcile's root/inverse/child overwrite
   // paths) confirms via runReconcile's Proceed/production sftkConfirmDestructive first.
@@ -4498,7 +4513,12 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   arr.forEach((r, i) => {
     if (!rowMeta[i]) return;
     const stale = r.success && payloads[i] && staleSet.has(payloads[i].Id);
-    if (r.success && !stale) { if (updatedRecords.length < 200) updatedRecords.push(keepValues ? { ...rowMeta[i], changes: sftkFieldChanges(beforeById.get(payloads[i].Id), payloads[i], piiTgtFields) } : rowMeta[i]); }
+    if (r.success && !stale) {
+      const changes = keepValues ? sftkFieldChanges(beforeById.get(payloads[i].Id), payloads[i], piiTgtFields) : null;
+      if (updatedRecords.length < 200) updatedRecords.push(keepValues ? { ...rowMeta[i], changes } : rowMeta[i]);
+      // every updated record's changes, for the export — no cap
+      if (keepValues && changes && Object.keys(changes).length) (window._sftkRunFieldChanges || (window._sftkRunFieldChanges = [])).push({ object: objType, id: rowMeta[i].id, label: rowMeta[i].label || rowMeta[i].id, changes });
+    }
     else if (failedRecords.length < 200) {
       failedRecords.push({ ...rowMeta[i], error: stale ? 'accepted by Salesforce, but the org still shows a different value' : (r.errors || []).map(e => e.message).join('; ') });
     }

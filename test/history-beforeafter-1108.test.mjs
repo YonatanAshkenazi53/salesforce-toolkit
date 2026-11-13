@@ -50,8 +50,31 @@ describe('the export', () => {
 describe('the write keeps them', () => {
   it('the target is read just before the overwrite (first 200, not in counts-only mode) and each updated record keeps its changes', () => {
     expect(RC).toContain("const keepValues = !(typeof _settings !== 'undefined' && _settings && _settings.countsOnly);");
-    expect(RC).toContain('const ids = payloads.map(x => x.Id).filter(Boolean).slice(0, 200);');
-    expect(RC).toContain('updatedRecords.push(keepValues ? { ...rowMeta[i], changes: sftkFieldChanges(beforeById.get(payloads[i].Id), payloads[i], piiTgtFields) } : rowMeta[i]);');
+    // 2026-11-13: EVERY record of the update, one query per 200 — the first 200 only was "not good"
+    expect(RC).toContain('const allIds = payloads.map(x => x.Id).filter(Boolean);');
+    expect(RC).toContain('for (let i = 0; i < allIds.length; i += 200) {');
+    expect(RC).not.toContain('const ids = payloads.map(x => x.Id).filter(Boolean).slice(0, 200);');
+    expect(RC).toContain('const changes = keepValues ? sftkFieldChanges(beforeById.get(payloads[i].Id), payloads[i], piiTgtFields) : null;');
+    expect(RC).toContain('window._sftkRunFieldChanges = []');
+    expect(RC).toContain('const saved = await sftkFcSave(runId, fc);');
     expect(RC).toContain('piiTgtFields.add(tf);');
+  });
+});
+
+// 2026-11-13 (owner: "only 200 records.. not good") — the export carries every updated record of a run
+describe('the full before/after list of a run', () => {
+  const H = readFileSync(new URL('../studio-history.js', import.meta.url), 'utf8');
+  const C = readFileSync(new URL('../studio-core.js', import.meta.url), 'utf8');
+  it('is stored per run, loaded only for an export, and used by the export when present', () => {
+    expect(H).toContain('function sftkFcKey(runId) { return `sftk_fc_${runId}`; }');
+    expect(H).toContain('fieldChanges: s.countsOnly ? [] : ((o.fullChanges && e && o.fullChanges[e.id]) || histFieldChanges(e)),');
+    expect((H.match(/fullChanges: await sftkFcLoad\(/g) || []).length).toBe(3);
+    expect(H).toContain('for every updated record of a run made with version 1.1 or later');
+  });
+  it('follows the retention of History: days, clear, counts-only', () => {
+    expect(C).toContain("sftkFcSweep({ olderThanIso: new Date(cutoff).toISOString() })");
+    expect((H.match(/sftkFcSweep\(\{ all: true \}\)/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(C).toContain("sftkFcSweep({ all: true }).catch");
+    expect(H).toContain("if (typeof _settings !== 'undefined' && _settings && _settings.countsOnly) return false;");
   });
 });
