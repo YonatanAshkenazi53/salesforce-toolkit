@@ -34,3 +34,28 @@ describe('what refused a record', () => {
     expect((BG.match(/statusCode \? \{ code: String\(/g) || []).length).toBe(2);
   });
 });
+
+// 2026-11-13 (owner: ticked "pause validation rules", the dry run still said the rule blocked the records)
+describe('a dry run says which refusals the ⏸ pauses would remove', () => {
+  const { sftkProbePauseNote: N } = extractFunctions('studio-reconcile.js', ['sftkProbePauseNote']);
+  const rule = { what: 'a validation rule', by: 'SFTK_Pkg_Red_Needs_Tag' };
+  it('the rule is ticked → a real run would not be refused', () => {
+    expect(N(rule, 'dlrs__LookupChild__c', { rules: [{ name: 'SFTK_Pkg_Red_Needs_Tag', object: 'dlrs__LookupChild__c' }], flows: [], rulesOn: true })).toMatch(/would NOT be refused by it\. A dry run switches nothing off/);
+  });
+  it('the option is on but this rule is not paused → refused the same way', () => {
+    expect(N(rule, 'X', { rules: [], flows: [], rulesOn: true })).toMatch(/would be refused the same way/);
+  });
+  it('the option is off → how to pause it', () => {
+    expect(N(rule, 'X', { rules: [], flows: [], rulesOn: false })).toMatch(/^Tick ⏸ “pause validation rules”/);
+  });
+  it('a flow error with flows paused on the object → may not happen, said as that', () => {
+    expect(N({ what: 'a custom error of a flow or an Apex trigger (no active validation rule here has this message)', by: '' }, 'O', { rules: [], flows: [{ label: 'F1', object: 'O' }], flowsOn: true })).toMatch(/If this error comes from it, the real run would not meet it/);
+  });
+  it('nothing to say for other causes, or outside a dry run', () => {
+    expect(N({ what: 'a duplicate rule', by: '' }, 'O', { rules: [], flows: [] })).toBe('');
+    expect(N(rule, 'O', null)).toBe('');
+  });
+  it('the dry run button passes what would be paused', () => {
+    expect(readFileSync(new URL('../studio-deploy.js', import.meta.url), 'utf8')).toContain('{ probe: true, probePaused: _depProbePaused(p) }');
+  });
+});

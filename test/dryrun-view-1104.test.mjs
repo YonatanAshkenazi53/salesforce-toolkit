@@ -90,7 +90,7 @@ describe('the pages', () => {
   it('the Deploy page offers 🧪 Dry run next to ▶ Deploy, enabled with it, and runs runReconcile in probe mode without the pause wrappers', () => {
     expect(DEPLOY).toMatch(/id="dsRecProbeBtn" disabled title="A real write that Salesforce rolls back/);
     expect(DEPLOY).toContain(`eid('dsRecProbeBtn')?.addEventListener('click', () => runReconcile(p, objType,`);
-    expect(DEPLOY).toContain("{ probe: true }));");
+    expect(DEPLOY).toContain("{ probe: true, probePaused: _depProbePaused(p) }));");
     expect(DEPLOY).toContain("const probe = eid('dsRecProbeBtn'); if (probe) probe.disabled = !s.total;");
   });
   it('runReconcile in probe mode: its own dialog, no restore point, no delete / overwrite / relink / pull, inserts flagged for the engine, no rescan', () => {

@@ -2268,6 +2268,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   // other kinds of write (delete, overwrite, relink, pull) are named as not
   // covered. No restore point, no pauses, no rescan: nothing changes.
   const PROBE = !!(opts && opts.probe === true);
+  window._sftkProbePaused = PROBE ? ((opts && opts.probePaused) || null) : null;
   const probeAgg = {};   // obj → merged verdict counts (History, toast)
   const probeNote = (obj, sum) => {
     const a = (sum && sum.probe) || {};
@@ -4948,6 +4949,21 @@ function sftkRefusalSource(code, why, rules) {
   }
   return { what: 'Salesforce', by: '' };
 }
+// In a dry run: does the ⏸ panel pause what refused these records? PURE. → a sentence, or ''.
+//   paused: { rules: [{ name, object }], flows: [{ label, object }], rulesOn, flowsOn }
+function sftkProbePauseNote(src, obj, paused) {
+  if (!src || !paused) return '';
+  if (src.what === 'a validation rule' && src.by) {
+    if ((paused.rules || []).some(r => r.name === src.by && (!r.object || r.object === obj))) return `⏸ You ticked this rule to be paused: a real ▶ Deploy switches ${src.by} off first, so these records would NOT be refused by it. A dry run switches nothing off — that is why it still shows here.`;
+    return paused.rulesOn ? `⏸ “pause validation rules” is on, but ${src.by} is not among the rules it pauses (unticked in the ⏸ panel, or from a package) — a real ▶ Deploy would be refused the same way.` : `Tick ⏸ “pause validation rules” to have a real ▶ Deploy switch ${src.by} off while it writes.`;
+  }
+  if (/flow/.test(src.what)) {
+    const mine = (paused.flows || []).filter(f => !f.object || f.object === obj);
+    if (mine.length) return `⏸ A real ▶ Deploy pauses ${mine.length} record-triggered flow${mine.length === 1 ? '' : 's'} on ${obj} (${mine.slice(0, 4).map(f => f.label).join(', ')}${mine.length > 4 ? '…' : ''}). If this error comes from ${mine.length === 1 ? 'it' : 'one of them'}, the real run would not meet it — Salesforce does not say which flow raised it. A dry run switches nothing off.`;
+    return paused.flowsOn ? '' : `If a record-triggered flow raises this, ⏸ “pause record-triggered flows” would switch it off for a real ▶ Deploy.`;
+  }
+  return '';
+}
 // The target's active validation rules on an object, with their messages — one Tooling query, once per object and run.
 const _recRuleMsgs = new Map();   // `${orgUrl}|${obj}` → [{ name, message }] | null (could not be read)
 async function _recRulesFor(sess, obj) {
@@ -4986,6 +5002,10 @@ async function _recLogRefused(log, summary, probe, tgtSess) {
       log('  ✗', `${n} ${obj} ${probe ? 'would be refused' : (n === 1 ? 'was refused' : 'were refused')} by ${src.what}${src.by ? `: ${src.by}` : ''}`, 'ds-prog-err');
       log('     ', `Salesforce says${g.code ? ` (${g.code})` : ''}: “${why}”`, 'ds-prog-err');
       log('     ', `Record${n === 1 ? '' : 's'}: ${g.names.slice(0, 12).join(' · ')}${n > 12 ? ` · and ${n - 12} more (⬇ Report lists them all)` : ''}`, 'ds-prog-err');
+      // A dry run switches nothing off — so it meets the rules and flows the ⏸ panel would pause. Say which of its
+      // refusals a real run would NOT meet (owner 2026-11-13).
+      const note = probe ? sftkProbePauseNote(src, obj, window._sftkProbePaused) : '';
+      if (note) log('     ', note, 'ds-prog-note');
     }
   }
 }

@@ -763,9 +763,11 @@ async function renderDeploy() {
   sftkRecWireDupFix(document, p, scan);
   eid('dsRecRunBtn')?.addEventListener('click', () => _depRun(p, objType,
     { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }));
-  // 🧪 the same run in probe mode — straight to runReconcile: a dry run never pauses flows or rules
+  // 🧪 the same run in probe mode — straight to runReconcile: a dry run never pauses flows or rules. What the ⏸
+  // panel WOULD pause goes along by name, so the dry run can say which of its refusals a real run would not meet
+  // (owner 2026-11-13: ticked "pause validation rules", and the dry run still said the rule "blocked records creation").
   eid('dsRecProbeBtn')?.addEventListener('click', () => runReconcile(p, objType,
-    { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }, { probe: true }));
+    { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }, { probe: true, probePaused: _depProbePaused(p) }));
   _depFlowPauseWire(p);
   _depRulePauseWire(p);
   _depDupePauseWire(p);
@@ -2007,6 +2009,14 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
 // their lists together under the objects the deployment writes to. Unticked
 // keys live in _depPauseSkip for the page's life (sftk-pausepanel.js).
 let _depPauseSkip = new Set();
+// What a real run would pause right now, by name — for the dry run's notes only; nothing is switched.
+function _depProbePaused(p) {
+  const written = sftkDeployWrittenObjects(sftkDeployObjects(p.tree), _recSel, _recChildSel);
+  const vp = _depRulePause.on && _depRulePause.list ? sftkPauseKeep('rule', _depRulePause.list.rules || [], _depPauseSkip, written).act : [];
+  const fp = _depFlowPause.on && _depFlowPause.list ? sftkPauseKeep('flow', _depFlowPause.list.flows || [], _depPauseSkip, written).act : [];
+  return { rules: vp.map(r => ({ name: r.name, object: r.object })), flows: fp.map(f => ({ label: f.label || f.apiName, object: f.object })),
+    rulesOn: !!_depRulePause.on, flowsOn: !!_depFlowPause.on };
+}
 // the tab the panel shows — one per kind, only the kinds whose option is on (user 2026-11-08: "להראות פלואים רק אם
 // המשתמש בחר לעצור אוטומציות… ולעשות 3 טאבים עם פירוט מובן")
 let _depPauseTab = '';
