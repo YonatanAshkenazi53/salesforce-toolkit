@@ -2255,8 +2255,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           for (const [sf, tv] of Object.entries(valOv)) {
             if (node.fieldMappings && sf in node.fieldMappings && node.fieldMappings[sf] === null) continue;
             const tf = node.fieldMappings?.[sf] ?? sf;
+            // the rules are keyed by the field's own name (its case): the look-up used to lower-case the name and so never
+            // matched — a typed value replaced the masked one on that record (found by the PII review, 2026-11-13)
             if (tgtCreatable.size && !tgtCreatable.has(tf)) { skippedForTarget.add(tf); continue; }
-            if (piiRules && piiRules[String(sf).toLowerCase()]) { valOverridesMasked++; continue; }
+            if (piiRules && (piiRules[sf] || Object.keys(piiRules).some(k => k.toLowerCase() === String(sf).toLowerCase()))) { valOverridesMasked++; continue; }
             p[tf] = tv;
             valOverridesUsed++;
           }

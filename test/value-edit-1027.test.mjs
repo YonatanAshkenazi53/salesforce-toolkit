@@ -85,7 +85,7 @@ describe('the engine and the overwrite write them', () => {
     expect(i).toBeGreaterThan(0);
     expect(i).toBeLessThan(BG.indexOf('// 🪪 IDENTITY STAMP'));
     expect(i).toBeGreaterThan(BG.indexOf('if (wantOwners) {', BG.indexOf('const payloads = recs.map(')));
-    expect(BG).toContain("if (piiRules && piiRules[String(sf).toLowerCase()]) { valOverridesMasked++; continue; }");
+    expect(BG).toContain("if (piiRules && (piiRules[sf] || Object.keys(piiRules).some(k => k.toLowerCase() === String(sf).toLowerCase()))) { valOverridesMasked++; continue; }");
     expect(BG).toContain('if (tgtCreatable.size && !tgtCreatable.has(tf)) { skippedForTarget.add(tf); continue; }\n            if (piiRules');
     expect(BG).toContain('value(s) typed on the Deploy page were written in place of the source\'s.');
     expect(BG).toContain('typed value(s) were NOT written — the PII policy covers those fields and wins.');

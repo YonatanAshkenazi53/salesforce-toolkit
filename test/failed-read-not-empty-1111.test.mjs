@@ -68,3 +68,12 @@ describe('Quick nav offers Activity in both apps', () => {
     expect(P).toContain("label: 'Activity', desc: 'Everything the Toolkit and Data Studio did");
   });
 });
+
+// PII review 2026-11-13: a typed value on a field under the PII policy replaced the masked value (case-mismatched look-up)
+describe('a typed value never beats the PII mask', () => {
+  it('the engine looks the rule up by the field name whatever its case', () => {
+    const B = read('background.js');
+    expect(B).toContain("if (piiRules && (piiRules[sf] || Object.keys(piiRules).some(k => k.toLowerCase() === String(sf).toLowerCase()))) { valOverridesMasked++; continue; }");
+    expect(B).not.toContain("if (piiRules && piiRules[String(sf).toLowerCase()]) { valOverridesMasked++; continue; }");
+  });
+});
