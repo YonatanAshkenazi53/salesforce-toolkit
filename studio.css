@@ -6843,3 +6843,7 @@ a.sftk-feed-where { color: var(--brand, #1b6fd1); }
 /* the mark is the ragdoll in colour (owner 2026-11-13) — docs/logo/ragdoll.svg; not a masked icon any more */
 .ds-logo::before { background: url("icons/icon48.png") center / contain no-repeat; -webkit-mask: none; mask: none; width: 28px; height: 28px; }
 .ds-welcome-hero-icon::before { background: url("icons/icon128.png") center / contain no-repeat; -webkit-mask: none; mask: none; width: 64px; height: 64px; }
+/* a tick per object of the plan table: which ones 🔄 Rescan reads again (2026-11-13) */
+.ds-dep-rescan-pick { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--subtext); cursor: pointer; white-space: nowrap; }
+.ds-dep-rescan-pick input { margin: 0; }
+.ds-dep-rescan-pick:hover { color: var(--text); }

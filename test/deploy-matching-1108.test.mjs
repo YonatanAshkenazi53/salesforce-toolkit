@@ -38,7 +38,11 @@ describe('scan everything', () => {
   });
   it('🔄 Rescan all on "What the two orgs hold", and 🔄 Refresh state, read every object', () => {
     expect(DV).toContain('id="dsDepRescanAll"');
-    expect(DV).toContain("eid('dsDepRescanAll')?.addEventListener('click', () => _depRescan(p));");
+    // 2026-11-13: the one button reads every object, or only the ones ticked in the table
+    expect(DV).toContain("_depRescan(p, from.length ? { from } : undefined);");
+    expect(DV).toContain('class="ds-dep-rescan-cb" data-path="${esc(r.pathKey)}"');
+    expect(DV).toContain("return k ? `🔄 Rescan the ${k} selected` : `🔄 Rescan all ${total}`;");
+    expect(DV).not.toContain("'🔎 Rescan'");
     expect(DV).toContain("eid('dsDepRefresh')?.addEventListener('click', () => _depRescan(p));");
   });
   it('a changed key re-reads its object and that object\'s children; a parent\'s key, the objects that look it up', () => {

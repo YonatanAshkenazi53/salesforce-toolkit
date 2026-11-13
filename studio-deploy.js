@@ -577,7 +577,8 @@ async function renderDeploy() {
             <span class="ds-dep-sub">${r.depth ? `under ${esc(r.parentObj || '')}` : 'root'}</span></td>
           <td class="ds-dep-num">${r.src == null ? '' : r.src.toLocaleString()}</td><td class="ds-dep-num">${r.tgt == null ? '' : r.tgt.toLocaleString()}</td>
           ${cell(r, 'ins')}${cell(r, 'chg')}${cell(r, 'ext')}${r.depth ? cell(r, 'link') : '<td class="ds-dep-num ds-dep-muted"></td>'}${cell(r, 'same')}${cell(r, 'amb')}
-          <td>${r.depth ? `<button class="ds-btn ds-btn-xs" data-dep-scan="${esc(r.pathKey)}" title="${r.scanned ? 'Read this object again, under the records of the scan above' : 'This object has not been read against this target yet — its records are unknown, not zero'}">${r.scanned ? '🔎 Rescan' : '🔎 Scan'}</button>` : ''}</td>
+          ${''/* a row that is already read has no button of its own (owner 2026-11-13: "we dont need this button as we have the rescan all" · "what we will do is a rescan all and also there a way to select every object to rescan"): a tick per object, and ONE button — 🔄 Rescan all N, or 🔄 Rescan the K selected. An object not read yet keeps 🔎 Scan — its numbers are unknown, not zero. */}
+          <td class="ds-dep-rescan-td">${r.depth && !r.scanned ? `<button class="ds-btn ds-btn-xs" data-dep-scan="${esc(r.pathKey)}" title="This object has not been read against this target yet — its records are unknown, not zero">🔎 Scan</button>` : `<label class="ds-dep-rescan-pick" title="Tick to read ${esc(r.obj)} again with 🔄 Rescan — only the ticked objects are read (and the objects under them). Nothing ticked = every object."><input type="checkbox" class="ds-dep-rescan-cb" data-path="${esc(r.pathKey)}" ${_depRescanPick.has(r.pathKey) ? 'checked' : ''}><span>rescan</span></label>`}</td>
         </tr>`).join('')}
         ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same', 'amb'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
     </details>`;
@@ -585,7 +586,7 @@ async function renderDeploy() {
   // "זה נמצא במקום לא טוב … למעלה. באותו card מתחת between which orgs") — they were under the totals row.
   const actionsHtml = `<div class="ds-dep-orgs-acts">
       ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepPiiAll" title="Read the records this deployment inserts and suggest a PII treatment per field — each with a real example and the record it comes from; you tick what applies">🎭 Suggest PII treatment for all ${every.found.toLocaleString()} to insert</button> <span class="ds-dep-muted">${(() => { const n = Object.values(p.piiPolicy || {}).filter(Boolean).length; return n ? `${n} field${n === 1 ? ' is' : 's are'} masked now — ▸ record shows each value as it is written` : 'no field is masked yet'; })()}</span></div>` : ''}
-      <div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs${unscanned.length ? ' ds-btn-primary' : ''}" id="dsDepRescanAll" title="Read every object of this deployment in both orgs — the root and every child, read before or not, parents before their children. Nothing is changed.">${unscanned.length ? '🔎 Scan' : '🔄 Rescan'} all ${plan.length}</button> ${unscanned.length ? `<b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan before calling this pair in sync.` : '<span class="ds-dep-muted">every object, root and children, read again in both orgs</span>'}</div>
+      <div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs${unscanned.length ? ' ds-btn-primary' : ''}" id="dsDepRescanAll" title="Read every object of this deployment in both orgs — the root and every child, read before or not, parents before their children. Nothing is changed.">${_depRescanLabel(plan.length, unscanned.length)}</button> ${unscanned.length ? `<b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan before calling this pair in sync.` : '<span class="ds-dep-muted" id="dsDepRescanNote">' + _depRescanNote(plan.length) + '</span>'}</div>
       ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
     </div>`;
 
@@ -706,7 +707,19 @@ async function renderDeploy() {
     el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
   });
   document.querySelectorAll('.ds-dep-objbtn').forEach(b => b.addEventListener('click', () => { _depObjPath = b.dataset.depObj; _depTab = 'ins'; _depFilter = ''; renderDeploy(); }));
-  eid('dsDepRescanAll')?.addEventListener('click', () => _depRescan(p));
+  // 🔄 one button: every object, or only the ones ticked in the table (their children are read again with them)
+  eid('dsDepRescanAll')?.addEventListener('click', () => {
+    const from = [..._depRescanPick];
+    _depRescanPick = new Set();
+    _depRescan(p, from.length ? { from } : undefined);
+  });
+  document.querySelectorAll('.ds-dep-rescan-cb').forEach(cb => cb.addEventListener('change', () => {
+    if (cb.checked) _depRescanPick.add(cb.dataset.path); else _depRescanPick.delete(cb.dataset.path);
+    const n = document.querySelectorAll('.ds-dep-rescan-cb').length + document.querySelectorAll('[data-dep-scan]').length;
+    const b = eid('dsDepRescanAll'), note = eid('dsDepRescanNote');
+    if (b && !document.querySelector('[data-dep-scan]')) b.textContent = _depRescanLabel(n, 0);
+    if (note) note.textContent = _depRescanNote(n);
+  }));
   eid('dsDepPiiAll')?.addEventListener('click', () => {
     const byObj = {};
     for (const [k, ids] of Object.entries(sftkDeployEveryInsert(scan))) { const o = _depObjName(p, k); byObj[o] = [...new Set([...(byObj[o] || []), ...ids])]; }
@@ -1640,6 +1653,17 @@ function sftkDeployRescanKeys(tree, from) {
   return sftkDeployChildOrder(all.filter(k => from.some(f => f !== '' && (k === f || k.startsWith(f + '.')))));
 }
 let _depRescanBusy = 0;       // reads of both orgs in flight (the one after a run, the stale-run one, a refresh)
+// which objects the 🔄 button reads again — ticked in the table; empty = every object
+let _depRescanPick = new Set();
+function _depRescanLabel(total, unread) {
+  if (unread) return `🔎 Scan all ${total}`;
+  const k = _depRescanPick.size;
+  return k ? `🔄 Rescan the ${k} selected` : `🔄 Rescan all ${total}`;
+}
+function _depRescanNote(total) {
+  const k = _depRescanPick.size;
+  return k ? `only the ${k} ticked object${k === 1 ? '' : 's'} (and the objects under ${k === 1 ? 'it' : 'them'}) ${k === 1 ? 'is' : 'are'} read again in both orgs` : `every object, root and children, read again in both orgs — or tick “rescan” on the rows to read only some`;
+}
 async function _depRescan(p, opts) {
   const o = opts || {};
   _depRescanBusy++;

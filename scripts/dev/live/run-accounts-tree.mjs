@@ -33,7 +33,7 @@ export default async function (h) {
     h.log('scanning child', which);
     await h.waitFor(`(() => { const b = document.querySelector('[data-dep-scan="${which}"]'); return !b || !b.disabled; })()`, Number(process.env.SCAN_WAIT || 90000), 1000);
     await h.sleep(800);
-    const ok = await h.eval(`/Rescan/.test(document.querySelector('[data-dep-scan="${which}"]')?.textContent || '')`);
+    const ok = await h.eval(`(() => { const b = document.querySelector('[data-dep-scan="${which}"]'); return !b || /Rescan/.test(b.textContent || ''); })()`);   // a read row has no button since 2026-11-13
     if (!ok) { scanFailed.push(which); h.log('  scan FAILED for', which, '| toast:', (await h.eval(`[...document.querySelectorAll('.ds-toast')].map(t => t.innerText).join(' || ')`)).slice(0, 400)); }
   }
   h.log('children that could not be scanned:', JSON.stringify(scanFailed));
