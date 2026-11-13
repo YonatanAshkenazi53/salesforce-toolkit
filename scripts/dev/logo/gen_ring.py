@@ -76,7 +76,7 @@ def tail_arc(col, w):
     c = 2 * math.pi * RAD
     # flipped so the dash starts at the rear and runs BACKWARD along the circle
     return (f'<circle class="sftk-cat-tail" cx="32" cy="32" r="{f(RAD)}" fill="none" stroke="{col}" stroke-width="{w}" stroke-linecap="round" '
-            f'stroke-dasharray="14 {f(c)}" transform="rotate({f(A0 + 4 - 90)} 32 32) translate(0 64) scale(1 -1)"/>')
+            f'stroke-dasharray="21 {f(c)}" transform="rotate({f(A0 + 4 - 90)} 32 32) translate(0 64) scale(1 -1)"/>')
 
 
 add(tail_arc(E, '6.600'), 'the tail: a stroke along the circle from his rear backward — its length is animated: it stretches, then follows')

@@ -449,8 +449,8 @@
       '" viewBox="-11 -11 86 86" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
         '<g class="sftk-cat-ring"><g transform="translate(64 0) scale(-1 1)">' +
           // the tail: a stroke along the circle from his rear backward — its length is animated: it stretches, then follows
-          '<circle class="sftk-cat-tail" cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="6.600" stroke-linecap="round" stroke-dasharray="14 150.796" transform="rotate(26.000 32 32) translate(0 64) scale(1 -1)"/>' +
-          '<circle class="sftk-cat-tail" cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-point,#9B9EAC)" stroke-width="4.800" stroke-linecap="round" stroke-dasharray="14 150.796" transform="rotate(26.000 32 32) translate(0 64) scale(1 -1)"/>' +
+          '<circle class="sftk-cat-tail" cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="6.600" stroke-linecap="round" stroke-dasharray="21 150.796" transform="rotate(26.000 32 32) translate(0 64) scale(1 -1)"/>' +
+          '<circle class="sftk-cat-tail" cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-point,#9B9EAC)" stroke-width="4.800" stroke-linecap="round" stroke-dasharray="21 150.796" transform="rotate(26.000 32 32) translate(0 64) scale(1 -1)"/>' +
           // the back legs: two long bars stretched out behind him, a gap between them, blue-grey mittens
           '<path d="M49.946 42.486 L53.902 26.289" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="7.200" stroke-linecap="round" stroke-linejoin="round"/>' +
           '<path d="M49.946 42.486 L53.902 26.289" fill="none" stroke="var(--rag-coat,#F6F2EC)" stroke-width="5.400" stroke-linecap="round" stroke-linejoin="round"/>' +
