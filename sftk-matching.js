@@ -308,8 +308,12 @@ function sftkMatchKeyScore(res, extraCounts) {
     .concat(Array.isArray(extraCounts) ? extraCounts : [])
     .filter(Boolean);
   if (!sides.length) return null;
+  // An org with NO records of the object says nothing about the key (owner 2026-11-13: a key 100% filled and unique
+  // in the source read "Weak key 0/100" because the target was empty). Empty sides are left out; all empty → null.
+  const held = sides.filter(c => c && Number(c.total) > 0);
+  if (!held.length) return null;
   let min = 100;
-  for (const counts of sides) {
+  for (const counts of held) {
     const st = sftkKeyStats(counts);
     min = Math.min(min, Math.round(st.populatedPct * st.uniquePct / 100));
   }

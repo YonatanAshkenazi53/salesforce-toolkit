@@ -2330,8 +2330,12 @@ async function sftkAnalyzeMatchKey(objType, profile, srcFields, tgtFields, norma
 // many source records the target holds: a record the target does not hold yet is an insert, not a
 // mismatch. sides: [{ label, counts, err }].
 function _matchKeyVerdict(sides) {
-  const graded = (sides || []).filter(s => s && s.counts);
-  if (!graded.length) return null;
+  const read = (sides || []).filter(s => s && s.counts);
+  if (!read.length) return null;
+  // an org with no records of the object is not graded — it cannot make a key weak (owner 2026-11-13)
+  const graded = read.filter(s => Number(s.counts.total) > 0);
+  const empty = read.filter(s => !(Number(s.counts.total) > 0));
+  if (!graded.length) return { score: null, label: 'Not graded', cls: 'ds-diff-drift', why: 'neither org holds a record of this object yet' };
   let min = 101, why = '';
   for (const s of graded) {
     const st = sftkKeyStats(s.counts);
@@ -2341,6 +2345,7 @@ function _matchKeyVerdict(sides) {
       why = st.blank ? `${st.blank.toLocaleString()} blank in ${s.label}` : st.dupRecords ? `${st.dupRecords.toLocaleString()} share a key in ${s.label}` : '';
     }
   }
+  if (empty.length) why = `${why ? why + ' · ' : ''}graded on ${graded.map(s => s.label).join(' and ')} only — ${empty.map(s => s.label).join(' and ')} holds no record of this object yet`;
   return { score: min, label: min >= 90 ? 'Strong key' : min >= 70 ? 'Usable key' : 'Weak key', cls: min >= 90 ? 'ds-diff-sync' : min >= 70 ? 'ds-diff-drift' : 'ds-diff-missing', why };
 }
 function _matchGradeTable(sides) {
@@ -2348,7 +2353,7 @@ function _matchGradeTable(sides) {
   const cell = (s, fn) => (s.err || !s.counts) ? '' : fn(sftkKeyStats(s.counts), s.counts);
   const rows = [
     ['hold a value', (st, k) => `<strong>${n(st.populated)}</strong> of ${n(st.total)}${k.sampled ? ' <span class="ds-subtext" title="More than 2,000 records — the first 2,000 were read">(first 2,000)</span>' : ''}${st.blank ? ` · ${n(st.blank)} blank` : ''}`],
-    ['unique', (st) => `<strong>${st.uniquePct}%</strong>${st.dupRecords ? ` · ${n(st.dupRecords)} share a key` : ''}`],
+    ['unique', (st) => st.total > 0 ? `<strong>${st.uniquePct}%</strong>${st.dupRecords ? ` · ${n(st.dupRecords)} share a key` : ''}` : '<span class="ds-subtext">— no records yet</span>'],
   ];
   if (sides.some(s => s.counts && s.counts.tiers)) rows.push(['up to each field', (st, k) => k.tiers ? k.tiers.levels.map(l => `${esc(l.field)} <strong>${n(l.populated)}</strong>`).join(' · ') : '']);
   return `<table class="ds-match-grade-tbl"><thead><tr><th></th>${sides.map(s => `<th>${esc(s.label)}</th>`).join('')}</tr></thead><tbody>
@@ -2374,7 +2379,7 @@ function _matchSidesOf(res, profile, extras) {
 function _matchAnalysisHtml(res, profile, mini, extras) {
   const sides = _matchSidesOf(res, profile, extras);
   const v = _matchKeyVerdict(sides);
-  const head = `${v ? `<span class="ds-diff-chip ${v.cls}" title="How many records hold the key × how unique it is, on the weakest side">${esc(v.label)} ${v.score}/100</span>${v.why ? ` <span class="ds-subtext">${esc(v.why)}</span>` : ''}` : '<span class="ds-subtext">not graded — no org answered</span>'} <span class="ds-match-would">${_matchWouldHtml(res)}</span>`;
+  const head = `${v ? `<span class="ds-diff-chip ${v.cls}" title="How many records hold the key × how unique it is, on the weakest side">${esc(v.label)}${v.score == null ? '' : ` ${v.score}/100`}</span>${v.why ? ` <span class="ds-subtext">${esc(v.why)}</span>` : ''}` : '<span class="ds-subtext">not graded — no org answered</span>'} <span class="ds-match-would">${_matchWouldHtml(res)}</span>`;
   const table = _matchGradeTable(sides);
   if (mini) return `<details class="ds-match-grade ds-match-grade-fold"><summary>${head}</summary>${table}</details>`;
   return `<div class="ds-match-grade">${head}<div style="margin-top:6px">${table}</div></div>`;

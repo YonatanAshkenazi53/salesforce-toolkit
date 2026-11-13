@@ -849,3 +849,15 @@ describe('sftkFriendlyError — disclosures never wear the red ✗', () => {
     expect(fe('Step_Order__c: Required fields are missing: [Procedure_Definition__c]').kind).toBe('error');
   });
 });
+
+// 2026-11-13 (owner, on an empty target: "Weak key 0/100 … is it correct?") — an org with no records is not graded
+describe('sftkMatchKeyScore — an empty org cannot make a key weak', () => {
+  const { sftkMatchKeyScore } = extractFunctions('sftk-matching.js', ['sftkMatchKeyScore', 'sftkKeyStats']);
+  const counts = pairs => ({ keyCounts: new Map(pairs), total: pairs.reduce((n, p) => n + p[1], 0), blank: 0 });
+  const empty = { keyCounts: new Map(), total: 0, blank: 0 };
+  it('graded on the side that holds records', () => {
+    expect(sftkMatchKeyScore({ src: counts([['a', 1], ['b', 1], ['c', 1]]), tgt: empty })).toBe(100);
+    expect(sftkMatchKeyScore({ src: counts([['a', 2]]), tgt: empty })).toBe(0);
+  });
+  it('both empty → not scored', () => { expect(sftkMatchKeyScore({ src: empty, tgt: empty })).toBe(null); });
+});
