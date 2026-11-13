@@ -1067,6 +1067,9 @@ const CMD_VIEWS = [
   { i: 'chart',     label: 'Org health',       view: 'orghealth', desc: 'What needs attention in one org' },
   { i: 'flow',      label: 'Schema View',      view: 'schema',    desc: 'Flow & object graph' },
   { i: 'megaphone', label: "What's New",       view: 'whatsnew',  desc: 'Changelog — what shipped, per version' },
+  // Activity is a panel of the top bar, not a view — Quick nav opens it the way its button does (owner 2026-11-13:
+  // "activity is missing from quick nav")
+  { i: 'clock',     label: 'Activity',         view: '__activity', desc: 'Everything the Toolkit and Data Studio did, and when — history, undo, export' },
 ];
 
 // Toolkit (popup) features — selecting one opens/focuses the Toolkit
@@ -1221,6 +1224,7 @@ function openCommandPalette() {
 
   function navigateTo(view) {
     closePalette();
+    if (view === '__activity') { eid('sftkFeedBtn')?.click(); return; }
     navigateToView(view);   // U6: through the hash so Back/Forward work
   }
 

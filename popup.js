@@ -322,6 +322,7 @@ function openToolkitPalette() {
   const ITEMS = [
     ...HOME_FEATURES.map(f => ({ i: f.i, label: f.title, desc: f.desc, run: () => f.action() })),
     { i: 'home',  label: 'Home', desc: 'Back to the tool overview', run: () => renderHomePage() },
+    { i: 'clock', label: 'Activity', desc: 'Everything the Toolkit and Data Studio did, and when — history, undo, export', run: () => document.getElementById('sftkFeedBtn')?.click() },
     { i: 'globe', label: 'Open Data Studio', desc: 'Cross-org data compare, transfer & reconcile', run: () => document.getElementById('dataStudioBtn')?.click() },
   ];
 

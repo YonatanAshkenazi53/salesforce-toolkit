@@ -58,3 +58,13 @@ describe('counts-only mode strips every record id', () => {
     expect(C.slice(i, i + 900)).toContain('delete h.selected;');
   });
 });
+
+// 2026-11-13 (owner): "activity is missing from quick nav"
+describe('Quick nav offers Activity in both apps', () => {
+  it('Data Studio and the Toolkit', () => {
+    const C = read('studio-core.js'), P = read('popup.js');
+    expect(C).toContain("label: 'Activity',         view: '__activity'");
+    expect(C).toContain("if (view === '__activity') { eid('sftkFeedBtn')?.click(); return; }");
+    expect(P).toContain("label: 'Activity', desc: 'Everything the Toolkit and Data Studio did");
+  });
+});
