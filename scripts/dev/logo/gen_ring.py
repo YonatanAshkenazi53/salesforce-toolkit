@@ -60,7 +60,7 @@ def limb(x0, y0, x1, y1, w, tip):
     add(stroke(f'M{f(x1 + (x0 - x1) * tip)} {f(y1 + (y0 - y1) * tip)} L{f(x1)} {f(y1)}', P, f(w)))
 
 
-AH = A1 + 9                                                # where the head sits
+AH = A1 + 12                                               # where the head sits
 fwd_h, inward_h = frame(AH)
 hx, hy = pt(AH, RAD)
 fwd0, in0 = frame(A0)
@@ -106,13 +106,16 @@ for side in (1, -1):
     r = RAD + side * (HALF - 3.4)          # well inside the outline: a paw must never poke out of his side
     # the arm on the OUTSIDE of the curve runs on a bigger circle, so the same angle makes it longer — it is given a
     # shorter angle (owner 2026-11-14: "the bottom hand needs to be a bit shorter")
-    back = 31.5 if side == 1 else 43
+    back = 37.0 if side == 1 else 39.0
     add(arc(A1 - back, A1 - 14, r, SHADE, '5.400')); add(arc(A1 - back, A1 - 14, r, CO, '4'))
-    tip = 3.6 if side == 1 else 6.5
+    tip = 4.4 if side == 1 else 5.4
     add(arc(A1 - back - 0.5, A1 - back + tip, r, E, '5.400')); add(arc(A1 - back - 0.5, A1 - back + tip, r, P, '4'))
 
 # ── the head: big, over the front of the body, its top pointing ahead and inward, the face to the screen ──
-vx, vy = inward_h[0] * 0.62 + fwd_h[0] * 0.78, inward_h[1] * 0.62 + fwd_h[1] * 0.78
+# the head sits STRAIGHT on the body: its top points the way he flies (a slight lean inward), its chin back along the
+# body's middle line — so the two paws sit evenly at either side of the chin (owner 2026-11-14: "the head is not placed
+# correctly so it makes the front hands look weird")
+vx, vy = inward_h[0] * 0.14 + fwd_h[0] * 0.99, inward_h[1] * 0.14 + fwd_h[1] * 0.99
 theta = math.degrees(math.atan2(vx, -vy))
 head = (f'<g transform="translate({f(hx)} {f(hy)}) rotate({f(theta)}) scale(1.060)">'
         f'<path d="M-10 -2 L-10.500 -12.500 L-2 -7.500 Z M10 -2 L10.500 -12.500 L2 -7.500 Z" fill="{P}"/>'
