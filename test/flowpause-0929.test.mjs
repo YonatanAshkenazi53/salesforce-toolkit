@@ -98,7 +98,7 @@ describe('wired into the Deploy page and the run', () => {
   const DV = read('studio-deploy.js'), RC = read('studio-reconcile.js');
   it('an option, OFF by default — "or just deploy regularly with flows active"', () => {
     expect(DV).toContain("let _depFlowPause = { on: false, key: '', list: null, error: '' };");
-    expect(DV).toContain('<input type="checkbox" id="dsDepFlowPause" ${_depFlowPause.on ? \'checked\' : \'\'}> ⏸ pause record-triggered flows</label>');
+    expect(DV).toContain('<input type="checkbox" id="dsDepFlowPause" ${_depFlowPause.all ? \'checked\' : \'\'}> ⏸ pause record-triggered flows</label>');
     expect(DV).toContain('if (!fp) return _depReconcile(p, objType, buckets, { dupePause });');   // 2026-11-08: the duplicate-rule choice of the ⏸ panel rides along   // 2026-10-03: through the validation-rule wrapper, which is itself a no-op when that option is off
     expect(DV).toContain('if (!vp || !vp.rules.length) return runReconcile(p, objType, buckets, opts);');
   });

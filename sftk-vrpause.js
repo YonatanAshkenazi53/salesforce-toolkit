@@ -52,7 +52,7 @@ function sftkVrPauseSelect(rows) {
 // The active validation rules on `objects` in the org of `sess`, each with its
 // Metadata (needed to switch it). → { rules: [{ id, name, object, metadata }],
 // managed: [label], calls } or throws.
-async function sftkVrPauseList(sess, objects, send) {
+async function sftkVrPauseList(sess, objects, send, opts) {
   const bg = typeof send === 'function' ? send : sendBg;
   const objs = [...new Set((objects || []).filter(Boolean))];
   if (!objs.length) return { rules: [], managed: [], calls: 0 };
@@ -62,6 +62,9 @@ async function sftkVrPauseList(sess, objects, send) {
   if (!q || q.error) throw new Error(`the org's validation rules could not be listed (${(q && q.error) || 'no answer'})`);
   const { own, managed } = sftkVrPauseSelect(q.records || []);
   const rules = [];
+  // light: the names only, for the list on the page (2026-11-13: every automation is listed up front — one query,
+  // not one read per rule). The definitions are read by sftkVrPauseHydrate just before a switch.
+  if (opts && opts.light) return { rules: own.map(r => ({ ...r })), managed, calls, light: true };
   for (const r of own) {
     calls++;
     const rec = await bg({ type: 'SF_TOOLING_GET', orgUrl: sess.orgUrl, sid: sess.sid, sobject: 'ValidationRule', id: r.id, _suppressError: true });
@@ -69,6 +72,19 @@ async function sftkVrPauseList(sess, objects, send) {
     rules.push({ ...r, metadata: rec.Metadata });
   }
   return { rules, managed, calls };
+}
+
+// The definitions of rules listed light — read just before they are switched (nothing would bring a rule back
+// without its definition). Mutates and returns the rules; throws naming the first rule that could not be read.
+async function sftkVrPauseHydrate(sess, rules, send) {
+  const bg = typeof send === 'function' ? send : sendBg;
+  for (const r of (rules || [])) {
+    if (r.metadata) continue;
+    const rec = await bg({ type: 'SF_TOOLING_GET', orgUrl: sess.orgUrl, sid: sess.sid, sobject: 'ValidationRule', id: r.id, _suppressError: true });
+    if (!rec || rec.error || !rec.Metadata) throw new Error(`the definition of ${r.name} (${r.object}) could not be read (${(rec && rec.error) || 'no Metadata'}) — nothing would bring it back`);
+    r.metadata = rec.Metadata;
+  }
+  return rules;
 }
 
 async function _sftkVpMemory(mutate, orgKey) {
@@ -177,6 +193,7 @@ async function sftkVrPauseOn(sess, rules, send) {
 
 if (typeof window !== 'undefined') {
   window.sftkVrPauseList = sftkVrPauseList;
+  window.sftkVrPauseHydrate = sftkVrPauseHydrate;
   window.sftkVrPauseOff = sftkVrPauseOff;
   window.sftkVrPauseOn = sftkVrPauseOn;
   window.sftkVrPausedLeftovers = sftkVrPausedLeftovers;

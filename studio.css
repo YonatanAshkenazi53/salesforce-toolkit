@@ -6544,6 +6544,8 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-dep-pause-state-idle { color: var(--subtext); }
 .ds-dep-pause-off .ds-dep-pause-name { color: var(--subtext); font-weight: 400; }
 .ds-dep-pause-unwritten .ds-dep-pause-rows { opacity: .6; }
+.ds-dep-pause-kindhd { padding: 6px 10px 2px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--subtext); border-top: 1px solid var(--border-light, var(--border)); }
+.ds-dep-pause-objhd + .ds-dep-pause-kindhd { border-top: none; }
 .ds-dep-pause-empty { color: var(--subtext); padding: 2px 2px 0; font-size: 11.5px; }
 .ds-dep-pause-emptynames { opacity: .8; }
 @media (max-width: 900px) { .ds-dep-row { grid-template-columns: auto 1fr; } .ds-dep-mid, .ds-dep-tail { grid-column: 2; } }

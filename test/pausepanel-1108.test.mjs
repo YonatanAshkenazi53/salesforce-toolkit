@@ -117,14 +117,21 @@ describe('the wiring', () => {
   const DEP = read('studio-deploy.js'), REC = read('studio-reconcile.js'), BG = read('background.js');
   it('the Deploy page draws one panel for the three kinds and narrows every run by its ticks', () => {
     expect(DEP).toContain('<div id="dsDepPausePanel" class="ds-dep-foot"></div>');
-    // three tabs, one per kind whose option is on; every pane in the DOM, hidden when not chosen (2026-11-08)
-    expect(DEP).toContain("const active = kinds.filter(k => k.on);");
-    expect(DEP).toContain('class="ds-dep-pause-tab" data-tab="${t.kind}" aria-selected="${t.kind === _depPauseTab}"');
-    expect(DEP).toContain('<div class="ds-dep-pause-pane" data-pane="${t.kind}"${t.kind === _depPauseTab ? \'\' : \' hidden\'}>');
-    expect(DEP).toContain('No rule is switched off or changed. Untick an object to respect its rules as they are.');
+    // 2026-11-13: BY OBJECT, everything listed up front — no tabs, no "tick the option to see the list"
+    expect(DEP).not.toContain('ds-dep-pause-tab"');
+    expect(DEP).not.toContain("const active = kinds.filter(k => k.on);");
+    expect(DEP).toContain("${secs.map(({ k, items }) => `<div class=\"ds-dep-pause-kindhd\">${k.title}");
+    expect(DEP).toContain('Automation in ${esc(tgt)} on the objects of this deployment');
+    expect(DEP).toContain("if (!_depFlowPause.on || _depFlowPause.key !== key) load(); else paint();");
+    expect(DEP).toContain("if (!_depRulePause.on || _depRulePause.key !== key) load(); else paint();");
+    expect(DEP).toContain("sftkVrPauseList(sess, objects, undefined, { light: true })");
+    expect(DEP).toContain("try { await sftkVrPauseHydrate(sess, vp.rules); }");
+    // every item starts unticked; the box above ticks the whole kind
+    expect(DEP).toContain("if (f.scheduled || !_depFlowPause.all) _depPauseSkip.add(sftkPauseKey('flow', f));");
+    expect(DEP).toContain("if (!_depRulePause.all) _depPauseSkip.add(sftkPauseKey('rule', r));");
     expect(DEP).toContain('switched back on when the run ends — also when it fails or is cancelled.');
     // 2026-11-11: one row per item with what happens to it in words — never items side by side
-    expect(DEP).toContain('class="ds-dep-pause-row${x.on ? \'\' : \' ds-dep-pause-off\'}"');
+    expect(DEP).toContain('class="ds-dep-pause-row${ticked ? \'\' : \' ds-dep-pause-off\'}"');
     expect(DEP).toContain('⏸ Off during the run, back on after');
     expect(DEP).toContain('▶ Stays on');
     expect(DEP).not.toContain('ds-dep-pause-item');

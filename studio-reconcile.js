@@ -2539,7 +2539,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       const n = a.groupA.length + a.groupB.length + a.groupC.length;
       if (n) insLines.push(`${n} ${a.node.objectType || a.node.childSObject}${a.groupB.length ? ` (${a.groupB.length} under parents already in the target)` : ''}`);
     }
-    const pausesOn = (typeof _depFlowPause !== 'undefined' && _depFlowPause && _depFlowPause.on) || (typeof _depRulePause !== 'undefined' && _depRulePause && _depRulePause.on);
+    const pausesOn = typeof _depAnyPauseTicked === 'function' ? _depAnyPauseTicked() : false;   // something is ticked in the ⏸ panel
     const bodyHtml = `
       <div class="ds-rec-plan">
         <div class="ds-rec-plan-hdr">Checked — the real records, with every validation rule, trigger, flow and duplicate rule of ${esc(orgLabel(profile.targetOrg))}:</div>

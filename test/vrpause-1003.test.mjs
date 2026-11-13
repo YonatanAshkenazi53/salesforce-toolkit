@@ -111,7 +111,7 @@ describe('wired into the Deploy page and the run', () => {
   const DV = read('studio-deploy.js'), RC = read('studio-reconcile.js');
   it('an option, OFF by default, next to the flow option', () => {
     expect(DV).toContain("let _depRulePause = { on: false, key: '', list: null, error: '' };");
-    expect(DV).toContain('<input type="checkbox" id="dsDepRulePause" ${_depRulePause.on ? \'checked\' : \'\'}> ⏸ pause validation rules</label>');
+    expect(DV).toContain('<input type="checkbox" id="dsDepRulePause" ${_depRulePause.all ? \'checked\' : \'\'}> ⏸ pause validation rules</label>');
     expect(DV).toContain('if (!vp || !vp.rules.length) return runReconcile(p, objType, buckets, opts);');
     expect(DV).toContain('While they are off they are off for EVERY user of that org');
   });
