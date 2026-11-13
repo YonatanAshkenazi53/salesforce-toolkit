@@ -439,9 +439,54 @@
   //   'sad'   half-lidded + downturned mouth (errors)
   //   'sleep' closed eyes + Zzz (empty states — "nothing here yet")
   // Used by sftkCat()/sftkCatSm() and directly in empty/success/error states.
+  // The LOADING mood is the ragdoll chasing its tail (owner 2026-11-13: "an animation of circling ragdoll instead of
+  // this guy", with a ring-cat spinner as the reference for the idea — this drawing is our own): the long body is an
+  // open ring that turns, the head leads, the blue-grey tail follows. Colours are the logo's (docs/logo/ragdoll.svg).
+  // Ninja keeps the other moods — asleep on empty pages, happy, sad — and the tribute.
+  window.sftkRagdollRing = function (size) {
+    const s = size || 56;
+    return '<svg class="sftk-cat sftk-cat-load sftk-cat-ringcat" width="' + s + '" height="' + s +
+      '" viewBox="-11 -11 86 86" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+        '<g class="sftk-cat-ring"><g transform="translate(64 0) scale(-1 1)">' +
+          // the tail: a stroke along the circle from his rear backward — its length is animated: it stretches, then follows
+          '<circle class="sftk-cat-tail" cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="6.600" stroke-linecap="round" stroke-dasharray="14 150.796" transform="rotate(26.000 32 32) translate(0 64) scale(1 -1)"/>' +
+          '<circle class="sftk-cat-tail" cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-point,#9B9EAC)" stroke-width="4.800" stroke-linecap="round" stroke-dasharray="14 150.796" transform="rotate(26.000 32 32) translate(0 64) scale(1 -1)"/>' +
+          // the back legs: two long bars stretched out behind him, a gap between them, blue-grey mittens
+          '<path d="M49.946 42.486 L53.902 26.289" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="7.200" stroke-linecap="round" stroke-linejoin="round"/>' +
+          '<path d="M49.946 42.486 L53.902 26.289" fill="none" stroke="var(--rag-coat,#F6F2EC)" stroke-width="5.400" stroke-linecap="round" stroke-linejoin="round"/>' +
+          '<path d="M52.795 30.824 L53.902 26.289" fill="none" stroke="var(--rag-point,#9B9EAC)" stroke-width="5.400" stroke-linecap="round" stroke-linejoin="round"/>' +
+          '<path d="M56.311 45.058 L63.042 31.600" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="7.200" stroke-linecap="round" stroke-linejoin="round"/>' +
+          '<path d="M56.311 45.058 L63.042 31.600" fill="none" stroke="var(--rag-coat,#F6F2EC)" stroke-width="5.400" stroke-linecap="round" stroke-linejoin="round"/>' +
+          '<path d="M61.158 35.368 L63.042 31.600" fill="none" stroke="var(--rag-point,#9B9EAC)" stroke-width="5.400" stroke-linecap="round" stroke-linejoin="round"/>' +
+          // the body: thick and gently curved — an arc of the circle he flies round — belly up
+          '<circle cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="15.000" stroke-linecap="round" stroke-dasharray="35.186 115.611" transform="rotate(22.000 32 32)"/>' +
+          '<circle cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-coat,#F6F2EC)" stroke-width="13.200" stroke-linecap="round" stroke-dasharray="35.186 115.611" transform="rotate(22.000 32 32)"/>' +
+          // the warmer sides, the white belly down the middle, the white ruff on the chest
+          '<circle cx="32" cy="32" r="28.700" fill="none" stroke="var(--rag-shade,#E4DBCF)" stroke-width="2.200" stroke-linecap="round" stroke-dasharray="39.572 140.756" transform="rotate(25.000 32 32)"/>' +
+          '<circle cx="32" cy="32" r="19.300" fill="none" stroke="var(--rag-shade,#E4DBCF)" stroke-width="2.200" stroke-linecap="round" stroke-dasharray="26.611 94.654" transform="rotate(25.000 32 32)"/>' +
+          '<circle cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-white,#FFFFFF)" stroke-width="3.600" stroke-linecap="round" stroke-dasharray="20.106 130.690" transform="rotate(32.000 32 32)"/>' +
+          '<circle cx="32" cy="32" r="24.000" fill="none" stroke="var(--rag-white,#FFFFFF)" stroke-width="9.200" stroke-linecap="round" stroke-dasharray="4.189 146.608" transform="rotate(94.000 32 32)"/>' +
+          // the lines of the haunches
+          '<path d="M56.575 49.207 Q54.810 43.622 51.625 44.745 M46.745 42.324 Q51.072 42.141 48.912 43.408" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.650"/>' +
+          // the front paws: arms from the shoulders lying back along each side of the body, the mittens resting on his sides
+          '<circle cx="32" cy="32" r="27.200" fill="none" stroke="var(--rag-shade,#E4DBCF)" stroke-width="5.400" stroke-linecap="round" stroke-dasharray="8.308 162.595" transform="rotate(74.500 32 32)"/>' +
+          '<circle cx="32" cy="32" r="27.200" fill="none" stroke="var(--rag-coat,#F6F2EC)" stroke-width="4" stroke-linecap="round" stroke-dasharray="8.308 162.595" transform="rotate(74.500 32 32)"/>' +
+          '<circle cx="32" cy="32" r="27.200" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="5.400" stroke-linecap="round" stroke-dasharray="1.946 168.956" transform="rotate(74.000 32 32)"/>' +
+          '<circle cx="32" cy="32" r="27.200" fill="none" stroke="var(--rag-point,#9B9EAC)" stroke-width="4" stroke-linecap="round" stroke-dasharray="1.946 168.956" transform="rotate(74.000 32 32)"/>' +
+          '<circle cx="32" cy="32" r="20.800" fill="none" stroke="var(--rag-shade,#E4DBCF)" stroke-width="5.400" stroke-linecap="round" stroke-dasharray="10.528 120.162" transform="rotate(63.000 32 32)"/>' +
+          '<circle cx="32" cy="32" r="20.800" fill="none" stroke="var(--rag-coat,#F6F2EC)" stroke-width="4" stroke-linecap="round" stroke-dasharray="10.528 120.162" transform="rotate(63.000 32 32)"/>' +
+          '<circle cx="32" cy="32" r="20.800" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="5.400" stroke-linecap="round" stroke-dasharray="2.541 128.149" transform="rotate(62.500 32 32)"/>' +
+          '<circle cx="32" cy="32" r="20.800" fill="none" stroke="var(--rag-point,#9B9EAC)" stroke-width="4" stroke-linecap="round" stroke-dasharray="2.541 128.149" transform="rotate(62.500 32 32)"/>' +
+          // the head: the icon's face, looking at the screen — ears, the blaze and muzzle, blue eyes, whiskers
+          '<g transform="translate(21.857 53.751) rotate(-26.520) scale(1.060)"><path d="M-10 -2 L-10.500 -12.500 L-2 -7.500 Z M10 -2 L10.500 -12.500 L2 -7.500 Z" fill="var(--rag-point,#9B9EAC)"/><path d="M-8.300 -4.500 L-8.600 -9.800 L-4.300 -7.200 Z M8.300 -4.500 L8.600 -9.800 L4.300 -7.200 Z" fill="var(--rag-ear,#C7B5C6)"/><ellipse cx="0" cy="0.500" rx="11.200" ry="9.500" fill="var(--rag-edge,#8F92A0)"/><ellipse cx="0" cy="0.500" rx="10.400" ry="8.700" fill="var(--rag-coat,#F6F2EC)"/><path d="M-2.400 -8 L2.400 -8 L1.300 1 L-1.300 1 Z" fill="var(--rag-point,#9B9EAC)"/><ellipse cx="0" cy="4.200" rx="4" ry="3.300" fill="var(--rag-point,#9B9EAC)"/><circle cx="-5.200" cy="0" r="3" fill="var(--rag-eye,#7CC3F7)"/><circle cx="5.200" cy="0" r="3" fill="var(--rag-eye,#7CC3F7)"/><circle cx="-5" cy="0" r="1.400" fill="#0B2545" class="sftk-cat-eye"/><circle cx="5" cy="0" r="1.400" fill="#0B2545" class="sftk-cat-eye"/><circle cx="-4.300" cy="-0.800" r="0.600" fill="#FFFFFF"/><circle cx="5.700" cy="-0.800" r="0.600" fill="#FFFFFF"/><path d="M-1.400 3 h2.800 l-1.400 1.700 z" fill="#4A4D5C"/><path d="M0 4.700 v0.900 M0 5.600 q-1.300 1.300 -2.500 0.200 M0 5.600 q1.300 1.300 2.500 0.200" fill="none" stroke="#4A4D5C" stroke-width="0.700" stroke-linecap="round"/><path d="M-8.800 3.200 h-4.400 M-8.600 5.200 l-4.200 1.200 M8.800 3.200 h4.400 M8.600 5.200 l4.200 1.200" fill="none" stroke="var(--rag-edge,#8F92A0)" stroke-width="0.600" stroke-linecap="round"/></g>' +
+        '</g></g>' +
+      '</svg>';
+  };
   window.sftkCatSvg = function (mood, size) {
     mood = mood || 'load';
     const s = size || 56;
+    // drawn larger than Ninja was: the box holds the whole circle he flies round, so the cat is a part of it (owner 2026-11-14: "it needs to be bigger here")
+    if (mood === 'load') return window.sftkRagdollRing(Math.round(s * 2.1));
     const eyes =
       mood === 'happy' || mood === 'sleep'
         ? '<path d="M20 30 q4 4 8 0" fill="none" stroke="var(--cat-eye,#8F8A2B)" stroke-width="2.2" stroke-linecap="round"/>' +
