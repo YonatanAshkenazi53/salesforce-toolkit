@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata"><fullName>SFTK_PII_Note__c</fullName><externalId>false</externalId><label>SFTK PII Note</label><length>2000</length><visibleLines>4</visibleLines><trackFeedHistory>false</trackFeedHistory><type>LongTextArea</type></CustomField>
