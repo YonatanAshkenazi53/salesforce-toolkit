@@ -6837,3 +6837,7 @@ a.sftk-feed-where { color: var(--brand, #1b6fd1); }
 .ds-pii-prev-rec { font-size: 10.5px; color: var(--subtext); margin-left: 3px; }
 .ds-ve-pii { margin-top: 3px; font-size: 11px; color: var(--text); background: var(--c-warn-bg, #FFF6E5); border: 1px solid var(--c-warn-border, #F2D59B); border-radius: 5px; padding: 2px 6px; }
 .ds-ve-pii b { font-family: 'SF Mono', Consolas, monospace; font-weight: 600; }
+
+/* the mark is the ragdoll in colour (owner 2026-11-13) — docs/logo/ragdoll.svg; not a masked icon any more */
+.ds-logo::before { background: url("icons/icon48.png") center / contain no-repeat; -webkit-mask: none; mask: none; width: 28px; height: 28px; }
+.ds-welcome-hero-icon::before { background: url("icons/icon128.png") center / contain no-repeat; -webkit-mask: none; mask: none; width: 64px; height: 64px; }

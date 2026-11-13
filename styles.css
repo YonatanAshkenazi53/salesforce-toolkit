@@ -7327,3 +7327,8 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-xml-ed-note { color: var(--subtext); }
 .fc-xml-ed-raw { font-family: 'SF Mono', Consolas, monospace; font-size: 11px; display: block; margin-top: 3px; white-space: pre-wrap; }
 .fc-xml-edit-btn { margin-right: 4px; }
+
+/* the mark is the ragdoll in colour (owner 2026-11-13: "can we change the logo to a ragdoll" — docs/logo/ragdoll.svg,
+   drawn from the owner's blue-point); the tile is the icon's own, so the span carries no box of its own */
+.app-logo[data-i="cat"] { padding: 0; background: none; box-shadow: none; }
+.app-logo[data-i="cat"]::before { background: url("icons/icon48.png") center / contain no-repeat; -webkit-mask: none; mask: none; }
