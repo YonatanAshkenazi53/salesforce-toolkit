@@ -18,7 +18,7 @@ h2{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
 .sftk-cat{display:inline-block}
 .sftk-cat-ringcat .sftk-cat-ring{animation:sftk-cat-chase 1.7s cubic-bezier(.72,0,.28,1) infinite;transform-origin:32px 32px}
 @keyframes sftk-cat-chase{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}
-.sftk-cat-ringcat .sftk-cat-tail{animation:sftk-cat-tail 1.7s ease-in-out infinite}
-@keyframes sftk-cat-tail{0%,100%{stroke-dasharray:14 151}16%{stroke-dasharray:17 151}46%{stroke-dasharray:58 151}64%{stroke-dasharray:24 151}72%{stroke-dasharray:14 151}}
+.sftk-cat-ringcat .sftk-cat-tail{animation:sftk-cat-tail 1.7s linear infinite}
+@keyframes sftk-cat-tail{0%{stroke-dasharray:14.0 151}4%{stroke-dasharray:14.0 151}8%{stroke-dasharray:14.3 151}12%{stroke-dasharray:15.1 151}16%{stroke-dasharray:16.8 151}20%{stroke-dasharray:19.8 151}24%{stroke-dasharray:24.4 151}28%{stroke-dasharray:30.4 151}32%{stroke-dasharray:37.6 151}36%{stroke-dasharray:45.1 151}40%{stroke-dasharray:51.5 151}44%{stroke-dasharray:55.5 151}48%{stroke-dasharray:55.1 151}52%{stroke-dasharray:51.8 151}56%{stroke-dasharray:47.5 151}60%{stroke-dasharray:42.8 151}64%{stroke-dasharray:38.1 151}68%{stroke-dasharray:33.4 151}72%{stroke-dasharray:29.1 151}76%{stroke-dasharray:25.2 151}80%{stroke-dasharray:21.8 151}84%{stroke-dasharray:19.0 151}88%{stroke-dasharray:16.8 151}92%{stroke-dasharray:15.2 151}96%{stroke-dasharray:14.3 151}100%{stroke-dasharray:14.0 151}}
 @media (prefers-reduced-motion:reduce){.sftk-cat-ringcat .sftk-cat-ring{animation:none}}
 </style></head><body>${row('light', 'Light theme')}${row('dark', 'Dark theme')}</body></html>`);
