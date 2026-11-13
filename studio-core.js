@@ -605,6 +605,9 @@ function _historyStripCountsOnly(entries) {
   if (typeof sftkFcSweep === 'function') sftkFcSweep({ all: true }).catch(() => {});   // counts-only keeps no values: the runs' before/after lists go too
   for (const h of (entries || [])) {
     delete h.failedSourceIds;
+    // what was ticked, per tree path, is a list of record ids too (QA 2026-11-13: counts-only left them in storage —
+    // the price is that a stopped run cannot offer Continue in counts-only mode)
+    delete h.selected;
     if (h.summary) for (const obj of Object.values(h.summary)) {
       if (obj && typeof obj === 'object') {
         delete obj.targetRecords; delete obj.failedRecords; delete obj.failedSourceIds;

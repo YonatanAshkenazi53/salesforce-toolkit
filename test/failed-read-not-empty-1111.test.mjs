@@ -49,3 +49,12 @@ describe('Field Cleaner — a scan leg that fails is said', () => {
     expect(FC).toContain('could not be read in this scan');
   });
 });
+
+// QA 2026-11-13 (run-retry-rollback-history, live): counts-only mode left the ticked record ids of a run in storage
+describe('counts-only mode strips every record id', () => {
+  it('the ticked ids of a run go too', () => {
+    const C = read('studio-core.js');
+    const i = C.indexOf('function _historyStripCountsOnly(');
+    expect(C.slice(i, i + 900)).toContain('delete h.selected;');
+  });
+});
