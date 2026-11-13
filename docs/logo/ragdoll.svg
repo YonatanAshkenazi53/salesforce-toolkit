@@ -1,33 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <!-- Admin Toolkit for Salesforce — the mark: the owner's blue-point ragdoll (2026-11-13). A portrait, flat shapes,
-       readable at 16 px: cream-white coat, blue-grey ears and mask (up between the eyes), pale blue eyes, white ruff. -->
+  <!-- Admin Toolkit for Salesforce — the mark: the owner's blue-point ragdoll, as an ICON (2026-11-13: "make him
+       chubby … it has to look more icony"). Five flat shapes, no outline, no fur detail: a wide round face, two small
+       ears, the grey blaze-and-muzzle, two round blue eyes, a nose. Reads at 16 px. -->
   <defs><clipPath id="tile"><rect width="128" height="128" rx="26"/></clipPath></defs>
   <rect width="128" height="128" rx="26" fill="#0B2545"/>
   <g clip-path="url(#tile)">
-    <!-- ears: blue-grey, lilac inside, the long wisps -->
-    <path d="M20 60 14 10l40 22z" fill="#8A8C9A"/>
-    <path d="M108 60 114 10 74 32z" fill="#8A8C9A"/>
-    <path d="M27 48 24 24l20 12z" fill="#B9A8BA"/>
-    <path d="M101 48 104 24 84 36z" fill="#B9A8BA"/>
-    <path d="M16 13c-4-4-8-5-12-3M15 21c-5-1-9 1-12 5M112 13c4-4 8-5 12-3M113 21c5-1 9 1 12 5" fill="none" stroke="#EDE8E0" stroke-width="2.4" stroke-linecap="round"/>
-    <!-- ruff: the white bib, soft scallops, running off the tile -->
-    <path d="M6 132 14 100l8 6 4-14 10 8 6-12 10 9 12-11 12 11 10-9 6 12 10-8 4 14 8-6 8 32z" fill="#FFFFFF"/>
-    <path d="M40 112l6 7 6-7M58 114l6 7 6-7M76 112l6 7 6-7" fill="none" stroke="#DCD6CE" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <!-- head, with the cheek tufts -->
-    <path d="M64 24c25 0 43 15 43 36 0 5-1 9-3 13l9 6-12 4c-7 10-21 16-37 16s-30-6-37-16l-12-4 9-6c-2-4-3-8-3-13 0-21 18-36 43-36z" fill="#F4F0EA"/>
-    <!-- mask: a soft taupe round the eyes, the blue-grey from the muzzle up between them -->
-    <path d="M64 44c-8-6-22-6-29 2-6 7-4 18 4 23 7 4 16 3 21-2 1 8 2 13 4 13s3-5 4-13c5 5 14 6 21 2 8-5 10-16 4-23-7-8-21-8-29-2z" fill="#CFC8C8"/>
-    <path d="M50 27c4 9 8 22 10 40h8c2-18 6-31 10-40-4-2-9-3-14-3s-10 1-14 3z" fill="#A3A5B1"/>
-    <path d="M64 62c-8 0-14 6-14 13 0 8 6 14 14 14s14-6 14-14c0-7-6-13-14-13z" fill="#8F92A0"/>
-    <!-- eyes: pale ragdoll blue, slit pupils -->
-    <ellipse cx="43" cy="60" rx="9.5" ry="8.5" fill="#8CC8F5"/>
-    <ellipse cx="85" cy="60" rx="9.5" ry="8.5" fill="#8CC8F5"/>
-    <ellipse cx="43" cy="60" rx="2" ry="6.4" fill="#0B2545"/>
-    <ellipse cx="85" cy="60" rx="2" ry="6.4" fill="#0B2545"/>
-    <circle cx="47" cy="56.5" r="2.1" fill="#FFFFFF"/>
-    <circle cx="89" cy="56.5" r="2.1" fill="#FFFFFF"/>
-    <!-- nose and mouth -->
-    <path d="M57.5 70h13l-6.5 7z" fill="#4F5261"/>
-    <path d="M64 77v3m0 0c-2 3.500-6 3.500-8 .5m8-.5c2 3.500 6 3.500 8 .5" fill="none" stroke="#4F5261" stroke-width="1.8" stroke-linecap="round"/>
+    <!-- ears: small, rounded, set wide -->
+    <path d="M14 58c-3-16-1-30 4-40 2-4 6-4 9-1l26 22z" fill="#8F92A0"/>
+    <path d="M114 58c3-16 1-30-4-40-2-4-6-4-9-1L75 39z" fill="#8F92A0"/>
+    <path d="M24 46c-1-7 0-13 2-18l14 12z" fill="#C7B5C6"/>
+    <path d="M104 46c1-7 0-13-2-18L88 40z" fill="#C7B5C6"/>
+    <!-- the face: wide and round, cheeks past the ears, sitting low in the tile -->
+    <path d="M64 30c34 0 58 20 58 46 0 30-24 48-58 48S6 106 6 76c0-26 24-46 58-46z" fill="#F6F2EC"/>
+    <!-- the blue-point mask: one shape, a blaze from the forehead widening into the muzzle -->
+    <path d="M64 30c-4 0-7 .5-10 1.500 4 10 6 22 6 37-7 3-12 10-12 18 0 10 7 17 16 17s16-7 16-17c0-8-5-15-12-18 0-15 2-27 6-37-3-1-6-1.500-10-1.500z" fill="#9B9EAC"/>
+    <!-- eyes: round, ragdoll blue -->
+    <circle cx="39" cy="71" r="12" fill="#7CC3F7"/>
+    <circle cx="89" cy="71" r="12" fill="#7CC3F7"/>
+    <circle cx="40" cy="71" r="5.500" fill="#0B2545"/>
+    <circle cx="88" cy="71" r="5.500" fill="#0B2545"/>
+    <circle cx="43" cy="67.500" r="2.400" fill="#FFFFFF"/>
+    <circle cx="91" cy="67.500" r="2.400" fill="#FFFFFF"/>
+    <!-- nose and smile -->
+    <path d="M57 80c0-2 2-3 4-3h6c2 0 4 1 4 3 0 3-3.500 6-7 6s-7-3-7-6z" fill="#4A4D5C"/>
+    <path d="M56 92c2.500 3.500 5.500 3.500 8 0 2.500 3.500 5.500 3.500 8 0" fill="none" stroke="#4A4D5C" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 </svg>
