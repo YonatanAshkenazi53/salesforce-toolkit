@@ -1653,22 +1653,29 @@ function sftkDeployRescanKeys(tree, from) {
   return sftkDeployChildOrder(all.filter(k => from.some(f => f !== '' && (k === f || k.startsWith(f + '.')))));
 }
 let _depRescanBusy = 0;       // reads of both orgs in flight (the one after a run, the stale-run one, a refresh)
-// The page's own loader while both orgs are read (owner 2026-11-14: "live in both toolkit and data deployment instead of
-// the old cat" — a read only changed the text of a button). A card pinned at the bottom of the window: the flying
-// ragdoll, what is being read, how far. Shown by _depRescan and _depScanAll; a re-render of the page does not remove
-// it (it hangs on <body>), _depLoaderDone does.
-function _depLoader(text) {
-  let el = document.getElementById('dsDepLoader');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'dsDepLoader'; el.className = 'ds-dep-loader'; el.setAttribute('role', 'status');
-    el.innerHTML = `${window.sftkCatSvg ? window.sftkCatSvg('load', 34) : ''}<div class="ds-dep-loader-txt"></div>`;
-    document.body.appendChild(el);
-  }
-  const t = el.querySelector('.ds-dep-loader-txt');
-  if (t) t.textContent = text;
+// The page's own loader while both orgs are read — THE SAME ONE THE TOOLKIT SHOWS (owner 2026-11-14: "i want the same
+// animation on data deployment"): the flying ragdoll, the sentence, one segment per object and "Step 3 of 11 · Case ·
+// about 6 s left" (sftk-progress.js), in a card over the middle of the page. It hangs on <body>, so a re-render of the
+// page does not remove it; _depLoaderDone does.
+let _depLoad = null;   // { el, prog }
+function _depLoaderStart(p, names) {
+  _depLoaderDone();
+  const el = document.createElement('div');
+  el.id = 'dsDepLoader'; el.className = 'ds-dep-loader'; el.setAttribute('role', 'status');
+  const box = document.createElement('div'); box.className = 'ds-dep-loader-card'; el.appendChild(box);
+  document.body.appendChild(el);
+  const what = `Reading both orgs — ${orgLabel(p.sourceOrg)} and ${orgLabel(p.targetOrg)}…`;
+  let prog = null;
+  if (typeof sftkProgress === 'function') prog = sftkProgress(box, { what, key: 'deploy-read', orgUrl: p.targetOrg, legs: names.map((n, i) => ({ key: `o${i}`, label: n, weight: 1 })) });
+  else box.innerHTML = `${window.sftkCat ? sftkCat(esc(what)) : esc(what)}`;
+  _depLoad = { el, prog };
 }
-function _depLoaderDone() { document.getElementById('dsDepLoader')?.remove(); }
+function _depLoaderStep(i) { if (_depLoad && _depLoad.prog) _depLoad.prog.step(`o${i}`); }
+function _depLoaderDone() {
+  if (_depLoad && _depLoad.prog) { try { _depLoad.prog.done(); } catch (_) { /* the card goes either way */ } }
+  _depLoad = null;
+  document.getElementById('dsDepLoader')?.remove();
+}
 // which objects the 🔄 button reads again — ticked in the table; empty = every object
 let _depRescanPick = new Set();
 function _depRescanLabel(total, unread) {
@@ -1686,7 +1693,6 @@ async function _depRescan(p, opts) {
   try {
   const b = eid('dsDepRefresh') || eid('dsDepScan');
   if (b) { b.disabled = true; b.textContent = '⏳ reading both orgs…'; }
-  _depLoader(`Reading both orgs — ${_depObjName(p, '')}…`);
   // same reset the classic 🔄 does: a new scan invalidates every selection
   _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
   _recChildSel = {}; _depRetryNote = '';
@@ -1695,13 +1701,15 @@ async function _depRescan(p, opts) {
   // every child, not only the ones read before (a root refresh alone left the others "not counted yet");
   // a changed key re-reads its own object and that object's children — the root only when it is one of them
   const kids = sftkDeployRescanKeys(p.tree, o.from);
-  if (!Array.isArray(o.from) || o.from.includes('')) await window.refreshProfileState?.(p.id);
+  const withRoot = !Array.isArray(o.from) || o.from.includes('');
+  _depLoaderStart(p, [...(withRoot ? [_depObjName(p, '')] : []), ...kids.map(kk => _depObjName(p, kk))]);
+  if (withRoot) await window.refreshProfileState?.(p.id);
   const fp = _profiles.find(x => x.id === p.id) || p;
   const failed = [];
   for (let i = 0; i < kids.length; i++) {
     const bb = eid('dsDepRefresh') || eid('dsDepScan');
     if (bb) { bb.disabled = true; bb.textContent = `⏳ reading children ${i + 1}/${kids.length}…`; }
-    _depLoader(`Reading both orgs — ${_depObjName(fp, kids[i])} · ${i + 1} of ${kids.length}`);
+    _depLoaderStep(i + (withRoot ? 1 : 0));
     try { const res = await scanReconcileChild(fp, kids[i]); if (res?.error) failed.push(`${_depObjName(fp, kids[i])}: ${res.error}`); }
     catch (e) { failed.push(`${_depObjName(fp, kids[i])}: ${e?.message || e}`); }
   }
@@ -1723,7 +1731,8 @@ async function _depScanAll(p, keys) {
   const failed = [];
   for (let i = 0; i < order.length; i++) {
     if (b) { b.disabled = true; b.textContent = `⏳ ${i + 1}/${order.length} ${_depObjName(p, order[i])}…`; }
-    _depLoader(`Reading both orgs — ${_depObjName(p, order[i])} · ${i + 1} of ${order.length}`);
+    if (i === 0 && !_depLoad) _depLoaderStart(p, order.map(kk => _depObjName(p, kk)));
+    _depLoaderStep(i);
     try { const res = await scanReconcileChild(p, order[i]); if (res?.error) failed.push(`${_depObjName(p, order[i])}: ${res.error}`); }
     catch (e) { failed.push(`${_depObjName(p, order[i])}: ${e?.message || e}`); }
   }

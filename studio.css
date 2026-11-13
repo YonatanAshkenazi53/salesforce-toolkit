@@ -6847,7 +6847,8 @@ a.sftk-feed-where { color: var(--brand, #1b6fd1); }
 .ds-dep-rescan-pick { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--subtext); cursor: pointer; white-space: nowrap; }
 .ds-dep-rescan-pick input { margin: 0; }
 .ds-dep-rescan-pick:hover { color: var(--text); }
-/* the Deploy page's loader while both orgs are read: the flying ragdoll and what is being read, pinned low in the window (2026-11-14) */
-.ds-dep-loader { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 900; display: flex; align-items: center; gap: 12px; padding: 6px 20px 6px 10px; border-radius: 40px; background: var(--surface, #fff); color: var(--text); border: 1px solid var(--border); box-shadow: 0 8px 28px rgba(0,0,0,.22); font-size: 13px; font-weight: 600; pointer-events: none; }
-.ds-dep-loader .sftk-cat { flex: 0 0 auto; }
-.ds-dep-loader-txt { white-space: nowrap; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; }
+/* the Deploy page's loader while both orgs are read: the Toolkit's own loader (the flying ragdoll, the sentence, a segment per object, the time left) in a card over the middle of the page (2026-11-14) */
+.ds-dep-loader { position: fixed; inset: 0; z-index: 900; display: flex; align-items: center; justify-content: center; pointer-events: none; padding-left: 224px; }
+.ds-dep-loader-card { min-width: 440px; max-width: 640px; border-radius: 14px; background: var(--surface, #fff); color: var(--text); border: 1px solid var(--border); box-shadow: 0 14px 44px rgba(0,0,0,.28); }
+.ds-dep-loader-card .sftk-prog { padding: 22px 28px 20px; }
+.ds-dep-loader-card .sftk-prog-msg { color: var(--text); font-weight: 600; text-align: center; }

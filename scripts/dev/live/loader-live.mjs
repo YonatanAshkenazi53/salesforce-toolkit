@@ -35,7 +35,7 @@ export default async function (h) {
   const id = await h.eval("_profiles.find(p => p.name === 'SFTK CX — Accounts tree')?.id");
   if (DARK) await h.eval("(() => { if (typeof applyDarkMode === 'function') applyDarkMode(true); else document.documentElement.classList.add('ds-dark'); return true; })()");
   await h.eval(`window.runProfile(${JSON.stringify(id)})`);
-  await h.waitFor("!!document.querySelector('#dsDepLoader .sftk-cat-ringcat')", 60000, 100);
+  await h.waitFor("!!document.querySelector('#dsDepLoader .sftk-cat-ringcat')", 60000, 100); await h.sleep(900);
   h.log('data studio frames:', await burst(h, 'loader-ds', 36, "!!document.querySelector('#dsDepLoader')"));
   h.log('loader text seen:', await h.eval("document.querySelector('#dsDepLoader')?.innerText || '(gone — the read finished)'"));
   await h.waitFor("!document.querySelector('#dsDepLoader')", 400000, 1000);

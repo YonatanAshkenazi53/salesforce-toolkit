@@ -27,7 +27,10 @@ describe('what a re-read covers', () => {
     expect(F.sftkDeployRescanKeys(tree, [''])).toEqual([]);   // the root: its own re-read, no child dragged along
   });
   it('the root is read only when it is in the set (or no set is given)', () => {
-    expect(DV).toContain("if (!Array.isArray(o.from) || o.from.includes('')) await window.refreshProfileState?.(p.id);");
+    expect(DV).toContain("const withRoot = !Array.isArray(o.from) || o.from.includes('');");
+    expect(DV).toContain('if (withRoot) await window.refreshProfileState?.(p.id);');
+    // 2026-11-14: the read shows the Toolkit's own loader — a segment per object
+    expect(DV).toContain("_depLoaderStart(p, [...(withRoot ? [_depObjName(p, '')] : []), ...kids.map(kk => _depObjName(p, kk))]);");
   });
 });
 
