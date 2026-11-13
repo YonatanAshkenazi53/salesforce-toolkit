@@ -4592,7 +4592,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 @keyframes sftk-cat-chase { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
 /* the tail stretches out behind him through the sprint and catches up as he slows */
 .sftk-cat-ringcat .sftk-cat-tail { animation: sftk-cat-tail 1.7s ease-in-out infinite; }
-@keyframes sftk-cat-tail { 0%, 100% { stroke-dasharray: 11 151; } 22% { stroke-dasharray: 16 151; } 52% { stroke-dasharray: 46 151; } 78% { stroke-dasharray: 20 151; } }   /* back to the first timing: a longer tail was tried 2026-11-14 and made the stretch awkward */
+@keyframes sftk-cat-tail { 0%, 100% { stroke-dasharray: 14 151; } 16% { stroke-dasharray: 17 151; } 46% { stroke-dasharray: 58 151; } 64% { stroke-dasharray: 24 151; } 72% { stroke-dasharray: 14 151; } }   /* a little longer, and it has caught up BEFORE he slows (72%): a tail still shrinking while he stands almost still looked awkward (owner 2026-11-14) */
 @media (prefers-reduced-motion: reduce) { .sftk-cat-ringcat .sftk-cat-ring, .sftk-cat-ringcat .sftk-cat-tail { animation: none; } }
 @keyframes sftk-cat-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
 @keyframes sftk-cat-blink   { 0%,92%,100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }

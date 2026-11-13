@@ -19,6 +19,6 @@ h2{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
 .sftk-cat-ringcat .sftk-cat-ring{animation:sftk-cat-chase 1.7s cubic-bezier(.72,0,.28,1) infinite;transform-origin:32px 32px}
 @keyframes sftk-cat-chase{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}
 .sftk-cat-ringcat .sftk-cat-tail{animation:sftk-cat-tail 1.7s ease-in-out infinite}
-@keyframes sftk-cat-tail{0%,100%{stroke-dasharray:11 151}22%{stroke-dasharray:16 151}52%{stroke-dasharray:46 151}78%{stroke-dasharray:20 151}}
+@keyframes sftk-cat-tail{0%,100%{stroke-dasharray:14 151}16%{stroke-dasharray:17 151}46%{stroke-dasharray:58 151}64%{stroke-dasharray:24 151}72%{stroke-dasharray:14 151}}
 @media (prefers-reduced-motion:reduce){.sftk-cat-ringcat .sftk-cat-ring{animation:none}}
 </style></head><body>${row('light', 'Light theme')}${row('dark', 'Dark theme')}</body></html>`);
