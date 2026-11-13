@@ -1653,6 +1653,22 @@ function sftkDeployRescanKeys(tree, from) {
   return sftkDeployChildOrder(all.filter(k => from.some(f => f !== '' && (k === f || k.startsWith(f + '.')))));
 }
 let _depRescanBusy = 0;       // reads of both orgs in flight (the one after a run, the stale-run one, a refresh)
+// The page's own loader while both orgs are read (owner 2026-11-14: "live in both toolkit and data deployment instead of
+// the old cat" — a read only changed the text of a button). A card pinned at the bottom of the window: the flying
+// ragdoll, what is being read, how far. Shown by _depRescan and _depScanAll; a re-render of the page does not remove
+// it (it hangs on <body>), _depLoaderDone does.
+function _depLoader(text) {
+  let el = document.getElementById('dsDepLoader');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'dsDepLoader'; el.className = 'ds-dep-loader'; el.setAttribute('role', 'status');
+    el.innerHTML = `${window.sftkCatSvg ? window.sftkCatSvg('load', 34) : ''}<div class="ds-dep-loader-txt"></div>`;
+    document.body.appendChild(el);
+  }
+  const t = el.querySelector('.ds-dep-loader-txt');
+  if (t) t.textContent = text;
+}
+function _depLoaderDone() { document.getElementById('dsDepLoader')?.remove(); }
 // which objects the 🔄 button reads again — ticked in the table; empty = every object
 let _depRescanPick = new Set();
 function _depRescanLabel(total, unread) {
@@ -1670,6 +1686,7 @@ async function _depRescan(p, opts) {
   try {
   const b = eid('dsDepRefresh') || eid('dsDepScan');
   if (b) { b.disabled = true; b.textContent = '⏳ reading both orgs…'; }
+  _depLoader(`Reading both orgs — ${_depObjName(p, '')}…`);
   // same reset the classic 🔄 does: a new scan invalidates every selection
   _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
   _recChildSel = {}; _depRetryNote = '';
@@ -1684,11 +1701,12 @@ async function _depRescan(p, opts) {
   for (let i = 0; i < kids.length; i++) {
     const bb = eid('dsDepRefresh') || eid('dsDepScan');
     if (bb) { bb.disabled = true; bb.textContent = `⏳ reading children ${i + 1}/${kids.length}…`; }
+    _depLoader(`Reading both orgs — ${_depObjName(fp, kids[i])} · ${i + 1} of ${kids.length}`);
     try { const res = await scanReconcileChild(fp, kids[i]); if (res?.error) failed.push(`${_depObjName(fp, kids[i])}: ${res.error}`); }
     catch (e) { failed.push(`${_depObjName(fp, kids[i])}: ${e?.message || e}`); }
   }
   if (failed.length) showToast(`Child scan: ${failed.join(' · ')}`, 'error', 9000);
-  } finally { _depRescanBusy--; }
+  } finally { _depRescanBusy--; if (!_depRescanBusy) _depLoaderDone(); }
   if (_currentView === 'deploy') renderDeploy();
 }
 
@@ -1705,10 +1723,12 @@ async function _depScanAll(p, keys) {
   const failed = [];
   for (let i = 0; i < order.length; i++) {
     if (b) { b.disabled = true; b.textContent = `⏳ ${i + 1}/${order.length} ${_depObjName(p, order[i])}…`; }
+    _depLoader(`Reading both orgs — ${_depObjName(p, order[i])} · ${i + 1} of ${order.length}`);
     try { const res = await scanReconcileChild(p, order[i]); if (res?.error) failed.push(`${_depObjName(p, order[i])}: ${res.error}`); }
     catch (e) { failed.push(`${_depObjName(p, order[i])}: ${e?.message || e}`); }
   }
   if (failed.length) showToast(`Child scan: ${failed.join(' · ')}`, 'error', 9000);
+  if (!_depRescanBusy) _depLoaderDone();
   renderDeploy();
 }
 
