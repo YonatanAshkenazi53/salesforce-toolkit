@@ -78,3 +78,10 @@ describe('the full before/after list of a run', () => {
     expect(H).toContain("if (typeof _settings !== 'undefined' && _settings && _settings.countsOnly) return false;");
   });
 });
+
+describe('no storage left', () => {
+  it('the run says at once that the full before/after list was not saved', () => {
+    const RC2 = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
+    expect(RC2).toContain('could not be saved in this browser (no storage left). The run itself is not affected and can still be rolled back');
+  });
+});

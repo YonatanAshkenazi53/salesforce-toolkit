@@ -3525,6 +3525,8 @@ async function runReconcile(profile, objType, buckets, opts) {
       const saved = await sftkFcSave(runId, fc);
       const entry = _history[_history.length - 1];
       if (entry && entry.id === runId) { if (saved) entry.fieldChangesStored = fc.length; else entry.fieldChangesNotStored = fc.length; }
+      // said at once, not only in a later export (owner 2026-11-13: "what will the user see if he had no storage?")
+      if (!saved && !(typeof _settings !== 'undefined' && _settings && _settings.countsOnly)) log('⚠', `The before and after of ${fc.length.toLocaleString()} updated record(s) could not be saved in this browser (no storage left). The run itself is not affected and can still be rolled back; the History export will list the first 200 updated records per object only. Free space: History → 🧹 Clear cached org data, or a shorter "Keep N days".`, 'ds-prog-warn');
     }
   }
   await storageSaveHistory();
