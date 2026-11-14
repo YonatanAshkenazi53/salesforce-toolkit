@@ -6852,3 +6852,30 @@ a.sftk-feed-where { color: var(--brand, #1b6fd1); }
 .ds-dep-loader-card { min-width: 440px; max-width: 640px; border-radius: 14px; background: var(--surface, #fff); color: var(--text); border: 1px solid var(--border); box-shadow: 0 14px 44px rgba(0,0,0,.28); }
 .ds-dep-loader-card .sftk-prog { padding: 22px 28px 20px; }
 .ds-dep-loader-card .sftk-prog-msg { color: var(--text); font-weight: 600; text-align: center; }
+/* the run log, easier to read (2026-11-14): the ragdoll in the header while a run goes; one card per refusal reason; the verdict and the reasons at the top */
+.ds-prog-hdr { display: flex; align-items: center; gap: 8px; }
+.ds-prog-cat .sftk-cat { display: block; }
+.ds-prog-row.ds-prog-block { display: block; padding: 6px 14px; background: none; }
+.ds-refuse { border: 1px solid var(--border); border-left: 4px solid var(--danger); border-radius: 8px; padding: 9px 12px; background: var(--surface, #fff); color: var(--text); }
+.ds-refuse + .ds-refuse { margin-top: 8px; }
+.ds-refuse-hd { font-weight: 600; font-size: 13px; }
+.ds-refuse-n { color: var(--danger); font-weight: 700; margin-right: 2px; }
+.ds-refuse-msg { margin-top: 4px; font-size: 12.5px; color: var(--text); }
+.ds-refuse-code { font: 10.5px/1.5 ui-monospace, Consolas, monospace; color: var(--subtext); border: 1px solid var(--border); border-radius: 9px; padding: 0 7px; margin-left: 4px; white-space: nowrap; }
+.ds-refuse-recs { margin-top: 4px; font-size: 12px; color: var(--subtext); }
+.ds-refuse-note { margin-top: 6px; font-size: 12px; color: var(--c-warn-fg, #A85400); }
+.ds-prog-verdict { margin: 8px 12px 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface2, #f6f7f9); }
+.ds-prog-verdict-ok { border-left: 4px solid var(--success); }
+.ds-prog-verdict-warn { border-left: 4px solid var(--c-warn-fg, #A85400); }
+.ds-prog-verdict-bad { border-left: 4px solid var(--danger); }
+.ds-prog-verdict-hd { font-weight: 700; font-size: 14px; }
+.ds-prog-verdict-why { margin: 10px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--subtext); }
+.ds-prog-verdict-more { margin-top: 10px; font-size: 11.5px; color: var(--subtext); }
+/* the automation card folds like the other cards of the Deploy page (2026-11-14) */
+details.ds-dep-pause > summary.ds-dep-pause-hd { cursor: pointer; list-style: none; }
+details.ds-dep-pause > summary.ds-dep-pause-hd::-webkit-details-marker { display: none; }
+details.ds-dep-pause > summary.ds-dep-pause-hd::before { content: '▸'; display: inline-block; margin-right: 6px; color: var(--subtext); transition: transform .15s; }
+details.ds-dep-pause[open] > summary.ds-dep-pause-hd::before { transform: rotate(90deg); }
+details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
+.ds-prog-verdict .ds-prog-row.ds-prog-block { padding: 0; border: none; }
+.ds-prog-verdict .ds-prog-row.ds-prog-block + .ds-prog-row.ds-prog-block { margin-top: 8px; }

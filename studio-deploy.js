@@ -686,9 +686,9 @@ async function renderDeploy() {
       <span id="dsDepHardNote" class="ds-dep-hardnote" style="${_recDeleteMode === 'hard' ? '' : 'display:none'}">🔥 Hard-deleted records skip the Recycle Bin — <strong>↩ Roll back cannot bring them back</strong>. Only the Recycle Bin mode can be undone.</span>
       ${(() => { const n = sftkEngineNote(p); return n ? `<span id="dsDepEngineNote" class="ds-dep-enginenote${n.kind === 'warn' ? ' ds-dep-enginenote-warn' : ''}">${esc(n.text)}</span>` : ''; })()}
     </div>
-    <div id="dsDepPausePanel" class="ds-dep-foot"></div>
-    <div id="dsRecProgress" class="ds-rec-progress"></div></div>
-    ${_depLastRunLog ? `<details open class="ds-rec-card ds-dep-lastlog ds-dep-fold"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}`);
+    <div id="dsRecProgress" class="ds-rec-progress"></div>
+    ${_depLastRunLog ? `<details${_depFoldOpen('lastlog')} class="ds-rec-card ds-dep-lastlog ds-dep-fold" data-fold="lastlog"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}
+    <div id="dsDepPausePanel" class="ds-dep-foot"></div></div>`);
 
   if (liveLog) { const slot = eid('dsRecProgress'); if (slot && slot !== liveLog) slot.replaceWith(liveLog); }
   _depWireChrome(p);
@@ -801,7 +801,7 @@ window.sftkDeployIdentityChanged = function () { _depIdKey = ''; _depIdData = nu
 
 // ── folding sections (user 2026-10-17: "can we do the whole sections collapsable? the deployment tree,
 // deploy parents, worth reading") — <details> cards; what is folded is remembered in the settings ──
-const SFTK_DEP_FOLDS = ['info', 'plan', 'parents', 'notes', 'tree'];   // the two sections and the three cards inside About (2026-10-24: "minimize every card")
+const SFTK_DEP_FOLDS = ['info', 'plan', 'parents', 'notes', 'tree', 'pause', 'lastlog'];   // + the automation card and the last run's log (2026-11-14)   // the two sections and the three cards inside About (2026-10-24: "minimize every card")
 function _depFoldOpen(key, dflt = true) {
   const f = (typeof _settings === 'object' && _settings && _settings.deployFolds) || {};
   if (typeof f[key] === 'boolean') return f[key] ? ' open' : '';
@@ -2160,14 +2160,15 @@ function _depPausePaint(p) {
   const withItems = rows.filter(r => r.total > 0), without = rows.filter(r => !r.total).map(r => r.object);
   const reading = kinds.some(k => !k.st.list && !k.st.error);
   host.innerHTML = `
-    <div class="ds-dep-pause">
-      <div class="ds-dep-pause-hd"><span class="ds-dep-pause-title">⏸ Automation in ${esc(tgt)} on the objects of this deployment</span><span class="ds-dep-pause-sub">Tick what should be switched off while this run writes. Everything unticked stays on.</span></div>
+    <details class="ds-dep-pause ds-dep-fold" data-fold="pause"${_depFoldOpen('pause')}>
+      <summary class="ds-dep-pause-hd"><span class="ds-dep-pause-title">⏸ Automation in ${esc(tgt)} on the objects of this deployment</span><span class="ds-dep-pause-sub">Tick what should be switched off while this run writes. Everything unticked stays on.</span></summary>
       <details class="ds-dep-pause-why"><summary>A ticked flow or validation rule is switched off before the first write and back on when the run ends. <span class="ds-dep-pause-morelink">more</span></summary><div class="ds-dep-pause-whybody">They are switched back on when the run ends — also when it fails or is cancelled. A ⏰ scheduled flow that starts on one of these objects is listed too, unticked: it runs on its clock, not on a write. Duplicate rules are never switched off: with “Bypass” chosen, the writes on a ticked object carry the duplicate-rule header — a rule set to Alert lets the records through, a rule set to Block still blocks. Apex triggers are not listed and cannot be switched off from here. A 🧪 dry run switches nothing off; it says under each refusal what your ticks would change.</div></details>
       ${lines.map(x => `<div class="ds-dep-pause-line">${x}</div>`).join('')}
       ${withItems.map(card).join('')}
       ${!reading && !withItems.length && !lines.length ? `<div class="ds-dep-pause-empty">No active validation rule, record-triggered flow or duplicate rule on the objects of this deployment in ${esc(tgt)}.</div>` : ''}
       ${withItems.length && without.length ? `<div class="ds-dep-pause-empty" title="${esc(without.join(', '))}">No active automation of these kinds on the other ${without.length} object${without.length === 1 ? '' : 's'} <span class="ds-dep-pause-emptynames">(${esc(without.slice(0, 5).join(', '))}${without.length > 5 ? '…' : ''})</span></div>` : ''}
-    </div>`;
+    </details>`;
+  _depWireFolds(host);
   host.querySelectorAll('.ds-dep-pause-cb').forEach(cb => cb.addEventListener('change', () => {
     if (cb.checked) _depPauseSkip.delete(cb.dataset.key); else _depPauseSkip.add(cb.dataset.key);
     _depPausePaint(p);

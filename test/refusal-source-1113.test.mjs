@@ -59,3 +59,23 @@ describe('a dry run says which refusals the ⏸ pauses would remove', () => {
     expect(readFileSync(new URL('../studio-deploy.js', import.meta.url), 'utf8')).toContain('{ probe: true, probePaused: _depProbePaused(p) }');
   });
 });
+
+// 2026-11-14 (owner, on a dry run: "kinda hard to see whats going on and you need to scroll down", "i want the kitty there
+// when inserting", "this view should be displayed as part of the tab of the deploy and dry run", "make this card foldable
+// and make sure its remembered")
+describe('the run log, easier to read', () => {
+  const DEP = readFileSync(new URL('../studio-deploy.js', import.meta.url), 'utf8');
+  it('one card per refusal reason, moved to a verdict box at the top, the ragdoll in the header while it runs', () => {
+    expect(RC).toContain("log.html(card, 'ds-prog-refusal');");
+    expect(RC).toContain("const cards = [...prog.querySelectorAll('.ds-prog-refusal')];   // moved up, not copied");
+    expect(RC).toContain("window.sftkCatSvg('load', 26)");
+    expect(RC).toContain("prog.querySelector('.ds-prog-cat')?.remove();");
+  });
+  it('the log sits under the Dry run / Deploy buttons, above the automation card; both fold and are remembered', () => {
+    const a = DEP.indexOf('<div id="dsRecProgress" class="ds-rec-progress"></div>'), b = DEP.indexOf('<div id="dsDepPausePanel" class="ds-dep-foot"></div>');
+    expect(a).toBeGreaterThan(0);
+    expect(a).toBeLessThan(b);
+    expect(DEP).toContain(`<details class="ds-dep-pause ds-dep-fold" data-fold="pause"\${_depFoldOpen('pause')}>`);
+    expect(DEP).toContain("const SFTK_DEP_FOLDS = ['info', 'plan', 'parents', 'notes', 'tree', 'pause', 'lastlog'];");
+  });
+});

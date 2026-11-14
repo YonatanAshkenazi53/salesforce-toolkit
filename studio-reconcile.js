@@ -2708,7 +2708,19 @@ async function runReconcile(profile, objType, buckets, opts) {
     row.textContent = `${icon} ${msg}`;
     prog.appendChild(row);
   };
-  if (prog) prog.innerHTML = PROBE ? '<div class="ds-prog-hdr">🧪 Dry run — nothing is written</div>' : '<div class="ds-prog-hdr">Transfer progress</div>';
+  // a block of HTML (the refusal cards); the caller escapes what it puts in
+  log.html = (html, cls = '') => {
+    if (!prog) return;
+    const row = document.createElement('div');
+    row.className = `ds-prog-row ds-prog-block ${cls}`.trim();
+    row.innerHTML = html;
+    prog.appendChild(row);
+  };
+  // the flying ragdoll in the header while the run goes (owner 2026-11-14: "i want the kitty there when inserting"),
+  // and the log comes into view (owner 2026-11-14, on a dry run: "kinda hard to see whats going on and you need to scroll down")
+  const runCat = window.sftkCatSvg ? `<span class="ds-prog-cat">${window.sftkCatSvg('load', 26)}</span>` : '';
+  if (prog) prog.innerHTML = PROBE ? `<div class="ds-prog-hdr">${runCat}🧪 Dry run — nothing is written</div>` : `<div class="ds-prog-hdr">${runCat}Transfer progress</div>`;
+  try { prog?.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { /* a view without the log */ }
   const runBtn = eid('dsRecRunBtn'); if (runBtn) runBtn.disabled = true;
   // The Deploy page re-renders on every state change (a ring tile landing, a
   // tab switch) — while this flag is on it keeps the SAME #dsRecProgress node
@@ -3539,6 +3551,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         ? `${pt.would.toLocaleString()} of ${pt.probed.toLocaleString()} would be written — ${pt.refused ? `${pt.refused} refused` : ''}${pt.cascade ? `${pt.refused ? ', ' : ''}${pt.cascade} not checked (their parent would be refused)` : ''}${pt.unreached ? `${(pt.refused || pt.cascade) ? ', ' : ''}${pt.unreached} not reached` : ''}`
         : `every one of the ${pt.probed.toLocaleString()} record(s) would be written`;
     log(runStatus === 'success' ? '✅' : runStatus === 'partial' ? '⚠' : '❌', `🧪 Dry run complete: ${verdict}. Nothing was written${stoppedWhy ? ' — stopped before every object was checked' : ''}.`, runStatus === 'success' ? '' : 'ds-prog-err');
+    _recRunVerdictTop(prog, runStatus, `🧪 Dry run: ${verdict}. Nothing was written.`);
     window._sftkRunActive = false;
     eid('dsRunPauseBar')?.remove();
     showToast(`🧪 Dry run: ${verdict}`, runStatus === 'success' ? 'success' : runStatus === 'partial' ? 'warning' : 'error', 7000);
@@ -3550,6 +3563,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     return;
   }
   log(stoppedWhy ? '⏸' : '✅', stoppedWhy === 'pause' ? 'Paused — the records not reached are still to deploy; ▶ Continue from History.' : stoppedWhy === 'closed' ? 'Stopped — the page was closed mid-run; ▶ Continue from History.' : stoppedWhy ? 'Cancelled — refreshing state…' : `Transfer complete — refreshing state…`);
+  _recRunVerdictTop(prog, runStatus, null);
   window._sftkRunActive = false;
   eid('dsRunPauseBar')?.remove();
   // The run is in History from here on, and what follows still reads both orgs and then clears every selection. A
@@ -4981,6 +4995,25 @@ async function _recRulesFor(sess, obj) {
 }
 // Every refused record BY NAME, under what refused it. From the engine's summary: failedSourceIds = [{ id, label,
 // error, code }]. Per reason: what refused (its kind and name) · Salesforce's own code and words · the records.
+// At the end of a run: the ragdoll leaves the header, and — for a dry run, or a run with refusals — the verdict and the
+// refusal cards are repeated at the TOP of the log, which is brought into view (owner 2026-11-14: "you need to scroll
+// down"). The full log stays below it.
+function _recRunVerdictTop(prog, status, verdictText) {
+  if (!prog) return;
+  prog.querySelector('.ds-prog-cat')?.remove();
+  const cards = [...prog.querySelectorAll('.ds-prog-refusal')];   // moved up, not copied
+  if (!verdictText && !cards.length) return;
+  const hdr = prog.querySelector('.ds-prog-hdr');
+  const top = document.createElement('div');
+  top.className = `ds-prog-verdict ds-prog-verdict-${status === 'success' ? 'ok' : status === 'partial' ? 'warn' : 'bad'}`;
+  top.innerHTML = (verdictText ? `<div class="ds-prog-verdict-hd">${esc(verdictText)}</div>` : '')
+    + (cards.length ? `<div class="ds-prog-verdict-why">${cards.length === 1 ? 'Why:' : `Why — ${cards.length} reasons:`}</div>` : '');
+  for (const c of cards) top.appendChild(c);
+  const more = document.createElement('div'); more.className = 'ds-prog-verdict-more'; more.textContent = 'The full log of this run is below.';
+  top.appendChild(more);
+  if (hdr && hdr.nextSibling) prog.insertBefore(top, hdr.nextSibling); else prog.appendChild(top);
+  try { prog.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { /* a view without the log */ }
+}
 async function _recLogRefused(log, summary, probe, tgtSess) {
   for (const [obj, s] of Object.entries(summary || {})) {
     const list = (s && s.failedSourceIds) || [];
@@ -4999,13 +5032,24 @@ async function _recLogRefused(log, summary, probe, tgtSess) {
       _recRefusedShown.add(why);
       const src = sftkRefusalSource(g.code, why, rules === null ? undefined : rules);
       const n = g.names.length;
-      log('  ✗', `${n} ${obj} ${probe ? 'would be refused' : (n === 1 ? 'was refused' : 'were refused')} by ${src.what}${src.by ? `: ${src.by}` : ''}`, 'ds-prog-err');
-      log('     ', `Salesforce says${g.code ? ` (${g.code})` : ''}: “${why}”`, 'ds-prog-err');
-      log('     ', `Record${n === 1 ? '' : 's'}: ${g.names.slice(0, 12).join(' · ')}${n > 12 ? ` · and ${n - 12} more (⬇ Report lists them all)` : ''}`, 'ds-prog-err');
+      const head = `${n} ${obj} ${probe ? 'would be refused' : (n === 1 ? 'was refused' : 'were refused')} by ${src.what}${src.by ? `: ${src.by}` : ''}`;
       // A dry run switches nothing off — so it meets the rules and flows the ⏸ panel would pause. Say which of its
       // refusals a real run would NOT meet (owner 2026-11-13).
       const note = probe ? sftkProbePauseNote(src, obj, window._sftkProbePaused) : '';
-      if (note) log('     ', note, 'ds-prog-note');
+      const recs = `${g.names.slice(0, 12).join(' · ')}${n > 12 ? ` · and ${n - 12} more (⬇ Report lists them all)` : ''}`;
+      // ONE card per reason (owner 2026-11-14: "kinda hard to see whats going on") — it was four full-width red lines
+      if (typeof log.html === 'function') {
+        const card = `<div class="ds-refuse"><div class="ds-refuse-hd"><span class="ds-refuse-n">✗ ${esc(String(n))}</span> ${esc(head.replace(/^\d+ /, ''))}</div>`
+          + `<div class="ds-refuse-msg">“${esc(why)}”${g.code ? ` <span class="ds-refuse-code">${esc(g.code)}</span>` : ''}</div>`
+          + `<div class="ds-refuse-recs">${n === 1 ? 'Record' : 'Records'}: ${esc(recs)}</div>`
+          + (note ? `<div class="ds-refuse-note">${esc(note)}</div>` : '') + '</div>';
+        log.html(card, 'ds-prog-refusal');
+      } else {
+        log('  ✗', head, 'ds-prog-err');
+        log('     ', `Salesforce says${g.code ? ` (${g.code})` : ''}: “${why}”`, 'ds-prog-err');
+        log('     ', `Record${n === 1 ? '' : 's'}: ${recs}`, 'ds-prog-err');
+        if (note) log('     ', note, 'ds-prog-note');
+      }
     }
   }
 }
