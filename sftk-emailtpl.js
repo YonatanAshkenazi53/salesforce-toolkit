@@ -113,10 +113,22 @@ function _sftkTplForeign(text, at, objApi, vf) {
       'livechattranscript', 'livechatvisitor', 'messagingsession', 'messagingenduser', 'voicecall', 'callcenter',
       'dandbcompany', 'milestonetype', 'slaprocess', 'assignedresource', 'worktype', 'servicecrew', 'skill',
       'organization', 'network', 'community', 'idea', 'brandtemplate', 'emailtemplate', 'folder', 'document']);
+    // Parent is the same object on most (Account, Case, Campaign…), but Case on CaseComment / EmailMessage and any
+    // object on Attachment / Note / FeedItem (2026-11-14 review 3).
+    const PARENT = { casecomment: 'case', emailmessage: 'case', attachment: null, note: null, feeditem: null, feedcomment: null, entitysubscription: null, contentdocumentlink: null };
     for (const h of seg.slice(from)) {
-      if (h === 'parent' || h === 'masterrecord') continue;
-      cur = Object.prototype.hasOwnProperty.call(REL, h) ? REL[h] : SAME.has(h) ? h : null;
-      if (!cur) return 'unknown';
+      if (h === 'masterrecord') continue;
+      if (h === 'parent') {
+        if (Object.prototype.hasOwnProperty.call(PARENT, cur)) { cur = PARENT[cur]; if (!cur) return 'unknown'; }
+        continue;
+      }
+      if (Object.prototype.hasOwnProperty.call(REL, h)) { cur = REL[h]; continue; }
+      if (SAME.has(h)) { cur = h; continue; }
+      // A custom relationship (…__r) or a polymorphic What / Who cannot be told from the markup. Any other standard hop
+      // is a lookup named after its object (GiftCommitment, Program, ContentDocument, Territory2…) — taken as that
+      // object, as before review 3 closed the map and refused whole templates over it (2026-11-14 review 3).
+      if (/__r$/.test(h) || h === 'what' || h === 'who') return 'unknown';
+      cur = h;
     }
     return cur !== o;
   }

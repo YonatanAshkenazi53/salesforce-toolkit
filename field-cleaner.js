@@ -6315,7 +6315,7 @@ const FieldCleaner = (() => {
         // a swap renames what it can and drops a column whose renamed form was already on the type (a plain one or a
         // lookup path such as Parent.X) — both counts are said (review 2, 2026-11-14: a dropped Parent column went unsaid)
         if (swap && res.swapped) bits.push(`${res.swapped} column${res.swapped === 1 ? '' : 's'} now name${res.swapped === 1 ? 's' : ''} ${swapTo}`);
-        if (swap && res.dropped) bits.push(`${res.dropped === 1 ? 'an old column was' : `${res.dropped} old columns were`} removed instead — ${res.newAlreadyThere && !res.swapped ? `${swapTo} was already a column of the type` : 'the renamed column was already on the type'} (a column may appear once)`);
+        if (swap && res.dropped) bits.push(`${res.dropped === 1 ? 'an old column was' : `${res.dropped} old columns were`} removed instead — the column it would have become was already on the type (a column may appear once)`);
         if (!swap) bits.push(`${res.removed} column${res.removed === 1 ? '' : 's'} removed`);   // ✂ only: a swap returns no `removed` (review 3, 2026-11-14)
         if (res.emptied.length) bits.push(`section${res.emptied.length === 1 ? '' : 's'} ${res.emptied.map(l => `“${l}”`).join(', ')} held only that column and ${res.emptied.length === 1 ? 'was' : 'were'} removed too`);
         if (res.skipped.length) bits.push(`left alone: ${res.skipped.join('; ')} (another table’s field of the same name)`);

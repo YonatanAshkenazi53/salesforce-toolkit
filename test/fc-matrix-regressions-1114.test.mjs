@@ -337,10 +337,14 @@ describe('EmailTemplate — Visualforce: every standard relationship hop is foll
     expect(r.n).toBe(2);
     expect(r.rec.Markup).not.toMatch(/Region__c/);
   });
-  it('a hop not in the map is never guessed from its name: refused with the reason, nothing written', () => {
+  // review 3 reversed this: a standard hop not in the map is a lookup named for its object (as before review 2), so the
+  // Mystery mention is another object's and stays; only …__r / What / Who are refused
+  it('a standard hop not in the map is taken as its own object: left alone, the own mention still taken out', () => {
     const r = TP.sftkTplRemove({ Markup: vfm('relatedToType="Opportunity"', '{!relatedTo.Account.Region__c} {!relatedTo.Mystery.Region__c}') }, 'Region__c', 'Account');
-    expect(r).toMatchObject({ n: 0, rec: {} });
-    expect(r.refused).toMatch(/through “\{!relatedTo\.Mystery\.Region__c\}” — which object's field that is cannot be told/);
+    expect(r.refused).toBeUndefined();
+    expect(r.n).toBe(1);
+    expect(r.rec.Markup).toContain('{!relatedTo.Mystery.Region__c}');
+    expect(r.rec.Markup).not.toContain('relatedTo.Account.Region__c');
   });
 });
 
@@ -446,7 +450,7 @@ describe('ReportType ⇄ — a lookup path ending on the object is renamed, neve
     const fc = read('field-cleaner.js');
     const body = fc.slice(fc.indexOf('async function fixReportType('), fc.indexOf('async function fixReportType(') + 8000);
     expect(body).toMatch(/if \(swap && res\.dropped\) bits\.push\(/);
-    expect(body).toContain('the renamed column was already on the type');
+    expect(body).toContain('the column it would have become was already on the type');
   });
 });
 
@@ -472,5 +476,34 @@ describe('ReportType ⇄ — the success text of a plain rename states no remova
     const t = msg(true, M.sftkRtReplaceField(x, 'Account', 'Region__c', 'Area__c'), 'Area__c');
     expect(t).toMatch(/^1 column now names Area__c · an old column was removed instead/);
     expect(t).not.toMatch(/undefined/);
+  });
+});
+
+// review 3 (2026-11-14): an unmapped standard hop is its own object again (not a refusal of the whole template), and
+// Parent follows the object it is on (CaseComment / EmailMessage → Case; Attachment / Note → cannot be told)
+describe('email template — review 3', () => {
+  const vf = (type, body) => ({ Markup: `<messaging:emailTemplate relatedToType="${type}"><messaging:htmlEmailBody>${body}</messaging:htmlEmailBody></messaging:emailTemplate>` });
+  it('GiftTransaction: relatedTo.GiftCommitment.Amt__c is GiftCommitment\'s, left; the own mention renamed', () => {
+    const r = TP.sftkTplReplace(vf('GiftTransaction', '{!relatedTo.Amt__c} {!relatedTo.GiftCommitment.Amt__c}'), 'Amt__c', 'New__c', 'GiftTransaction');
+    expect(r.refused).toBeUndefined();
+    expect(r.rec.Markup).toContain('{!relatedTo.New__c} {!relatedTo.GiftCommitment.Amt__c}');
+  });
+  it('objApi GiftCommitment: the hop mention is renamed', () => {
+    const r = TP.sftkTplReplace(vf('GiftTransaction', '{!relatedTo.Amt__c} {!relatedTo.GiftCommitment.Amt__c}'), 'Amt__c', 'New__c', 'GiftCommitment');
+    expect(r.rec.Markup).toContain('{!relatedTo.Amt__c} {!relatedTo.GiftCommitment.New__c}');
+  });
+  it('a custom …__r hop still refuses', () => {
+    const r = TP.sftkTplReplace(vf('Account', '{!relatedTo.Thing__r.Amt__c}'), 'Amt__c', 'New__c', 'Account');
+    expect(r.refused).toMatch(/cannot be told/);
+  });
+  it('CaseComment.Parent is Case', () => {
+    const r = TP.sftkTplReplace(vf('CaseComment', '{!relatedTo.Parent.Amt__c}'), 'Amt__c', 'New__c', 'Case');
+    expect(r.rec.Markup).toContain('{!relatedTo.Parent.New__c}');
+    const s = TP.sftkTplReplace(vf('CaseComment', '{!relatedTo.Parent.Amt__c}'), 'Amt__c', 'New__c', 'CaseComment');
+    expect(s.n).toBe(0);
+  });
+  it('Account.Parent is Account; Attachment.Parent cannot be told', () => {
+    expect(TP.sftkTplReplace(vf('Account', '{!relatedTo.Parent.Amt__c}'), 'Amt__c', 'New__c', 'Account').rec.Markup).toContain('Parent.New__c');
+    expect(TP.sftkTplReplace(vf('Attachment', '{!relatedTo.Parent.Amt__c}'), 'Amt__c', 'New__c', 'Account').refused).toMatch(/cannot be told/);
   });
 });
