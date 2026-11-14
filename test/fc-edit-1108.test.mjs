@@ -134,7 +134,11 @@ describe('every kind of the demo field, ✂ and ⇄', () => {
   });
   it('a token swap never touches a longer name or another object’s same-named field path', () => {
     const t = M._sftkMdSwapToken('A__c + AA__c + X.A__c + Account.A__c + A__cx', 'Account', 'A__c', 'B__c');
-    expect(t).toEqual({ text: 'B__c + AA__c + X.A__c + Account.B__c + A__cx', n: 2, rel: 1 });   // rel: X.A__c, reached through a relationship and left alone (2026-11-14)
+    // X.A__c is left alone: an unmapped standard hop is a lookup named for its object (X ≠ Account), not a "cannot
+    // tell" — it was counted in rel and refused the whole edit as a custom lookup (2026-11-14 review 4)
+    expect(t).toEqual({ text: 'B__c + AA__c + X.A__c + Account.B__c + A__cx', n: 2, rel: 0 });
+    // a custom lookup is still counted in rel and never swapped
+    expect(M._sftkMdSwapToken('A__c + X__r.A__c', 'Account', 'A__c', 'B__c')).toEqual({ text: 'B__c + X__r.A__c', n: 1, rel: 1, kind: 'custom' });
   });
   it('the ways per kind; code and pages have none (🗑 or Setup)', () => {
     expect(M.sftkMdEditWays('WorkflowRule')).toEqual({ remove: true, replace: true });

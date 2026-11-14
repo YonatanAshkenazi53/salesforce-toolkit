@@ -68,8 +68,10 @@ function sftkTplNamesField(rec, objApi, fieldApi) {
 // User's, $Organization.X the Organization's, $Setup.Obj.X Obj's. What the markup alone cannot tell — a custom
 // relationship (…__r), a polymorphic What / Who, a relationship not in the map, any other variable (an <apex:repeat
 // var>), a type attribute that is missing — answers 'unknown'.
+// src: where relatedToType / recipientType are read (default: text) — a Visualforce template's Subject (or any other
+// text field of it) holds Visualforce merge syntax too, its types declared in the Markup (2026-11-14 review 4).
 //   → true (another object's), false (this object's), 'unknown' (vf only)
-function _sftkTplForeign(text, at, objApi, vf) {
+function _sftkTplForeign(text, at, objApi, vf, src) {
   const o = String(objApi || '').trim().toLowerCase();
   if (!o) return false;
   const before = text.slice(Math.max(0, at - 200), at);
@@ -77,7 +79,7 @@ function _sftkTplForeign(text, at, objApi, vf) {
     const q = /(?:^|[^A-Za-z0-9_.$])((?:[$A-Za-z_][A-Za-z0-9_]*\.)+)$/.exec(before);
     if (!q) return false;                                                   // a bare name: as before
     const seg = q[1].slice(0, -1).split('.').map(x => x.toLowerCase());
-    const attr = n => { const a = new RegExp(`\\b${n}\\s*=\\s*["']([A-Za-z0-9_]+)["']`, 'i').exec(text); return a ? a[1].toLowerCase() : null; };
+    const attr = n => { const a = new RegExp(`\\b${n}\\s*=\\s*["']([A-Za-z0-9_]+)["']`, 'i').exec(typeof src === 'string' ? src : text); return a ? a[1].toLowerCase() : null; };
     if (seg[0] === '$objecttype') return seg.length === 3 && seg[2] === 'fields' ? seg[1] !== o : 'unknown';
     // the other globals name their object, as _sftkMdSwapToken's whose() reads them (2026-11-14 review): $User.X is
     // User's, $Profile.X Profile's, $UserRole.X UserRole's, $Organization.X Organization's, $Setup.Obj.X Obj's;
@@ -151,12 +153,17 @@ function sftkTplReplace(rec, fieldApi, newField, objApi) {
   const out = {}, fields = [];
   let n = 0;
   if (!re || !nf) return { rec: out, n, fields };
+  // in a Visualforce template every text field (Subject too: "Case for {!relatedTo.X__c}") is read with the
+  // Visualforce rules, the types from the Markup — the classic rule took relatedTo for another object (2026-11-14 review 4)
+  const vfT = String((rec && rec.TemplateType) || '').toLowerCase() === 'visualforce';
+  const mk = rec && typeof rec.Markup === 'string' ? rec.Markup : '';
   for (const k of sftkTplTextFields()) {
     const v = rec && rec[k];
     if (typeof v !== 'string' || !v) continue;
     let c = 0, unk = null;
+    const vf = k === 'Markup' || vfT;
     const t = v.replace(re, (m, at, str) => {
-      const fo = objApi ? _sftkTplForeign(str, at, objApi, k === 'Markup') : false;
+      const fo = objApi ? _sftkTplForeign(str, at, objApi, vf, k === 'Markup' ? str : mk) : false;
       if (fo === 'unknown') { if (!unk) { const b = str.lastIndexOf('{', at); unk = str.slice(b < 0 ? at : b, at + m.length); } return m; }
       if (fo) return m;
       c++; return nf;
@@ -190,17 +197,21 @@ function sftkTplRemove(rec, fieldApi, objApi) {
   const attrRe = new RegExp(`=\\s*${bound}`, 'gi');
   const why = m => `the Visualforce markup reaches ${f} through “${m}” — which object's field that is cannot be told from the markup, so ✂ will not take it out; ✎ Edit the markup instead`;
   // the mentions in m (at its offset in str): 'own' if any is this object's field, else 'unknown' if any cannot be told, else 'foreign'
-  const owner = (m, at, str, vf) => {
+  // a Visualforce template's other text fields (Subject) are read with the Visualforce rules, the types from the
+  // Markup (2026-11-14 review 4); src is where those types are read
+  const vfT = String((rec && rec.TemplateType) || '').toLowerCase() === 'visualforce';
+  const mk = rec && typeof rec.Markup === 'string' ? rec.Markup : '';
+  const owner = (m, at, str, vf, src) => {
     if (!objApi) return 'own';
-    const ws = [...m.matchAll(word)].map(w => _sftkTplForeign(str, at + w.index, objApi, vf));
+    const ws = [...m.matchAll(word)].map(w => _sftkTplForeign(str, at + w.index, objApi, vf, src));
     return ws.includes(false) ? 'own' : ws.includes('unknown') ? 'unknown' : 'foreign';
   };
   for (const k of sftkTplTextFields()) {
     const v = rec && rec[k];
     if (typeof v !== 'string' || !v) continue;
-    const vf = k === 'Markup';
+    const vf = k === 'Markup' || vfT;
     let c = 0, t = v, unk = null;
-    if (vf) {
+    if (k === 'Markup') {                                                   // components live in the Markup only
       t = t.replace(cmpRe, (m, ...a) => { const at = a[a.length - 2], str = a[a.length - 1], w = owner(m, at, str, true); if (w === 'own') { c++; return ''; } if (w === 'unknown') unk = unk || m; return m; });
       if (unk) return { rec: {}, n: 0, fields: [], refused: why(unk) };
       for (const a of t.matchAll(attrRe)) {
@@ -210,7 +221,7 @@ function sftkTplRemove(rec, fieldApi, objApi) {
       }
     }
     t = t.replace(re, (m, at, str) => {
-      const w = owner(m, at, str, vf);
+      const w = owner(m, at, str, vf, k === 'Markup' ? str : mk);
       if (w === 'unknown') { unk = unk || m; return m; }
       if (w === 'foreign') return m;                                        // only another object's field named in it: left as it is
       c++; return '';

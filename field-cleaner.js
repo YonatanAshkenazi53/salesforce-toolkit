@@ -5583,14 +5583,27 @@ const FieldCleaner = (() => {
   function _flowLeftWhy(left) {
     const bits = [];
     for (const w of ((left && left.whole) || [])) {
+      // 2026-11-14 review: the decision outcome / formula / record-variable element that was left is named too.
+      if (w.why === 'outcome') { bits.push(`the field is the only condition of the outcome ${w.name} — taking it out would remove a path of the flow`); continue; }
+      if (w.why === 'outcomeLogic') { bits.push(`the field is in the outcome ${w.name}, whose numbered condition logic would point at a condition that is gone`); continue; }
+      if (w.why === 'formula') { bits.push(`the formula "${w.name}" names the field in an expression the auto-fix does not rewrite`); continue; }
+      if (w.why === 'input') { bits.push(`"${w.name}" works on a record variable whose object cannot be told from the flow, so it is not edited`); continue; }
       const what = w.start ? 'the trigger\'s entry condition (Start)' : `the filter of "${w.name}"`;
       bits.push(w.why === 'only'
         ? `the field is the only condition of ${what} — taking it out would make it act on every record`
         : `the field is in ${what}, whose numbered filter logic would point at a condition that is gone`);
     }
     if (left && left.other && left.other.length) bits.push(`${left.other.join(', ')} ${left.other.length === 1 ? 'is' : 'are'} another object's same-named field, left alone`);
-    if (left && left.unknown && left.unknown.length) bits.push(`${left.unknown.join(', ')} ${left.unknown.length === 1 ? 'reaches' : 'reach'} the field through a custom lookup — whose field it is cannot be told from the flow, so it is not edited`);
-    if (!bits.length) bits.push('the reference is in a path the auto-fix can\'t safely change (decision condition, formula expression, or variable default)');
+    // each untellable mention with its own reason (2026-11-14 review 4: every one was called "a custom lookup", false for
+    // a What / Who, a Parent that can be any object, or a resource the flow does not resolve)
+    if (left && left.unknown && left.unknown.length) {
+      const by = {};
+      for (const r of left.unknown) { const k = (left.unknownKind && left.unknownKind[r]) || ''; (by[k] = by[k] || []).push(r); }
+      const VIA = { custom: 'through a custom lookup', poly: 'through a What / Who or a Parent that can be any object',
+        root: 'from a resource whose object the flow does not tell', '': 'through a relationship whose object the flow does not tell' };
+      for (const k of Object.keys(by)) bits.push(`${by[k].join(', ')} ${by[k].length === 1 ? 'reaches' : 'reach'} the field ${VIA[k] || VIA['']} — whose field it is cannot be told from the flow, so it is not edited`);
+    }
+    if (!bits.length) bits.push('the reference is in a path the auto-fix can\'t safely change (a variable default, a text template, or another place it does not edit)');   // decisions / formulas are named above (2026-11-14)
     return bits.join('; ');
   }
 
@@ -5609,7 +5622,29 @@ const FieldCleaner = (() => {
     // or a root cannot be resolved, the reference is matched as before.
     const objL   = String(objApi).toLowerCase();
     const resObj = typeof sftkFlowResourceObjects === 'function' ? sftkFlowResourceObjects(metadata) : null;
-    const onObj  = el => !el || !el.object || String(el.object).toLowerCase() === objL;
+    // A Record Update / Create that works on a record variable (inputReference) carries no <object>: its object is
+    // the variable's (2026-11-14 review: { inputReference: 'con' } on a Contact variable passed the check and ✂
+    // Account.Region__c stripped Contact's Region__c). Resolved through the flow's own resources; when it cannot be
+    // resolved the element is left whole and named in the refusal ('input').
+    const inputObj = el => {
+      const root = String(el.inputReference).split('.')[0].toLowerCase();
+      if (resObj && resObj.get(root)) return String(resObj.get(root)).toLowerCase();
+      const v = (metadata.variables || []).find(x => x && String(x.name).toLowerCase() === root && x.objectType);
+      if (v) return String(v.objectType).toLowerCase();
+      if ((root === '$record' || root === '$record__prior') && metadata.start && metadata.start.object) return String(metadata.start.object).toLowerCase();
+      return null;
+    };
+    const onObj  = el => {
+      if (el && !el.object && el.inputReference) {
+        const o = inputObj(el);
+        if (o) return o === objL;
+        const named = [...(el.inputAssignments || []).map(a => a && a.field), ...(el.filters || []).map(f => f && f.field)]
+          .some(f => f != null && String(f).toLowerCase() === fl);
+        if (named) leftAlone.whole.push({ el, why: 'input' });
+        return false;
+      }
+      return !el || !el.object || String(el.object).toLowerCase() === objL;
+    };
 
     // A path longer than two segments travels through relationships ($Record.Owner.Region__c is User's field,
     // $Record.Parent.Region__c on Account is Account's): only the standard relationships whose object is fixed can be
@@ -5623,9 +5658,15 @@ const FieldCleaner = (() => {
       campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
       recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group' };
     const startObjL = metadata && metadata.start && metadata.start.object ? String(metadata.start.object).toLowerCase() : '';
-    const leftAlone = { other: new Set(), unknown: new Set(), whole: [] };   // what ✂ will not touch, and why
+    const leftAlone = { other: new Set(), unknown: new Map(), whole: [] };   // what ✂ will not touch, and why (unknown: ref → kind)
+    // Parent is the same object on most, Case on CaseComment / EmailMessage, any object on Attachment / Note / FeedItem —
+    // as sftk-mdapi.js _sftkMdSwapToken and sftk-emailtpl.js read it (2026-11-14 review 4)
+    const PARENT = { casecomment: 'case', emailmessage: 'case', attachment: null, note: null, feeditem: null, feedcomment: null, entitysubscription: null, contentdocumentlink: null };
+    const hasKey = (m, k) => Object.prototype.hasOwnProperty.call(m, k);
+    let unknownKind = null;   // why the last 'unknown' answer could not be told: 'custom' | 'poly' | 'root'
     // 'this' | 'other' | 'unknown' | null (not this field's name)
     function ownerOfRef(ref, asField) {
+      unknownKind = null;
       if (ref == null) return null;
       const parts = String(ref).toLowerCase().split('.');
       if (parts[parts.length - 1] !== fl) return null;
@@ -5637,16 +5678,28 @@ const FieldCleaner = (() => {
         if (cur) return cur === objL ? 'this' : 'other';
         return 'this';   // a two-segment path on a root the metadata does not resolve: matched as before
       }
-      if (!cur) return 'unknown';
+      if (!cur) { unknownKind = 'root'; return 'unknown'; }
+      // 2026-11-14 review 4: a standard hop missing from REL (Asset, Entitlement, ServiceContract, Individual…) is a
+      // lookup named for its object, as _sftkMdSwapToken / _sftkTplForeign take it. It used to answer 'unknown', so ✂
+      // left $Record.Entitlement.Region__c in a Case flow while cleaning Entitlement.Region__c and called it "a custom
+      // lookup", which was false. Only a custom …__r, a What / Who, or a Parent that can be any object stay untellable.
       for (const seg of rels) {
-        cur = (seg === 'parent' || seg === 'masterrecord') ? cur : (REL[seg] || null);
-        if (!cur) return 'unknown';
+        if (seg === 'masterrecord') continue;
+        if (seg === 'parent') {
+          if (hasKey(PARENT, cur)) { cur = PARENT[cur]; if (!cur) { unknownKind = 'poly'; return 'unknown'; } }
+          continue;
+        }
+        if (hasKey(REL, seg)) { cur = REL[seg]; continue; }
+        if (/__r$/.test(seg)) { unknownKind = 'custom'; return 'unknown'; }
+        if (seg === 'what' || seg === 'who') { unknownKind = 'poly'; return 'unknown'; }
+        cur = seg;
       }
       return cur === objL ? 'this' : 'other';
     }
     function refMatches(ref, asField) {
       const who = ownerOfRef(ref, asField);
-      if (who === 'other' || who === 'unknown') leftAlone[who].add(String(ref));
+      if (who === 'other') leftAlone.other.add(String(ref));
+      else if (who === 'unknown') leftAlone.unknown.set(String(ref), unknownKind);
       return who === 'this';
     }
     const fieldMatches = f => refMatches(f, true);
@@ -5766,8 +5819,15 @@ const FieldCleaner = (() => {
       for (const rule of (el.rules || [])) {
         if (!Array.isArray(rule.conditions)) continue;
         const hit = rule.conditions.filter(condIsRef).length;
-        if (!hit || hit === rule.conditions.length) continue;
-        if (!/^(and|or)$/i.test(String(rule.conditionLogic || 'and').trim())) continue;
+        // An outcome left as it is goes into leftAlone, so the refusal names it (2026-11-14 review: only the
+        // foreign mentions were named, and the outcome that really kept the field in the flow was not).
+        const outName = `"${rule.label || rule.name}" of the decision "${el.label || el.name}"`;
+        if (!hit) continue;
+        if (hit === rule.conditions.length) {
+          if (!(opts && opts.dropOutcomes)) leftAlone.whole.push({ name: outName, why: 'outcome' });
+          continue;
+        }
+        if (!/^(and|or)$/i.test(String(rule.conditionLogic || 'and').trim())) { leftAlone.whole.push({ name: outName, why: 'outcomeLogic' }); continue; }
         rule.conditions = rule.conditions.filter(c => !condIsRef(c));
         changes += hit;
       }
@@ -5810,10 +5870,20 @@ const FieldCleaner = (() => {
     // ── formulas — a Boolean formula loses the conditions that use the field (the validation rule's engine,
     // sftkFormulaDropField), when what is left still tests something. Any other formula is left to the user.
     const fTok = new RegExp(`(^|[^A-Za-z0-9_])${fieldApi.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i');
+    // Whose field each {!merge field} names is judged as everywhere else in this function (2026-11-14 review 4): the bare
+    // token test dropped {!con.Region__c} (con a Contact variable) on ✂ of Account.Region__c, and named a formula that
+    // held only Contact's field as one that "names the field". A formula with no mention of THIS field is left as it
+    // is; its other / untellable mentions are recorded for the refusal like any other reference.
+    // \s* (not a literal s*): a resource named selectedCon lost its first letter and a {! $Record.X } with spaces was
+    // not read at all (2026-11-14 review 4 round 3).
+    const mergeRefs = t => [...String(t).matchAll(/{!\s*([$A-Za-z0-9_.]+)\s*}/g)].map(m => m[1]);
     for (const el of (metadata.formulas || [])) {
-      if (String(el.dataType || '') !== 'Boolean' || typeof el.expression !== 'string' || !fTok.test(el.expression)) continue;
-      const d = typeof sftkFormulaDropField === 'function' ? sftkFormulaDropField(el.expression, objApi, fieldApi, t => fTok.test(t)) : { mode: 'none' };
-      if (d.mode !== 'operand') continue;
+      if (typeof el.expression !== 'string' || !fTok.test(el.expression)) continue;
+      if (!mergeRefs(el.expression).filter(r => refMatches(r, false)).length) continue;
+      // A formula not rewritten is named in the refusal (2026-11-14 review), as one that names THIS field.
+      const d = String(el.dataType || '') === 'Boolean' && typeof sftkFormulaDropField === 'function'
+        ? sftkFormulaDropField(el.expression, objApi, fieldApi, t => mergeRefs(t).some(r => ownerOfRef(r, false) === 'this')) : { mode: 'none' };
+      if (d.mode !== 'operand') { leftAlone.whole.push({ name: el.label || el.name || '', why: 'formula' }); continue; }
       el.expression = d.text;
       changes += d.n;
     }
@@ -5824,8 +5894,8 @@ const FieldCleaner = (() => {
     // What was left alone and why, for the refusal text when nothing could be taken out (2026-11-14 review: a
     // trigger's only entry condition was reported as "a decision condition, formula expression, or variable default").
     removeFieldRefs.lastLeft = {
-      other: [...leftAlone.other], unknown: [...leftAlone.unknown],
-      whole: leftAlone.whole.map(w => ({ start: w.el === metadata.start, name: (w.el && (w.el.label || w.el.name)) || '', why: w.why })),
+      other: [...leftAlone.other], unknown: [...leftAlone.unknown.keys()], unknownKind: Object.fromEntries(leftAlone.unknown),
+      whole: leftAlone.whole.map(w => ({ start: !!w.el && w.el === metadata.start, name: w.name || (w.el && (w.el.label || w.el.name)) || '', why: w.why })),
     };
 
     return changes;
@@ -6967,14 +7037,21 @@ const FieldCleaner = (() => {
     const swap = _swapOn();
     const swapTo = swap ? _replField.api : '';
     const sw = swap ? sftkFlexiReplaceField(metadata, _selObj.api, _selField.api, swapTo) : null;
-    const leftRm = { other: 0, unknown: 0 };   // ✂: mentions of another object's / an untellable object's same-named field
+    const leftRm = { other: 0, unknown: 0, unknownKinds: {} };   // ✂: mentions of another object's / an untellable object's same-named field
+    // the untellable mentions, each kind with its own true reason (2026-11-14 review 4: all were called "a custom lookup")
+    const unknownBits = () => Object.entries(leftRm.unknownKinds).filter(([, n]) => n).map(([k, n]) => {
+      const s = n === 1 ? '' : 's';
+      if (k === 'custom') return `⚠ ${n} mention${s} through a custom lookup left alone — whose field it is cannot be told from the page; check it in App Builder`;
+      if (k === 'poly') return `⚠ ${n} mention${s} through a What / Who or a Parent that can be any object left alone — whose field it is cannot be told from the page; check it in App Builder`;
+      return `⚠ ${n} mention${s} from a merge field whose object the page does not tell left alone — check it in App Builder`;
+    });
     const changes = swap ? sw.swapped + sw.dropped : removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api, leftRm);
     if (changes === 0) {
       throw new Error(
         `No direct field references found in "${componentName}". ` +
         (swap && sw.left ? `${sw.left} mention(s) reach the field through a related record, which is another object's field and is left alone. ` : '') +
         (!swap && leftRm.other ? `${leftRm.other} mention(s) reach a related record's same-named field (another object's field) and are left alone. ` : '') +
-        (!swap && leftRm.unknown ? `${leftRm.unknown} mention(s) reach the field through a custom lookup — which object's field that is cannot be told from the page, so it is not edited. ` : '') +
+        (!swap && leftRm.unknown ? `${unknownBits().map(b => b.replace(/^⚠ /, '')).join('; ')}. ` : '') +
         `The dependency may be inside a custom component — ${swap ? 'change it' : 'remove'} manually in App Builder.`
       );
     }
@@ -7021,7 +7098,7 @@ const FieldCleaner = (() => {
       if (leftRm.other || leftRm.unknown) {
         const bits = [`${changes} place${changes === 1 ? '' : 's'} removed`];
         if (leftRm.other) bits.push(`⚠ ${leftRm.other} mention${leftRm.other === 1 ? '' : 's'} of a related record's same-named field left alone (another object's field)`);
-        if (leftRm.unknown) bits.push(`⚠ ${leftRm.unknown} mention${leftRm.unknown === 1 ? '' : 's'} through a custom lookup left alone — whose field it is cannot be told from the page; check it in App Builder`);
+        if (leftRm.unknown) bits.push(...unknownBits());
         return `✅ Page updated · ${bits.join(' · ')} — verified by re-reading the org`;
       }
     } finally {
@@ -7053,6 +7130,11 @@ const FieldCleaner = (() => {
     const obj = objApi.toLowerCase();
     const tally = out && typeof out === 'object' ? out : {};
     tally.other = tally.other || 0; tally.unknown = tally.unknown || 0;
+    // why each untellable mention could not be told, counted by kind in tally.unknownKinds: 'custom' | 'poly' | 'root'
+    // (2026-11-14 review 4) — added only when there is one, so a tally with none keeps its { other, unknown } shape
+    const PARENT = { casecomment: 'case', emailmessage: 'case', attachment: null, note: null, feeditem: null, feedcomment: null, entitysubscription: null, contentdocumentlink: null };
+    const hasKey = (m, k) => Object.prototype.hasOwnProperty.call(m, k);
+    let unknownKind = null;
     // standard relationships whose object is fixed (kept in step with sftk-mdapi.js sftkRtEdit's map);
     // Parent / MasterRecord are self-lookups — the page record's own object.
     const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
@@ -7066,6 +7148,7 @@ const FieldCleaner = (() => {
     // ".Field" ending took another object's criteria out; matching only Record.Field then missed the
     // self-lookup and $User forms that DO name this field (2026-11-14 review).
     function ownerOf(str) {
+      unknownKind = null;
       if (str == null) return null;
       const segs = String(str).toLowerCase().trim()
         .replace(/^\{!/, '').replace(/\}$/, '').trim().split('.'); // strip {! ... } merge syntax
@@ -7075,17 +7158,27 @@ const FieldCleaner = (() => {
       let cur;
       if (root === 'record' || root === 'objectrecord' || root === '$record' || root === obj) cur = obj;
       else if (root === '$user') cur = 'user';
-      else return 'unknown';
+      else { unknownKind = 'root'; return 'unknown'; }
+      // 2026-11-14 review 4: a standard hop missing from REL ({!Record.Asset.Region__c}, Entitlement…) is a lookup named
+      // for its object, as _sftkMdSwapToken / _sftkTplForeign take it — it used to be tallied 'unknown' and reported as
+      // "a custom lookup", which was false. Only a custom …__r, a What / Who, or a Parent that can be any object stay so.
       for (const seg of segs) {
-        cur = (seg === 'parent' || seg === 'masterrecord') ? cur : (REL[seg] || null);
-        if (!cur) return 'unknown';
+        if (seg === 'masterrecord') continue;
+        if (seg === 'parent') {
+          if (hasKey(PARENT, cur)) { cur = PARENT[cur]; if (!cur) { unknownKind = 'poly'; return 'unknown'; } }
+          continue;
+        }
+        if (hasKey(REL, seg)) { cur = REL[seg]; continue; }
+        if (/__r$/.test(seg)) { unknownKind = 'custom'; return 'unknown'; }
+        if (seg === 'what' || seg === 'who') { unknownKind = 'poly'; return 'unknown'; }
+        cur = seg;
       }
       return cur === obj ? 'this' : 'other';
     }
     function refMatches(str) {
       const who = ownerOf(str);
       if (who === 'other') tally.other++;
-      else if (who === 'unknown') tally.unknown++;
+      else if (who === 'unknown') { tally.unknown++; const k = tally.unknownKinds = tally.unknownKinds || {}; k[unknownKind] = (k[unknownKind] || 0) + 1; }
       return who === 'this';
     }
 
