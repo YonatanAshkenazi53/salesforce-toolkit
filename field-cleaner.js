@@ -1347,8 +1347,51 @@ const FieldCleaner = (() => {
     const root = eid('fcResults');
     if (el && !_everyRunning) el.outerHTML = _fixEveryHtml(Math.max(_openPairs(root), _walkPairs(root)), _openPairs(root, true), _walkPairs(root));
   }
+  // WHAT THE WALK COVERS (owner 2026-11-14: "if we find also components that might break, we need to ask the user what
+  // to remove — all the essentials for the field deletion, or also those who might break"). Counted from the rows on
+  // the page: the 🔒 groups (Salesforce refuses the delete while they name the field) and the 👀 ones (the delete goes
+  // through; they lose the field afterwards). When there are 👀 items the walk would act on, the user chooses.
+  //   → 'must' | 'all' | null (cancelled)
+  function _everyCount(sev, swap) {
+    let n = 0;
+    document.querySelectorAll(`#fcResults .fc-group[data-sev="${sev}"]`).forEach(g => { n += swap ? _openPairs(g, true) : _walkPairs(g); });
+    return n;
+  }
+  function _everyScopeAsk(swap) {
+    const nMust = _everyCount('must', swap), nLater = _everyCount('later', swap);
+    if (!nLater) return Promise.resolve('must');
+    if (typeof showModal !== 'function') return Promise.resolve(window.confirm(`Also ${swap ? 'replace the field in' : 'remove the field from'} the ${nLater} item(s) that only might break? OK = yes, Cancel = only the ${nMust} that block the delete.`) ? 'all' : 'must');
+    const verb = swap ? 'Replace' : 'Remove';
+    return new Promise(resolve => {
+      let done = false;
+      const finish = v => { if (done) return; done = true; try { closeModal(); } catch (_) { /* gone */ } resolve(v); };
+      showModal(`
+        <div class="modal-header"><h3>${swap ? '⇄' : '✂'} ${verb} all — which ones?</h3></div>
+        <div class="fc-scope-ask">
+          <p>The list holds two kinds of places for <code>${esc(_selField ? _selField.api : '')}</code>:</p>
+          <ul>
+            <li><b>🔒 ${nMust} that block the delete</b> — Salesforce refuses to delete the field while they name it.</li>
+            <li><b>👀 ${nLater} that might break</b> — the delete goes through; afterwards they lose the field (a list view loses a column, a report a filter…).</li>
+          </ul>
+          <p class="fc-scope-hint">Each item still asks before it changes anything, with a restore point. Cancel in any of those dialogs stops the walk.</p>
+        </div>
+        <div class="modal-footer fc-scope-btns">
+          <button class="btn btn-secondary btn-sm" id="fcScopeCancel">Cancel</button>
+          <button class="btn btn-secondary btn-sm" id="fcScopeMust"${nMust ? '' : ' disabled title="Nothing blocks the delete"'}>Only the ${nMust} that block the delete</button>
+          <button class="btn btn-primary btn-sm" id="fcScopeAll">All ${nMust + nLater} — also the ${nLater} that might break</button>
+        </div>`);
+      document.getElementById('fcScopeCancel')?.addEventListener('click', () => finish(null));
+      document.getElementById('fcScopeMust')?.addEventListener('click', () => finish('must'));
+      document.getElementById('fcScopeAll')?.addEventListener('click', () => finish('all'));
+      const ov = document.getElementById('modalOverlay');
+      const obs = ov && new MutationObserver(() => { if (ov.style.display === 'none') { obs.disconnect(); finish(null); } });
+      if (obs) obs.observe(ov, { attributes: true, attributeFilter: ['style'] });
+    });
+  }
   async function fixEverything(fieldId, swap) {
     if (_everyRunning || _fixSwap !== null) return;
+    const scope = await _everyScopeAsk(swap);
+    if (!scope) return;
     _everyRunning = true;
     _everyNote = '';
     eid('fcFixEvery')?.querySelectorAll('button').forEach(b => { b.disabled = true; });
@@ -1356,6 +1399,7 @@ const FieldCleaner = (() => {
     try {
       for (const type of Object.keys(_groups)) {
         const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
+        if (scope === 'must' && cfg.sev !== 'blocker') continue;   // the user chose only what blocks the delete
         let way = '';
         if (!cfg.fixable) {
           // a blocker with a way inside it (2026-11-08): ⇄ for every kind that has it (code too), ✂ where the kind can

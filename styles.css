@@ -7339,3 +7339,9 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
    drawn from the owner's blue-point); the tile is the icon's own, so the span carries no box of its own */
 .app-logo[data-i="cat"] { padding: 0; background: none; box-shadow: none; }
 .app-logo[data-i="cat"]::before { background: url("icons/icon48.png") center / contain no-repeat; -webkit-mask: none; mask: none; }
+/* ⚡ Remove / Replace all — which ones (2026-11-14) */
+.fc-scope-ask { padding: 4px 18px 6px; font-size: 13px; line-height: 1.55; }
+.fc-scope-ask ul { margin: 6px 0 10px; padding-left: 20px; }
+.fc-scope-ask li { margin: 4px 0; }
+.fc-scope-hint { color: var(--subtext); font-size: 12px; }
+.fc-scope-btns { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }

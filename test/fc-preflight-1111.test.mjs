@@ -28,3 +28,17 @@ describe('the pre-check', () => {
     expect(ok.changed).toBe(true);
   });
 });
+
+// 2026-11-14 (owner): "if we find also components that might break, we need to ask the user what to remove — all the
+// essentials for the field deletion, or also those who might break"
+describe('⚡ Remove / Replace all asks which ones', () => {
+  const FC2 = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8');
+  it('counts the 🔒 and 👀 groups, asks only when there are 👀 items, and the walk skips 👀 kinds on "only the blockers"', () => {
+    expect(FC2).toContain('if (!nLater) return Promise.resolve(\'must\');');
+    expect(FC2).toContain('Only the ${nMust} that block the delete');
+    expect(FC2).toContain('All ${nMust + nLater} — also the ${nLater} that might break');
+    expect(FC2).toContain("if (scope === 'must' && cfg.sev !== 'blocker') continue;");
+    const i = FC2.indexOf('async function fixEverything('), j = FC2.indexOf('_everyRunning = true;', i);
+    expect(FC2.slice(i, j)).toContain('const scope = await _everyScopeAsk(swap);');
+  });
+});
