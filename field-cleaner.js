@@ -5374,8 +5374,7 @@ const FieldCleaner = (() => {
       }
       if (changes === 0) {
         const err = new Error(
-          `Couldn't auto-remove the field from the active v${plan.active.num} of "${flowName}" — the reference is ` +
-          `in a path the auto-fix can't safely change (decision condition, formula expression, or variable default). ` +
+          `Couldn't auto-remove the field from the active v${plan.active.num} of "${flowName}" — ${_flowLeftWhy(removeFieldRefs.lastLeft)}. ` +
           `Nothing was deleted. Click "Open in Flow Builder" to fix it by hand, then run ✂ Remove again for the old versions.`);
         const u = _flowBuilderUrl(plan.active.id); if (u) err.setupUrl = u;
         throw err;
@@ -5580,6 +5579,21 @@ const FieldCleaner = (() => {
     return out;
   }
 
+  // Why ✂ took nothing out of a flow, from removeFieldRefs.lastLeft — the true place, not a guess.
+  function _flowLeftWhy(left) {
+    const bits = [];
+    for (const w of ((left && left.whole) || [])) {
+      const what = w.start ? 'the trigger\'s entry condition (Start)' : `the filter of "${w.name}"`;
+      bits.push(w.why === 'only'
+        ? `the field is the only condition of ${what} — taking it out would make it act on every record`
+        : `the field is in ${what}, whose numbered filter logic would point at a condition that is gone`);
+    }
+    if (left && left.other && left.other.length) bits.push(`${left.other.join(', ')} ${left.other.length === 1 ? 'is' : 'are'} another object's same-named field, left alone`);
+    if (left && left.unknown && left.unknown.length) bits.push(`${left.unknown.join(', ')} ${left.unknown.length === 1 ? 'reaches' : 'reach'} the field through a custom lookup — whose field it is cannot be told from the flow, so it is not edited`);
+    if (!bits.length) bits.push('the reference is in a path the auto-fix can\'t safely change (decision condition, formula expression, or variable default)');
+    return bits.join('; ');
+  }
+
   // Remove all direct references to objApi.fieldApi from flow metadata JSON.
   // Returns the number of references removed. Decisions and formula text are
   // intentionally skipped — changing branching logic or formulas automatically
@@ -5587,9 +5601,6 @@ const FieldCleaner = (() => {
   function removeFieldRefs(metadata, objApi, fieldApi, opts) {
     let changes = 0;
     const fl       = fieldApi.toLowerCase();
-    const full     = `${objApi}.${fieldApi}`.toLowerCase();
-    const rec      = `$record.${fieldApi}`.toLowerCase();
-    const recPrior = `$record__prior.${fieldApi}`.toLowerCase();
 
     // Whose field a reference names (2026-11-14): a bare <field> belongs to the element's own object, and
     // "con.Region__c" to the object of the resource "con". Without this, ✂ on Account.Region__c also stripped
@@ -5600,18 +5611,45 @@ const FieldCleaner = (() => {
     const resObj = typeof sftkFlowResourceObjects === 'function' ? sftkFlowResourceObjects(metadata) : null;
     const onObj  = el => !el || !el.object || String(el.object).toLowerCase() === objL;
 
-    function refMatches(ref) {
-      if (ref == null) return false;
-      const r = String(ref).toLowerCase();
-      if (r === full) return true;
-      if (!(r === fl || r === rec || r === recPrior || r.endsWith('.' + fl))) return false;
-      const parts = r.split('.');
-      if (parts.length === 2 && resObj) {
-        const owner = resObj.get(parts[0]);
-        if (owner && String(owner).toLowerCase() !== objL) return false;
+    // A path longer than two segments travels through relationships ($Record.Owner.Region__c is User's field,
+    // $Record.Parent.Region__c on Account is Account's): only the standard relationships whose object is fixed can be
+    // followed (kept in step with sftk-mdapi.js sftkRtEdit's map); a custom lookup (Thing__r) cannot be told from the
+    // metadata, so it is never edited — it stays reported. A BARE name is a field only under a key that holds a field
+    // (<field>, queriedFields); as a reference (assignToReference, elementReference …) a bare name is a flow resource —
+    // a variable called Region__c is not the field (2026-11-14 review: both were stripped and counted).
+    const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
+      account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
+      reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
+      campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
+      recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group' };
+    const startObjL = metadata && metadata.start && metadata.start.object ? String(metadata.start.object).toLowerCase() : '';
+    const leftAlone = { other: new Set(), unknown: new Set(), whole: [] };   // what ✂ will not touch, and why
+    // 'this' | 'other' | 'unknown' | null (not this field's name)
+    function ownerOfRef(ref, asField) {
+      if (ref == null) return null;
+      const parts = String(ref).toLowerCase().split('.');
+      if (parts[parts.length - 1] !== fl) return null;
+      if (parts.length === 1) return asField ? 'this' : null;
+      const root = parts[0], rels = parts.slice(1, -1);
+      let cur = resObj && resObj.get(root) ? String(resObj.get(root)).toLowerCase()
+        : ((root === '$record' || root === '$record__prior') && startObjL) ? startObjL : null;
+      if (!rels.length) {
+        if (cur) return cur === objL ? 'this' : 'other';
+        return 'this';   // a two-segment path on a root the metadata does not resolve: matched as before
       }
-      return true;
+      if (!cur) return 'unknown';
+      for (const seg of rels) {
+        cur = (seg === 'parent' || seg === 'masterrecord') ? cur : (REL[seg] || null);
+        if (!cur) return 'unknown';
+      }
+      return cur === objL ? 'this' : 'other';
     }
+    function refMatches(ref, asField) {
+      const who = ownerOfRef(ref, asField);
+      if (who === 'other' || who === 'unknown') leftAlone[who].add(String(ref));
+      return who === 'this';
+    }
+    const fieldMatches = f => refMatches(f, true);
 
     function strip(arr, testFn) {
       if (!Array.isArray(arr)) return arr;
@@ -5629,10 +5667,11 @@ const FieldCleaner = (() => {
     function stripFilters(el) {
       const fs = el && el.filters;
       if (!Array.isArray(fs)) return;
-      const hit = fs.filter(f => refMatches(f && f.field)).length;
-      if (!hit || hit === fs.length) return;
-      if (!/^(and|or)$/i.test(String(el.filterLogic || 'and').trim())) return;
-      el.filters = fs.filter(f => !refMatches(f && f.field));
+      const hit = fs.filter(f => fieldMatches(f && f.field)).length;
+      if (!hit) return;
+      if (hit === fs.length) { leftAlone.whole.push({ el, why: 'only' }); return; }
+      if (!/^(and|or)$/i.test(String(el.filterLogic || 'and').trim())) { leftAlone.whole.push({ el, why: 'logic' }); return; }
+      el.filters = fs.filter(f => !fieldMatches(f && f.field));
       changes += hit;
     }
 
@@ -5652,21 +5691,21 @@ const FieldCleaner = (() => {
     for (const el of (metadata.recordLookups || [])) {
       if (!onObj(el)) continue;
       stripFilters(el);
-      el.outputAssignments = strip(el.outputAssignments, a => refMatches(a.field));
-      el.queriedFields     = strip(el.queriedFields,     f => refMatches(f));
+      el.outputAssignments = strip(el.outputAssignments, a => fieldMatches(a.field));
+      el.queriedFields     = strip(el.queriedFields,     f => fieldMatches(f));
     }
 
     // ── recordCreates — field assignments
     for (const el of (metadata.recordCreates || [])) {
       if (!onObj(el)) continue;
-      el.inputAssignments = strip(el.inputAssignments, a => refMatches(a.field));
+      el.inputAssignments = strip(el.inputAssignments, a => fieldMatches(a.field));
     }
 
     // ── recordUpdates — filter conditions + field assignments
     for (const el of (metadata.recordUpdates || [])) {
       if (!onObj(el)) continue;
       stripFilters(el);
-      el.inputAssignments = strip(el.inputAssignments, a => refMatches(a.field));
+      el.inputAssignments = strip(el.inputAssignments, a => fieldMatches(a.field));
     }
 
     // ── recordDeletes — filter conditions
@@ -5781,6 +5820,13 @@ const FieldCleaner = (() => {
 
     // Everything else that names the field in free text — a text or number formula, a text template, a
     // decision outcome that rests on the field alone — is NOT rewritten: it stays listed as by hand.
+
+    // What was left alone and why, for the refusal text when nothing could be taken out (2026-11-14 review: a
+    // trigger's only entry condition was reported as "a decision condition, formula expression, or variable default").
+    removeFieldRefs.lastLeft = {
+      other: [...leftAlone.other], unknown: [...leftAlone.unknown],
+      whole: leftAlone.whole.map(w => ({ start: w.el === metadata.start, name: (w.el && (w.el.label || w.el.name)) || '', why: w.why })),
+    };
 
     return changes;
   }
@@ -6920,11 +6966,14 @@ const FieldCleaner = (() => {
     const swap = _swapOn();
     const swapTo = swap ? _replField.api : '';
     const sw = swap ? sftkFlexiReplaceField(metadata, _selObj.api, _selField.api, swapTo) : null;
-    const changes = swap ? sw.swapped + sw.dropped : removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api);
+    const leftRm = { other: 0, unknown: 0 };   // ✂: mentions of another object's / an untellable object's same-named field
+    const changes = swap ? sw.swapped + sw.dropped : removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api, leftRm);
     if (changes === 0) {
       throw new Error(
         `No direct field references found in "${componentName}". ` +
         (swap && sw.left ? `${sw.left} mention(s) reach the field through a related record, which is another object's field and is left alone. ` : '') +
+        (!swap && leftRm.other ? `${leftRm.other} mention(s) reach a related record's same-named field (another object's field) and are left alone. ` : '') +
+        (!swap && leftRm.unknown ? `${leftRm.unknown} mention(s) reach the field through a custom lookup — which object's field that is cannot be told from the page, so it is not edited. ` : '') +
         `The dependency may be inside a custom component — ${swap ? 'change it' : 'remove'} manually in App Builder.`
       );
     }
@@ -6968,6 +7017,12 @@ const FieldCleaner = (() => {
         if (sw.left) bits.push(`⚠ ${sw.left} mention${sw.left === 1 ? '' : 's'} through a related record left alone (another object's field)`);
         return `✅ Page updated · ${bits.join(' · ')} — verified by re-reading the org`;
       }
+      if (leftRm.other || leftRm.unknown) {
+        const bits = [`${changes} place${changes === 1 ? '' : 's'} removed`];
+        if (leftRm.other) bits.push(`⚠ ${leftRm.other} mention${leftRm.other === 1 ? '' : 's'} of a related record's same-named field left alone (another object's field)`);
+        if (leftRm.unknown) bits.push(`⚠ ${leftRm.unknown} mention${leftRm.unknown === 1 ? '' : 's'} through a custom lookup left alone — whose field it is cannot be told from the page; check it in App Builder`);
+        return `✅ Page updated · ${bits.join(' · ')} — verified by re-reading the org`;
+      }
     } finally {
       await sftkHistoryEnd(j, { undo: wr && wr.accepted
         ? { steps: [{
@@ -6989,26 +7044,48 @@ const FieldCleaner = (() => {
   //      → remove those criteria (if all criteria removed, delete the whole rule)
   //   2. componentInstance directly bound to the field (e.g. field-level components)
   //      → remove the entire component instance
-  function removeFieldFromFlexiPage(metadata, objApi, fieldApiName) {
+  // out (optional): { other, unknown } — mentions left alone because they name ANOTHER object's
+  // same-named field (other) or a field whose object the page does not tell (unknown: a custom lookup).
+  function removeFieldFromFlexiPage(metadata, objApi, fieldApiName, out) {
     let changes = 0;
     const fl  = fieldApiName.toLowerCase();
     const obj = objApi.toLowerCase();
-
-    // Patterns that indicate a reference to the field
+    const tally = out && typeof out === 'object' ? out : {};
+    tally.other = tally.other || 0; tally.unknown = tally.unknown || 0;
+    // standard relationships whose object is fixed (kept in step with sftk-mdapi.js sftkRtEdit's map);
+    // Parent / MasterRecord are self-lookups — the page record's own object.
+    const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
+      account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
+      reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
+      campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
+      recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group' };
+    // Whose field a path names: 'this' | 'other' | 'unknown' | null (not this field's name at all).
+    // {!Record.Parent.Field} on Account IS Account.Field (Parent is a self-lookup); {!Record.Owner.Field}
+    // and {!$User.Field} are User's — another object's field unless User is the one cleaned. Matching any
+    // ".Field" ending took another object's criteria out; matching only Record.Field then missed the
+    // self-lookup and $User forms that DO name this field (2026-11-14 review).
+    function ownerOf(str) {
+      if (str == null) return null;
+      const segs = String(str).toLowerCase().trim()
+        .replace(/^\{!/, '').replace(/\}$/, '').trim().split('.'); // strip {! ... } merge syntax
+      if (segs.pop() !== fl) return null;
+      if (!segs.length) return 'this';
+      const root = segs.shift();
+      let cur;
+      if (root === 'record' || root === 'objectrecord' || root === '$record' || root === obj) cur = obj;
+      else if (root === '$user') cur = 'user';
+      else return 'unknown';
+      for (const seg of segs) {
+        cur = (seg === 'parent' || seg === 'masterrecord') ? cur : (REL[seg] || null);
+        if (!cur) return 'unknown';
+      }
+      return cur === obj ? 'this' : 'other';
+    }
     function refMatches(str) {
-      if (str == null) return false;
-      const s = String(str).toLowerCase()
-        .replace(/^\{!/, '').replace(/\}$/, ''); // strip {! ... } merge syntax
-      return (
-        s === fl ||
-        s === `${obj}.${fl}` ||
-        s === `objectrecord.${fl}` ||
-        s === `$record.${fl}` ||
-        // only the page record's own field: a longer path ({!Record.Owner.Field}) reaches a
-        // RELATED record's same-named field — another object's, which ⇄ (sftkFlexiReplaceField)
-        // also leaves alone. Matching any ".Field" suffix took such criteria out (2026-11-14).
-        s === `record.${fl}`
-      );
+      const who = ownerOf(str);
+      if (who === 'other') tally.other++;
+      else if (who === 'unknown') tally.unknown++;
+      return who === 'this';
     }
 
     function cleanVisibilityRule(rule) {

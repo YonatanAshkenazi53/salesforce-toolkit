@@ -250,7 +250,31 @@ function sftkMdMissingFields(innerXml, fields) {
 // column was dropped is dropped with it (a section with no columns has
 // nothing to offer a report builder). Everything not visited is re-emitted
 // byte for byte.
+// visit(field, table, label, reach): reach(objApi) says whose field a column of objApi's table names —
+// 'plain' (Field__c), 'this' (a lookup path that ends on objApi: Parent.Field__c on Account), 'other' (a path that ends
+// on another object: Owner.Field__c is User's) or 'unknown' (a custom lookup, Parent__r.Field__c, whose object the XML
+// does not tell); null when the column is not under objApi's own table (2026-11-14 review: Owner.Region__c on an
+// Account table is User.Region__c, and counting it blocked the fix of the plain column).
 function sftkRtEdit(innerXml, visit) {
+  // the standard relationships whose object is fixed — kept in step with _sftkMdSwapToken's map
+  const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
+    account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
+    reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
+    campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
+    recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group' };
+  const _reach = (field, table, objApi) => {
+    const o = String(objApi || '').toLowerCase();
+    if (String(table).toLowerCase() !== o) return null;
+    const segs = String(field).toLowerCase().split('.');
+    segs.pop();
+    if (!segs.length) return 'plain';
+    let cur = o;
+    for (const seg of segs) {
+      cur = (seg === 'parent' || seg === 'masterrecord') ? cur : (REL[seg] || null);
+      if (!cur) return 'unknown';
+    }
+    return cur === o ? 'this' : 'other';
+  };
   const s = String(innerXml || '');
   let out = '', cursor = 0;
   const stats = { dropped: 0, renamed: 0, seen: 0, emptied: [] };
@@ -268,7 +292,7 @@ function sftkRtEdit(innerXml, visit) {
       const field = sftkMdChildText(colBody, 'field') || '';
       const table = sftkMdChildText(colBody, 'table') || '';
       stats.seen++;
-      const d = visit(field, table, label);
+      const d = visit(field, table, label, objApi => _reach(field, table, objApi));
       sb += secBody.slice(c2, ce.start);
       if (d === 'drop') { stats.dropped++; touched = true; }
       else if (d && typeof d === 'object' && d.rename) {
@@ -294,14 +318,16 @@ function sftkRtEdit(innerXml, visit) {
 // table (<field>Parent.Field</field>). The lookup form was not seen at all, so ✂ answered
 // "removed — verified" while the type still named the field (2026-11-14). Which object the
 // lookup reaches cannot be told from the XML (Parent → this object, Owner → User), so the
-// lookup form is counted here (the scan and the verify never call the type clean) and the
-// removers below never edit it — they name it in `viaLookup` (and `skipped`).
+// lookup form is counted when its path ends on this object (Parent → Account) or on an object the XML does not tell
+// (Lookup__r); a path that ends on another object (Owner → User) is that object's field and not counted (2026-11-14
+// review). The removers edit a path that ends on this object like a plain column; an unknown path is never edited —
+// they name it in `viaLookup` (and `skipped`).
 function sftkRtMentions(innerXml, objApi, fieldApi) {
   const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
   let n = 0;
-  sftkRtEdit(innerXml, (field, table) => {
+  sftkRtEdit(innerXml, (field, table, label, reach) => {
     const x = field.toLowerCase();
-    if (table.toLowerCase() === o && (x === f || x.endsWith('.' + f))) n++;
+    if (table.toLowerCase() === o && (x === f || x.endsWith('.' + f)) && reach(objApi) !== 'other') n++;
     return 'keep';
   });
   return n;
@@ -313,8 +339,13 @@ function sftkRtRemoveField(innerXml, objApi, fieldApi) {
   const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
   const skipped = [];
   const viaLookup = [];
-  const r = sftkRtEdit(innerXml, (field, table, label) => {
-    if (table.toLowerCase() === o && field.toLowerCase().endsWith('.' + f)) { viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`); return 'keep'; }
+  const r = sftkRtEdit(innerXml, (field, table, label, reach) => {
+    if (table.toLowerCase() === o && field.toLowerCase().endsWith('.' + f)) {
+      const how = reach(objApi);
+      if (how === 'this') return 'drop';
+      if (how === 'unknown') viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`);
+      return 'keep';
+    }
     if (field.toLowerCase() !== f) return 'keep';
     if (table.toLowerCase() === o) return 'drop';
     skipped.push(`${table}.${field} in “${label}”`);
@@ -338,14 +369,27 @@ function sftkRtReplaceField(innerXml, objApi, fieldApi, newFieldApi) {
   const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
   const skipped = [];
   const viaLookup = [];
-  const r = sftkRtEdit(innerXml, (field, table, label) => {
-    if (table.toLowerCase() === o && field.toLowerCase().endsWith('.' + f)) { viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`); return 'keep'; }
+  // the columns already on the table: a path renamed onto one of them is dropped instead (a column appears once)
+  const have = new Set();
+  sftkRtEdit(innerXml, (field, table) => { if (table.toLowerCase() === o) have.add(field.toLowerCase()); return 'keep'; });
+  let pathDropped = 0;
+  const r = sftkRtEdit(innerXml, (field, table, label, reach) => {
+    if (table.toLowerCase() === o && field.toLowerCase().endsWith('.' + f)) {
+      const how = reach(objApi);
+      if (how === 'this') {
+        const to = field.slice(0, field.length - f.length) + newFieldApi;
+        if (have.has(to.toLowerCase())) { pathDropped++; return 'drop'; }
+        return { rename: to };
+      }
+      if (how === 'unknown') viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`);
+      return 'keep';
+    }
     if (field.toLowerCase() !== f) return 'keep';
     if (table.toLowerCase() === o) return { rename: newFieldApi };
     skipped.push(`${table}.${field} in “${label}”`);
     return 'keep';
   });
-  return { xml: r.xml, swapped: r.renamed, dropped: 0, emptied: r.emptied, skipped: [...viaLookup, ...skipped], viaLookup, newAlreadyThere, changed: r.renamed > 0 };
+  return { xml: r.xml, swapped: r.renamed, dropped: pathDropped, emptied: r.emptied, skipped: [...viaLookup, ...skipped], viaLookup, newAlreadyThere, changed: r.renamed + pathDropped > 0 };
 }
 
 // The two files a report-type deploy needs (the zip builder lives in sftk-zip.js).
@@ -742,21 +786,59 @@ function _sftkMdWalk(xml, tag, visit) {
   }
   return { xml: out + s.slice(cursor), dropped, changed, kept };
 }
-// A formula's references to the field — bare (Field__c), Obj.Field__c, or $Setup.Obj.Field__c (a custom setting's
-// field, 2026-11-14) — swapped for newField (or only counted when newField is null).
-// rel counts the field reached through a relationship (Parent.Field__c, Lookup__r.Field__c), which is NOT swapped:
-// it may be this very field (an Account's Parent is an Account) or another object's field of the same name, so
-// renaming it blind is wrong and leaving it behind reports a half-done edit as done (2026-11-14). Callers refuse
-// when rel > 0. A $-global chain ($User.X, $Setup.Other__c.X) names another object's field and is not counted.
-function _sftkMdSwapToken(text, objApi, fieldApi, newField) {
+// A formula's references to the field, swapped for newField (or only counted when newField is null). Whose field a
+// reference names is read from the path in front of it, from ctxObj (the object the formula runs on; objApi when
+// not given):
+//   Field__c                         ctxObj's field — this field only when ctxObj is objApi
+//   Obj.Field__c, $Setup.Obj.Field__c, $ObjectType.Obj.Fields.Field__c, $Obj.Field__c ($User…) — this field when Obj
+//                                    is objApi (the $ObjectType form was missed: ⇄ deployed it unchanged, 2026-11-14)
+//   Rel.Field__c, Rel.Rel2.Field__c  a relationship path, walked from ctxObj over the standard relationships whose
+//                                    object is fixed (Parent → the same object, Owner → User, Account → Account…):
+//                                    this field when it ends on objApi (swapped like a plain one), another object's
+//                                    field when it ends elsewhere (left alone — Account.Region__c in a Contact rule is
+//                                    Account's, 2026-11-14 review)
+//   a custom lookup (Lookup__r.Field__c) or a relationship not in the map — whose object the text cannot tell:
+//                                    counted in rel, never swapped; callers refuse when rel > 0 rather than deploy a
+//                                    half-done edit and report it done (2026-11-14)
+function _sftkMdSwapToken(text, objApi, fieldApi, newField, ctxObj) {
   const rx = x => String(x || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (!fieldApi) return { text: String(text || ''), n: 0, rel: 0 };
-  const re = new RegExp(`(^|[^A-Za-z0-9_.])((?:\\$Setup\\.${rx(objApi)}\\.|${rx(objApi)}\\.)?)${rx(fieldApi)}(?![A-Za-z0-9_])`, 'gi');
+  const o = String(objApi || '').toLowerCase(), ctx = String(ctxObj || objApi || '').toLowerCase();
+  const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
+    account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
+    reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
+    campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
+    recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group' };
+  // 'this' | 'other' | 'unknown' for the path in front of the field ('' = bare)
+  const whose = path => {
+    const segs = path.toLowerCase().split('.').filter(Boolean);
+    if (!segs.length) return ctx === o ? 'this' : 'other';
+    if (segs[0][0] === '$') {
+      const g = segs[0];
+      if (g === '$setup') return segs[1] === o && segs.length === 2 ? 'this' : 'other';
+      if (g === '$objecttype') return segs[1] === o && segs[2] === 'fields' && segs.length === 3 ? 'this' : 'other';
+      return g.slice(1) === o && segs.length === 1 ? 'this' : 'other';
+    }
+    if (segs.length === 1 && segs[0] === o) return 'this';
+    let cur = ctx, i = 0;
+    if (segs[0] === ctx) i = 1;                       // Contact.Account.Field__c in a Contact formula
+    for (; i < segs.length; i++) {
+      const seg = segs[i], poly = seg.indexOf(':');   // Owner:User.Field__c
+      cur = poly >= 0 ? seg.slice(poly + 1) : (seg === 'parent' || seg === 'masterrecord') ? cur : (REL[seg] || null);
+      if (!cur) return 'unknown';
+    }
+    return cur === o ? 'this' : 'other';
+  };
+  const re = new RegExp(`(?<![$A-Za-z0-9_.:])((?:[$A-Za-z0-9_]+[.:])*)${rx(fieldApi)}(?![A-Za-z0-9_])`, 'gi');
   let n = 0, rel = 0;
-  const src = String(text || ''), o = String(objApi || '').toLowerCase();
-  const out = src.replace(re, (m, pre, ob) => { n++; return newField ? pre + ob + newField : m; });
-  const chain = new RegExp(`(?<![$A-Za-z0-9_.])([$A-Za-z0-9_.]+)\\.${rx(fieldApi)}(?![A-Za-z0-9_])`, 'gi');
-  for (const m of src.matchAll(chain)) { const head = m[1].toLowerCase(); if (head[0] !== '$' && head !== o) rel++; }
+  const src = String(text || '');
+  const out = src.replace(re, (m, path) => {
+    const w = whose(path);
+    if (w === 'unknown') { rel++; return m; }
+    if (w !== 'this') return m;
+    n++;
+    return newField ? path + newField : m;
+  });
   return { text: out, n, rel };
 }
 // ✂ on a formula, as a SUGGESTION (user 2026-11-10, on a validation rule's confirm: "why can't we just remove the
@@ -955,18 +1037,20 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     return { xml: r.xml, n };
   };
   // formula text: ⇄ swaps the token; ✂ only counts it (a formula is never cut)
-  const formulas = (src, tag) => {
+  // ctx: the object the formula runs on, when it is not objApi (a restriction rule's record filter runs on its
+  // <targetEntity>)
+  const formulas = (src, tag, ctx) => {
     let n = 0, rel = 0;
     const r = _sftkMdWalk(src, tag, body => {
-      const s = _sftkMdSwapToken(body, objApi, fieldApi, nf);
+      const s = _sftkMdSwapToken(body, objApi, fieldApi, nf, ctx);
       n += s.n; rel += s.rel;
       return (nf && s.n) ? { body: s.text } : 'keep';
     });
     return { xml: r.xml, n, rel };
   };
-  // the field reached through a relationship is never swapped (see _sftkMdSwapToken), so such a formula is refused
-  // whole rather than deployed half-edited and reported done (2026-11-14)
-  const REL = 'the formula also reaches the field through a relationship (X.Field__c) — edit it in Setup';
+  // a path through a custom lookup is never swapped (see _sftkMdSwapToken): its object cannot be told from the text,
+  // so such a formula is refused whole rather than deployed half-edited and reported done (2026-11-14)
+  const REL = 'the formula also names a field of this name through a custom lookup (Lookup__r.Field__c), and which object that lookup reaches cannot be told from the formula — edit it in Setup';
   switch (type) {
     case 'ValidationRuleInactive':
     case 'ValidationRule': {
@@ -1053,10 +1137,13 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     case 'WebLink':
     case 'RestrictionRule': {
       const what = type === 'WebLink' ? 'URL' : 'record filter';
-      const f = formulas(xml, type === 'WebLink' ? 'url' : 'recordFilter');
+      // a restriction / scoping rule's record filter runs on its <targetEntity>: a bare Field__c there is THAT object's
+      // field, so for a User field only $User.Field__c (and paths that end on User) count (2026-11-14 review)
+      const target = type === 'RestrictionRule' ? (sftkMdChildText(xml, 'targetEntity') || objApi) : objApi;
+      const f = formulas(xml, type === 'WebLink' ? 'url' : 'recordFilter', target);
       // a field of User is also named in the rule's <userCriteria> ($User.Field__c = …): read it too, or ⇄ deploys
       // the rule half-renamed and reports it done (2026-11-14)
-      const u = (type === 'RestrictionRule' && String(objApi || '').toLowerCase() === 'user') ? formulas(f.xml, 'userCriteria') : { xml: f.xml, n: 0, rel: 0 };
+      const u = (type === 'RestrictionRule' && String(objApi || '').toLowerCase() === 'user') ? formulas(f.xml, 'userCriteria', 'User') : { xml: f.xml, n: 0, rel: 0 };
       if (f.rel || u.rel) { refuse(REL); break; }
       if (!f.n && !u.n) { refuse(`the ${what} does not name the field as a whole token — edit it in Setup`); break; }
       if (!nf) { refuse(type === 'WebLink' ? 'a URL cannot lose a merge field and keep working — ⇄ Replace it with another field, or 🗑 delete the button' : 'a record filter cannot lose a condition here — ⇄ Replace it with another field, or 🗑 delete the rule'); break; }
@@ -1090,8 +1177,9 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       // it too; ✂ cannot take it out (the trigger needs a base), so it refuses as a whole rather than drop the
       // criterion, leave the trigger on the field and report done (2026-11-14)
       const ot = texts(r.xml, 'offsetFromField');
+      // the time trigger is tested first: when it is the only mention, its own reason is the true one (2026-11-14 review)
+      if (!nf && ot.n) { refuse(`${!r.n && !f.n ? 'no criterion names the field, but its' : 'its'} time trigger counts from this field — ⇄ Replace it with another date field, or 🗑 delete it`); break; }
       if (!r.n && !f.n && !(nf && ot.n)) { refuse('no criterion names the field — edit it in Setup'); break; }
-      if (!nf && ot.n) { refuse('its time trigger counts from this field — ⇄ Replace it with another date field, or 🗑 delete it'); break; }
       if (!nf && r.n && _sftkMdHasLogic(xml)) { refuse('its filter logic numbers the criteria — taking one out changes what the others mean; ⇄ Replace, or edit it in Setup'); break; }
       if (!nf && r.left === 0 && !sftkMdFindElement(xml, 'formula', 0)) { refuse(`its only criterion is this field — with none left it would ${type === 'WorkflowRule' ? 'fire on every record' : 'share every record'}; ⇄ Replace it, or 🗑 delete it`); break; }
       xml = ot.xml;
