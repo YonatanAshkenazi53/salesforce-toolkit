@@ -154,37 +154,38 @@ describe('ValidationRule', () => {
       expect(r.xml).toBe(vr('ISBLANK(Phone)', '<errorDisplayField>Phone</errorDisplayField>'));
       gone(r.xml);
     });
-    // PRODUCT BUG: a rule can show its error AT the field (<errorDisplayField>). ✂ and ⇄ only read
+    // FIXED 2026-11-14 (was a product bug): a rule can show its error AT the field (<errorDisplayField>). ✂ and ⇄ only read
     // <errorConditionFormula>; the error field keeps naming the old field, and "changed" says nothing about it.
     // (The scan itself counts errorDisplayField as a mention: field-cleaner.js, eachMetadata('ValidationRule', … sameField(m.errorDisplayField)).)
-    it.skip('PRODUCT BUG: formula + <errorDisplayField> both name the field — ✂ leaves the error field pointing at it', () => {
+    it('formula + <errorDisplayField> both name the field — ✂ leaves the error field pointing at it', () => {
       const x = vr('ISBLANK(SFTK_Live_Blk__c) && ISBLANK(Name)', '<errorDisplayField>SFTK_Live_Blk__c</errorDisplayField>');
       const r = rm('ValidationRule', x);
       expect(names(r.xml)).toBe(false);
     });
-    it.skip('PRODUCT BUG: formula + <errorDisplayField> both name the field — ⇄ renames the formula only', () => {
+    it('formula + <errorDisplayField> both name the field — ⇄ renames the formula only', () => {
       const x = vr('ISBLANK(SFTK_Live_Blk__c) && ISBLANK(Name)', '<errorDisplayField>SFTK_Live_Blk__c</errorDisplayField>');
       const r = rp('ValidationRule', x);
       expect(r.xml).toBe(vr('ISBLANK(SFTK_Live_Blk2__c) && ISBLANK(Name)', '<errorDisplayField>SFTK_Live_Blk2__c</errorDisplayField>'));
     });
-    // PRODUCT BUG: on Account, Parent.Field__c is the SAME field (the parent account's). The token test only knows
+    // FIXED 2026-11-14 (was a product bug; now refused whole): on Account, Parent.Field__c is the SAME field (the parent account's). The token test only knows
     // "Field__c" and "Account.Field__c", so a mixed formula is done by half and reported as done.
-    it.skip('PRODUCT BUG: the field reached through a relationship (Parent.Field__c) next to a plain mention — ⇄ leaves the relationship one behind', () => {
+    it('the field reached through a relationship (Parent.Field__c) next to a plain mention — ⇄ leaves the relationship one behind', () => {
       const x = vr('ISBLANK(SFTK_Live_Blk__c) && Parent.SFTK_Live_Blk__c = "x"');
       const r = rp('ValidationRule', x);
       expect(r.refused || !names(r.xml)).toBeTruthy();   // either every mention becomes the new field, or the edit is refused as a whole
     });
-    it.skip('PRODUCT BUG: the field reached through a relationship (Parent.Field__c) next to a plain mention — ✂ keeps the condition that still names it', () => {
+    it('the field reached through a relationship (Parent.Field__c) next to a plain mention — ✂ keeps the condition that still names it', () => {
       const x = vr('ISBLANK(SFTK_Live_Blk__c) && Parent.SFTK_Live_Blk__c = "x"');
       const r = rm('ValidationRule', x);
       expect(r.refused || r.off || !names(r.xml)).toBeTruthy();
     });
-    // PRODUCT BUG (small): the field named only inside a /* comment */ — the rule is switched off, and the reason
-    // given ("every condition of its formula uses it") is not true: no condition uses it.
-    it.skip('PRODUCT BUG: the field only in a comment of the formula — ✂ switches the rule off for a reason that is not true', () => {
+    // FIXED 2026-11-14 (was a product bug; now refused with the true reason): the field named only inside a /* comment */ — the rule was switched off, and the reason
+    // given ("every condition of its formula uses it") was not true: no condition uses it. Now ✂ refuses with that true reason.
+    it('the field only in a comment of the formula — ✂ is refused with the true reason (no condition uses it), the rule not switched off', () => {
       const x = vr('/* SFTK_Live_Blk__c used to be checked here */ ISBLANK(Name)');
       const r = rm('ValidationRule', x);
-      expect(r.off).toBe(false);
+      expect(r.off).toBeFalsy();   // a refusal carries no "off"
+      refusedWhole(r, x, /named only in a comment or quoted text of the formula — no condition uses it/);
     });
   });
 
@@ -201,9 +202,9 @@ describe('ValidationRule', () => {
       const x = vr('SFTK_Live_Blk__c = SFTK_Live_Blk__c');
       swappedAll(x, rp('ValidationRule', x), 2);
     });
-    // PRODUCT BUG (gap): a custom-setting field is written $Setup.Setting__c.Field__c in every formula. The token
+    // FIXED 2026-11-14 (was a gap): a custom-setting field is written $Setup.Setting__c.Field__c in every formula. The token
     // test refuses a name that follows a dot, so ⇄ never works for a field of a custom setting.
-    it.skip('PRODUCT BUG: a custom setting field ($Setup.Obj__c.Field__c) — ⇄ is refused as "does not name the field"', () => {
+    it('a custom setting field ($Setup.Obj__c.Field__c) — ⇄ is refused as "does not name the field"', () => {
       const x = vr('$Setup.SFTK_Cfg__c.SFTK_Live_Blk__c = "x" && ISBLANK(Name)');
       const r = M.sftkMdEditField('ValidationRule', x, 'SFTK_Cfg__c', F, N);
       expect(r.refused).toBeNull();
@@ -417,10 +418,10 @@ describe('LookupFilter', () => {
       refusedWhole(rm('LookupFilter', x), x, /no filter condition names the field/);
       refusedWhole(rm('LookupFilter', lookup(null)), lookup(null), /has no lookup filter any more — re-scan/);
     });
-    // PRODUCT BUG (gap): a field of the SOURCE object (the object the lookup field sits on) is written
+    // FIXED 2026-11-14 (was a gap): a field of the SOURCE object (the object the lookup field sits on) is written
     // $Source.Field__c in a lookup filter. Neither ✂ nor ⇄ reads that spelling: both are refused with
     // "no filter condition names the field", although one does.
-    it.skip('PRODUCT BUG: the field as $Source.Field__c (a field of the lookup\'s own object) — ⇄ is refused as "no filter condition names the field"', () => {
+    it('the field as $Source.Field__c (a field of the lookup\'s own object) — ⇄ is refused as "no filter condition names the field"', () => {
       const x = lookup([fi('Account.Name', 'equals', '', '$Source.SFTK_Live_Blk__c')]);
       const r = M.sftkMdEditField('LookupFilter', x, 'Contact', F, N);
       expect(r.refused).toBeNull();
@@ -447,10 +448,10 @@ describe('LookupFilter', () => {
       const x = lookup([FLD, TYPE, fi('Account.SFTK_Live_Blk__c', 'notEqual', 'y')], '1 AND (2 OR 3)');
       refusedWhole(rm('LookupFilter', x), x, /the filter’s logic numbers its conditions/);
     });
-    // PRODUCT BUG: on a self-lookup (Account → Account) the SAME field is "Account.Field__c" on the looked-up
+    // FIXED 2026-11-14 (was a product bug): on a self-lookup (Account → Account) the SAME field is "Account.Field__c" on the looked-up
     // record and "$Source.Field__c" on the record being edited. ✂ takes out the condition whose <field> names it and
     // keeps the one whose <valueField> names it; the result still references the field and is reported as done.
-    it.skip('PRODUCT BUG: the field in a <field> and in another condition\'s <valueField> ($Source.) — ✂ leaves the second one', () => {
+    it('the field in a <field> and in another condition\'s <valueField> ($Source.) — ✂ leaves the second one', () => {
       const x = lookup([FLD, fi('Account.Type', 'equals', '', '$Source.SFTK_Live_Blk__c'), TYPE]).replace('Contact.SFTK_Live_Lk__c', 'Account.SFTK_Live_Lk__c');
       const r = rm('LookupFilter', x);
       expect(r.refused || !names(r.xml)).toBeTruthy();
@@ -466,8 +467,8 @@ describe('LookupFilter', () => {
       expect(r.how).toEqual(['filter: 2 conditions now SFTK_Live_Blk2__c']);
       expect(mentions(r.xml)).toBe(false);
     });
-    // PRODUCT BUG: the same self-lookup as above — ⇄ renames <field> and leaves <valueField>$Source.Field__c</valueField>.
-    it.skip('PRODUCT BUG: <field>Account.F</field> compared with <valueField>$Source.F</valueField> — ⇄ renames one side only', () => {
+    // FIXED 2026-11-14 (was a product bug): the same self-lookup as above — ⇄ renames <field> and leaves <valueField>$Source.Field__c</valueField>.
+    it('<field>Account.F</field> compared with <valueField>$Source.F</valueField> — ⇄ renames one side only', () => {
       const x = lookup([fi('Account.SFTK_Live_Blk__c', 'equals', '', '$Source.SFTK_Live_Blk__c')]).replace('Contact.SFTK_Live_Lk__c', 'Account.SFTK_Live_Lk__c');
       const r = rp('LookupFilter', x);
       expect(r.refused || !names(r.xml)).toBeTruthy();
@@ -585,16 +586,16 @@ describe.each([['Restrict', 'restriction rule'], ['Scoping', 'scoping rule']])('
     expect(r.how).toEqual(['record filter: 3 references now SFTK_Live_Blk2__c']);
     expect(mentions(r.xml)).toBe(false);
   });
-  // PRODUCT BUG: the field under the knife is a custom field of User. A rule names it in <userCriteria>
+  // FIXED 2026-11-14 (was a product bug): the field under the knife is a custom field of User. A rule names it in <userCriteria>
   // ($User.Field__c = …) and can name it in <recordFilter> too (… = $User.Field__c). Only <recordFilter> is read:
   //   · named in both → ⇄ renames the record filter, leaves the user criteria, and reports it as done;
   //   · named in the user criteria only → refused as "the record filter does not name the field".
-  it.skip('PRODUCT BUG: a User field in <recordFilter> AND <userCriteria> — ⇄ renames the record filter only', () => {
+  it('a User field in <recordFilter> AND <userCriteria> — ⇄ renames the record filter only', () => {
     const x = rule(kind, 'Region__c = $User.SFTK_Live_Blk__c', "$User.SFTK_Live_Blk__c = 'EMEA'");
     const r = M.sftkMdEditField('RestrictionRule', x, 'User', F, N);
     expect(r.refused || !names(r.xml)).toBeTruthy();
   });
-  it.skip('PRODUCT BUG: a User field in <userCriteria> only — ⇄ is refused as "the record filter does not name the field"', () => {
+  it('a User field in <userCriteria> only — ⇄ is refused as "the record filter does not name the field"', () => {
     const x = rule(kind, 'OwnerId = $User.Id', "$User.SFTK_Live_Blk__c = 'EMEA'");
     const r = M.sftkMdEditField('RestrictionRule', x, 'User', F, N);
     expect(r.refused).toBeNull();

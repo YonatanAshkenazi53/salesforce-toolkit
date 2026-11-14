@@ -4369,8 +4369,10 @@ const FieldCleaner = (() => {
       for (const v of (r?.records || [])) {
         // ProcessType 'Workflow' is a Process Builder process: the index lists
         // it as a Flow and it blocks the delete like one (live 2026-11-06),
-        // but the flow fix must not rewrite it — it is left to Setup.
-        _flowVerInfo[String(v.Id).substring(0, 15)] = { defId: v.DefinitionId, num: Number(v.VersionNumber) || 0, status: v.Status || '', pb: v.ProcessType === 'Workflow' };
+        // but the flow fix must not rewrite it — it is left to Setup. So are
+        // InvocableProcess and CustomEvent (2026-11-14): the invocable and the
+        // platform-event kinds of Process Builder, as sftkFlowKindOf names them.
+        _flowVerInfo[String(v.Id).substring(0, 15)] = { defId: v.DefinitionId, num: Number(v.VersionNumber) || 0, status: v.Status || '', pb: v.ProcessType === 'Workflow' || v.ProcessType === 'InvocableProcess' || v.ProcessType === 'CustomEvent' };
       }
     }
   }
@@ -4470,7 +4472,7 @@ const FieldCleaner = (() => {
       }
       if (type === 'EmailTemplate') {
         const rec = await _tplRead(componentId);
-        const r = swap ? sftkTplReplace(rec, field, nf) : sftkTplRemove(rec, field);
+        const r = swap ? sftkTplReplace(rec, field, nf, obj) : sftkTplRemove(rec, field, obj);   // another object's same-named field stays (2026-11-14)
         if (!r.n) return '';
         return r.fields.map(k => hd(`<code>${esc(k)}</code>`) + _textDiffHtml(rec[k], r.rec[k])).join('');
       }
@@ -4491,7 +4493,7 @@ const FieldCleaner = (() => {
         if (!fullName || (row && row._managed)) return '';
         const before = await readReportType(fullName);
         const res = swap ? sftkRtReplaceField(before, obj, field, nf) : sftkRtRemoveField(before, obj, field);
-        if (!res.changed) return '';
+        if (!res.changed || (res.viaLookup && res.viaLookup.length)) return '';   // refused by the fix (2026-11-14)
         return hd('The XML') + _xmlDiffHtml(before, res.xml);
       }
     } catch (_) { /* no preview: the confirm still states what happens, and the fix reports its own error */ }
@@ -5589,10 +5591,26 @@ const FieldCleaner = (() => {
     const rec      = `$record.${fieldApi}`.toLowerCase();
     const recPrior = `$record__prior.${fieldApi}`.toLowerCase();
 
+    // Whose field a reference names (2026-11-14): a bare <field> belongs to the element's own object, and
+    // "con.Region__c" to the object of the resource "con". Without this, ✂ on Account.Region__c also stripped
+    // Contact.Region__c from a Get Records on Contact — a deploy that succeeds and quietly widens another query.
+    // The resolver is the one ⇄ Replace uses (sftk-fieldreplace.js, loaded before this file); when it is missing,
+    // or a root cannot be resolved, the reference is matched as before.
+    const objL   = String(objApi).toLowerCase();
+    const resObj = typeof sftkFlowResourceObjects === 'function' ? sftkFlowResourceObjects(metadata) : null;
+    const onObj  = el => !el || !el.object || String(el.object).toLowerCase() === objL;
+
     function refMatches(ref) {
       if (ref == null) return false;
       const r = String(ref).toLowerCase();
-      return r === fl || r === full || r === rec || r === recPrior || r.endsWith('.' + fl);
+      if (r === full) return true;
+      if (!(r === fl || r === rec || r === recPrior || r.endsWith('.' + fl))) return false;
+      const parts = r.split('.');
+      if (parts.length === 2 && resObj) {
+        const owner = resObj.get(parts[0]);
+        if (owner && String(owner).toLowerCase() !== objL) return false;
+      }
+      return true;
     }
 
     function strip(arr, testFn) {
@@ -5603,39 +5621,58 @@ const FieldCleaner = (() => {
       return after;
     }
 
+    // The <filters> of Start / Get / Update / Delete Records (2026-11-14). Mirrors the decision guard below: a
+    // condition on the field goes only when others are left to stand on and the logic is a plain AND / OR. A
+    // numbered logic ("1 AND (2 OR 3)") would still name a condition that is gone, and Salesforce refuses the
+    // version; taking out the ONLY condition makes the element act on every record of the object (an Update or
+    // Delete of every Account, a trigger on every save). Such an element is left whole, so the scan reports it.
+    function stripFilters(el) {
+      const fs = el && el.filters;
+      if (!Array.isArray(fs)) return;
+      const hit = fs.filter(f => refMatches(f && f.field)).length;
+      if (!hit || hit === fs.length) return;
+      if (!/^(and|or)$/i.test(String(el.filterLogic || 'and').trim())) return;
+      el.filters = fs.filter(f => !refMatches(f && f.field));
+      changes += hit;
+    }
+
     // ── start — record-triggered flow entry criteria + assignments ──────
-    // Very common for fields used in "trigger when …" conditions.
-    if (metadata.start && typeof metadata.start === 'object') {
-      metadata.start.filters = strip(metadata.start.filters, f => refMatches(f.field));
+    // Very common for fields used in "trigger when …" conditions. A start on another object is not ours.
+    if (metadata.start && typeof metadata.start === 'object' && onObj(metadata.start)) {
+      stripFilters(metadata.start);
       // Some flows have `start.schedule.filters` or `start.scheduledPaths[].filters`
       if (Array.isArray(metadata.start.scheduledPaths)) {
         for (const sp of metadata.start.scheduledPaths) {
-          sp.filters = strip(sp.filters, f => refMatches(f.field));
+          stripFilters(sp);
         }
       }
     }
 
-    // ── recordLookups — filter conditions, output assignments, queried fields
+    // ── recordLookups — filter conditions, output assignments, queried fields (only on the field's own object)
     for (const el of (metadata.recordLookups || [])) {
-      el.filters           = strip(el.filters,           f => refMatches(f.field));
+      if (!onObj(el)) continue;
+      stripFilters(el);
       el.outputAssignments = strip(el.outputAssignments, a => refMatches(a.field));
       el.queriedFields     = strip(el.queriedFields,     f => refMatches(f));
     }
 
     // ── recordCreates — field assignments
     for (const el of (metadata.recordCreates || [])) {
+      if (!onObj(el)) continue;
       el.inputAssignments = strip(el.inputAssignments, a => refMatches(a.field));
     }
 
     // ── recordUpdates — filter conditions + field assignments
     for (const el of (metadata.recordUpdates || [])) {
-      el.filters          = strip(el.filters,          f => refMatches(f.field));
+      if (!onObj(el)) continue;
+      stripFilters(el);
       el.inputAssignments = strip(el.inputAssignments, a => refMatches(a.field));
     }
 
     // ── recordDeletes — filter conditions
     for (const el of (metadata.recordDeletes || [])) {
-      el.filters = strip(el.filters, f => refMatches(f.field));
+      if (!onObj(el)) continue;
+      stripFilters(el);
     }
 
     // ── screens — recursively remove inputs that directly bind to this field
@@ -6194,6 +6231,10 @@ const FieldCleaner = (() => {
     const swap = _swapOn();
     const swapTo = swap ? _replField.api : '';
     const res = swap ? sftkRtReplaceField(before, obj, field, swapTo) : sftkRtRemoveField(before, obj, field);
+    // A column reaching the field through a lookup (Parent.Field) is never edited here — which
+    // object it reaches cannot be told from the XML — and it keeps the type naming the field, so
+    // the deploy would only half-do the job: refused whole, with the column named (2026-11-14).
+    if (res.viaLookup && res.viaLookup.length) throw fail(`"${componentName}" also has ${res.viaLookup.join('; ')} — a column reached through a lookup is not edited here (it may be another object’s field of the same name). Remove or change it in Setup → Report Types, then re-scan.`);
     if (!res.changed) throw fail(`"${componentName}" has no column of ${obj}.${field}${res.skipped.length ? ` — the same field name appears under another table (${res.skipped.join('; ')}), which is not this field` : ''}. Check it in Setup → Report Types.`);
     // Restore point FIRST — the fix is only offered with a way back.
     await _snapshotFix('ReportType', componentId, componentName, fullName, { innerXml: before });
@@ -6847,6 +6888,15 @@ const FieldCleaner = (() => {
         });
       }
     }
+    // The mini layout (hover / console mini page) lists plain field names of the layout's own
+    // object. Left there, the field outlived its slot and the fix's verify — this same
+    // function on the re-read — still called the layout clean (2026-11-14).
+    const mf = metadata.miniLayout && metadata.miniLayout.fields;
+    if (Array.isArray(mf)) {
+      const kept = mf.filter(x => String(x).toLowerCase() !== fl);
+      changes += mf.length - kept.length;
+      metadata.miniLayout.fields = kept;
+    }
     return changes;
   }
 
@@ -6954,7 +7004,10 @@ const FieldCleaner = (() => {
         s === `${obj}.${fl}` ||
         s === `objectrecord.${fl}` ||
         s === `$record.${fl}` ||
-        s.endsWith(`.${fl}`)
+        // only the page record's own field: a longer path ({!Record.Owner.Field}) reaches a
+        // RELATED record's same-named field — another object's, which ⇄ (sftkFlexiReplaceField)
+        // also leaves alone. Matching any ".Field" suffix took such criteria out (2026-11-14).
+        s === `record.${fl}`
       );
     }
 
@@ -7888,7 +7941,12 @@ const FieldCleaner = (() => {
       if (typeof g[spec.code] !== 'string') throw new Error(`the source of "${fullName}" could not be read — nothing is changed without a restore point`);
       // only a Visualforce page or component carries a <label>; an Apex class or trigger with one is refused (live 2026-11-07: the class restore failed on it)
       const withLabel = spec.metaTag === 'ApexPage' || spec.metaTag === 'ApexComponent';
-      const extra = withLabel ? { label: g.MasterLabel || g.Label || fullName } : null;
+      // what the -meta.xml held goes back with it (2026-11-14): an Apex unit's Status (an Inactive trigger stays off),
+      // a page's touch / CSRF boxes and a page's or component's description (left out, a deploy resets them)
+      const extra = withLabel
+        ? { label: g.MasterLabel || g.Label || fullName, description: g.Description || '',
+          ...(spec.metaTag === 'ApexPage' ? { availableInTouch: g.IsAvailableInTouch, confirmationTokenRequired: g.IsConfirmationTokenRequired } : {}) }
+        : { status: g.Status };
       const file = `${fullName}.${spec.suffix}`;
       const sources = [{ path: `${spec.folder}/${file}`, file, source: g[spec.code] }];
       const build = srcs => sftkMdCodeFiles(type, fullName, (srcs[0] || {}).source, g.ApiVersion, extra);
@@ -7909,7 +7967,8 @@ const FieldCleaner = (() => {
     }
     if (!resources.length) throw new Error(`"${fullName}" came back with no files — nothing is changed without a restore point`);
     const m = g.Metadata || {};
-    const meta = { apiVersion: m.apiVersion || g.ApiVersion, isExposed: m.isExposed, masterLabel: m.masterLabel || g.MasterLabel, description: m.description || g.Description };
+    const meta = { apiVersion: m.apiVersion || g.ApiVersion, isExposed: m.isExposed, masterLabel: m.masterLabel || g.MasterLabel, description: m.description || g.Description,
+      targets: m.targets, targetConfigs: m.targetConfigs };   // an LWC's placements go back too (2026-11-14)
     const build = srcs => sftkMdBundleFiles(type, fullName, srcs.map(s => ({ path: s.path, source: s.source })), meta);
     return { sources: resources, files: build(resources), build, byName: `SELECT Id FROM ${spec.tooling} WHERE DeveloperName = '${q(fullName)}'`, verifyOf };
   }
@@ -8230,7 +8289,14 @@ const FieldCleaner = (() => {
     const field = _selField.api;
     const nf = swap && _replOn() ? _replField.api : null;
     const rec = await _tplRead(componentId);
-    const r = nf ? sftkTplReplace(rec, field, nf) : sftkTplRemove(rec, field);
+    // objApi: a merge field of another object's same-named field is left as it is (2026-11-14)
+    const r = nf ? sftkTplReplace(rec, field, nf, _selObj.api) : sftkTplRemove(rec, field, _selObj.api);
+    // a Visualforce component bound to the field that ✂ cannot take out: refused with the reason, nothing written (2026-11-14)
+    if (r.refused) {
+      const e = new Error(`"${componentName}": ${r.refused}.`);
+      e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/o/EmailTemplate/home`;
+      throw e;
+    }
     if (!r.n) {
       const e = new Error(nf
         ? `"${componentName}" writes ${field} nowhere as a word in its subject, body, HTML or markup — the index lists it for a mention elsewhere (a description, a letterhead…). Open 🔍 to see the texts.`
@@ -8250,9 +8316,9 @@ const FieldCleaner = (() => {
     const hits = sftkTplHits(rec, field);
     const shown = sftkTplTextFields().filter(k => typeof rec[k] === 'string' && rec[k]);
     const body = shown.map(k => { const n = hits.filter(x => x.field === k).length; const h = _xiHighlightApex(rec[k]); return `<div class="fc-code-file"><div class="fc-code-file-hd"><code>${esc(k)}</code><span class="fc-code-file-n">${n ? `${n} line${n === 1 ? ' names' : 's name'} the field` : 'no line names the field'}</span></div><pre class="fc-xml-pre fc-xml-pre--code"><code>${h.html}</code></pre></div>`; }).join('');
-    const rp = _replOn() ? sftkTplReplace(rec, field, _replField.api) : null;
-    const rm = sftkTplRemove(rec, field);
-    const hint = `<div class="fc-xml-hint">✂ Remove takes every merge field that names <code>${esc(field)}</code> out of the texts${rm.n ? ` — here ${rm.n} in ${rm.fields.join(', ')}` : ' — none here'}. ⇄ Replace renames it inside them${rp ? (rp.n ? ` — here ${rp.n} place${rp.n === 1 ? '' : 's'} would name <code>${esc(_replField.api)}</code>` : ' — nothing here writes it as a word') : ' — pick a replacement field above to see what it would change'}. ✎ edits the texts as they are.</div>`;
+    const rp = _replOn() ? sftkTplReplace(rec, field, _replField.api, _selObj.api) : null;
+    const rm = sftkTplRemove(rec, field, _selObj.api);
+    const hint = `<div class="fc-xml-hint">✂ Remove takes every merge field that names <code>${esc(field)}</code> out of the texts${rm.refused ? ` — not here: ${esc(rm.refused)}` : rm.n ? ` — here ${rm.n} in ${rm.fields.join(', ')}` : ' — none here'}. ⇄ Replace renames it inside them${rp ? (rp.n ? ` — here ${rp.n} place${rp.n === 1 ? '' : 's'} would name <code>${esc(_replField.api)}</code>` : ' — nothing here writes it as a word') : ' — pick a replacement field above to see what it would change'}. ✎ edits the texts as they are.</div>`;
     panel.innerHTML = `
       <div class="fc-xml-hdr">
         <span class="fc-xml-hdr-name">${esc(componentName)} <small class="fc-xml-src">· ${esc(kind)}${rec.FolderName ? ` · ${esc(rec.FolderName)}` : ''} · EmailTemplate ${esc(rec.DeveloperName || componentId)} · REST</small></span>

@@ -45,7 +45,7 @@ const rmStop = FC.indexOf('    return changes;', rmAt);
 const RM_SRC = FC.slice(rmAt, FC.indexOf('}', rmStop) + 1);
 
 const T = new Function('deps', `
-  const { sftkFlowRefScan, sftkFormulaDropField, sftkMdDeleteSpec, sftkMdEditWays, sftkMdCodeWays } = deps;
+  const { sftkFlowRefScan, sftkFormulaDropField, sftkMdDeleteSpec, sftkMdEditWays, sftkMdCodeWays, sftkFlowResourceObjects } = deps;
   let _selObj = { api: '${OBJ}' }, _selField = { api: '${F}' }, _replField = null, _flowVerInfo = {}, _flowCards = [];
   const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const _replOn = () => !!_replField;                    // harness state: is a replacement field chosen
@@ -69,7 +69,7 @@ const T = new Function('deps', `
   return { buildFlowXml, buildFlowPackageXml, buildFlowZip, flowReferencesField, _fieldStringTester, _removeSelectedFlowBlocks, removeFieldRefs,
     cardsOf(rows, verInfo) { _flowVerInfo = verInfo; _flowCards = _flowCardsOf(rows); return _flowCards; },
     buttons(id, name, replaceTo) { _replField = replaceTo ? { api: replaceTo } : null; try { return _fixBtnsHtml('Flow', id, name); } finally { _replField = null; } } };
-`)({ sftkFlowRefScan: S.sftkFlowRefScan, sftkFormulaDropField: M.sftkFormulaDropField, sftkMdDeleteSpec: M.sftkMdDeleteSpec, sftkMdEditWays: M.sftkMdEditWays, sftkMdCodeWays: M.sftkMdCodeWays });
+`)({ sftkFlowRefScan: S.sftkFlowRefScan, sftkFormulaDropField: M.sftkFormulaDropField, sftkMdDeleteSpec: M.sftkMdDeleteSpec, sftkMdEditWays: M.sftkMdEditWays, sftkMdCodeWays: M.sftkMdCodeWays, sftkFlowResourceObjects: R.sftkFlowResourceObjects });
 
 // ── test-side helpers ──────────────────────────────────────────────────────────────────────────────────────────
 // Flow elements that repeat (the Tooling API returns them as arrays, also when there is one)
@@ -359,18 +359,18 @@ describe('RECORD-TRIGGERED FLOW — Start entry conditions', () => {
     expect(r.preview.removed).toHaveLength(5);
     expect(r.preview.emptied).toEqual([]);
   });
-  // PRODUCT BUG: removeFieldRefs strips a <filters> of Start / Get / Update / Delete Records without looking at the
+  // FIXED 2026-11-14 (stripFilters leaves such an element whole and reported): removeFieldRefs stripped a <filters> of Start / Get / Update / Delete Records without looking at the
   // element's <filterLogic>. With a numbered logic ("1 AND (2 OR 3)") the logic still names condition 3 of two —
   // Salesforce refuses the new version. The decisions of the same function leave a numbered logic alone on purpose.
-  it.skip('PRODUCT BUG: a numbered filterLogic on Start is left consistent (renumbered, or the element is left alone and reported)', () => {
+  it('a numbered filterLogic on Start is left consistent (renumbered, or the element is left alone and reported)', () => {
     const r = cut(flowXml('RT', 'AutoLaunchedFlow', [startRT('Done', filter('Type', 'Customer') + filter(F) + filter('Industry', 'Banking'), '1 AND (2 OR 3)'), DONE, NOTE].join('\n')));
     expect(logicFits(r.after.start.filterLogic, r.after.start.filters.length)).toBe(true);
   });
-  // PRODUCT BUG: the field is the ONLY entry condition → the condition goes and the flow now fires on every save of
+  // FIXED 2026-11-14 (the element is left whole and reported): the field is the ONLY entry condition → the condition goes and the flow now fires on every save of
   // the object (and <filterLogic>and</filterLogic> stays behind with no <filters>). A decision outcome that rests on
   // the field alone is refused by the same function; here nothing is refused and the preview's "emptied" (the
   // warning of the confirm) does not list it either — NEEDS_SOMETHING has no 'filters'.
-  it.skip('PRODUCT BUG: the only entry condition of Start is not taken out silently (left and reported, or named as emptied)', () => {
+  it('the only entry condition of Start is not taken out silently (left and reported, or named as emptied)', () => {
     const r = cut(flowXml('RT', 'AutoLaunchedFlow', [startRT('Done', filter(F)), DONE, NOTE].join('\n')));
     const leftAlone = r.n === 0 && r.preview.remaining.length === 1;
     const warned = r.preview.emptied.length === 1 && r.after.start.filterLogic === undefined;
@@ -543,14 +543,14 @@ describe('GET RECORDS', () => {
     expect(T.flowReferencesField(r.after)).toBe(true);
     expect(r.preview.remaining).toEqual([expect.objectContaining({ kind: 'Get Records', name: 'Find', value: F, where: 'sortField' })]);
   });
-  it.skip('PRODUCT BUG: a numbered filterLogic on Get Records is left consistent after ✂', () => {
+  it('a numbered filterLogic on Get Records is left consistent after ✂', () => {
     const r = cut(wrap(lookup(filter('Name', 'Acme') + filter(F) + filter('Type', 'Customer'), 'Account', '1 AND (2 OR 3)')));
     expect(logicFits(r.after.recordLookups[0].filterLogic, r.after.recordLookups[0].filters.length)).toBe(true);
   });
-  // PRODUCT BUG: refMatches() accepts the BARE name and any "….Region__c" whatever object the element works on.
+  // FIXED 2026-11-14 (onObj + the resource resolver of ⇄): refMatches() accepted the BARE name and any "….Region__c" whatever object the element works on.
   // ✂ on Account.Region__c also strips Contact.Region__c from a Get Records on Contact, and con.Region__c from an
   // assignment on a Contact variable. ⇄ Replace (sftkFlowReplaceField) tells them apart — see the REPLACE block.
-  it.skip('PRODUCT BUG: ✂ on Account.Region__c leaves the same-named field of ANOTHER object alone', () => {
+  it('✂ on Account.Region__c leaves the same-named field of ANOTHER object alone', () => {
     const r = cut(flowXml('Auto', 'AutoLaunchedFlow', [startPlain('Find'),
       lookup(filter('LastName', 'Smith') + filter(F), 'Contact'),
       assignment('Done', item('con.Region__c', null, 'EMEA') + item('acct.Region__c', null, 'EMEA') + item('note', null, 'x')), NOTE, ACCT, CON].join('\n')));
@@ -605,14 +605,14 @@ describe('UPDATE RECORDS', () => {
     expect(r.after.recordUpdates[0].inputAssignments).toEqual([{ field: 'Description', value: { elementReference: 'acct.Region__c' } }]);
     expect(r.preview.remaining).toEqual([expect.objectContaining({ kind: 'Update Records', name: 'Upd', where: 'field value 1', value: 'acct.Region__c' })]);
   });
-  it.skip('PRODUCT BUG: a numbered filterLogic on Update Records is left consistent after ✂', () => {
+  it('a numbered filterLogic on Update Records is left consistent after ✂', () => {
     const r = cut(wrap(update(`
         <filterLogic>1 AND (2 OR 3)</filterLogic>${filter('Type', 'Customer') + filter(F) + filter('Industry', 'Banking')}${inAssign('Description', null, 'x')}`)));
     expect(logicFits(r.after.recordUpdates[0].filterLogic, r.after.recordUpdates[0].filters.length)).toBe(true);
   });
-  // PRODUCT BUG (same root as the Start one): the only filter of an Update / Delete Records goes without a word —
+  // FIXED 2026-11-14 (same root as the Start one): the only filter of an Update / Delete Records goes without a word —
   // the element would act on EVERY record of the object if Salesforce took it; "emptied" does not name it.
-  it.skip('PRODUCT BUG: the only filter of an Update Records is not taken out silently', () => {
+  it('the only filter of an Update Records is not taken out silently', () => {
     const r = cut(wrap(update(`
         <filterLogic>and</filterLogic>${filter(F)}${inAssign('Description', null, 'x')}`)));
     const leftAlone = r.n === 0 && r.preview.remaining.length === 1;
@@ -679,7 +679,7 @@ describe('DELETE RECORDS', () => {
     expect(r.after.recordDeletes[0].filters.map(f => f.field)).toEqual(['Type']);
     expectClean(r);
   });
-  it.skip('PRODUCT BUG: the only filter of a Delete Records is not taken out silently (it would delete every record of the object)', () => {
+  it('the only filter of a Delete Records is not taken out silently (it would delete every record of the object)', () => {
     const r = cut(del(filter(F)));
     const leftAlone = r.n === 0 && r.preview.remaining.length === 1;
     const warned = r.preview.emptied.some(e => e.name === 'Del');
@@ -1007,10 +1007,10 @@ describe('PROCESS BUILDER — told apart, never rewritten, deleted as a whole', 
     expect(cards[0].pb).toBe(true);
     expect(cards[0].active.num).toBe(2);
   });
-  // PRODUCT BUG: only ProcessType 'Workflow' is marked pb. The two other Process Builder kinds — an invocable
+  // FIXED 2026-11-14: only ProcessType 'Workflow' is marked pb. The two other Process Builder kinds — an invocable
   // process (InvocableProcess) and a platform-event process (CustomEvent), which sftkFlowKindOf itself calls
   // "Process Builder (…)" — pass for a flow, so their card gets ✂ / ⇄ and the remover would rewrite and redeploy them.
-  it.skip('PRODUCT BUG: an invocable process and a platform-event process are Process Builder too', () => {
+  it('an invocable process and a platform-event process are Process Builder too', () => {
     const m = /_flowVerInfo\[String\(v\.Id\)\.substring\(0, 15\)\] = \{[^\n]*?pb: ([^\n]+?) \};/.exec(FC);
     const isPb = new Function('v', `return (${m[1]});`);
     expect(B.sftkFlowKindOf('', 'InvocableProcess')).toContain('Process Builder');

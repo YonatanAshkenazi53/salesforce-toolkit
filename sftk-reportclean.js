@@ -99,13 +99,24 @@ function sftkRptStripField(meta, objectApi, fieldApi) {
     } else {
       removed.columns = cols.length - keptCols.length;
       m.detailColumns = keptCols;
+      // A sort on a column the report no longer has is refused or left behind; without
+      // the entry the report falls back to its default order (2026-11-14).
+      if (Array.isArray(m.sortBy)) m.sortBy = m.sortBy.filter(sb => !isHit(sb && sb.sortColumn));
     }
   }
 
   const fils = m.reportFilters || [];
   const keptFils = fils.filter(f => !isHit(f && f.column));
-  removed.filters = fils.length - keptFils.length;
-  if (removed.filters) m.reportFilters = keptFils;
+  if (keptFils.length !== fils.length && m.reportBooleanFilter) {
+    // The filter logic numbers the filters by position: taking one out leaves numbers
+    // that point at nothing (refused on save) or at another filter (a silent change of
+    // meaning). Re-numbering a mixed AND/OR would guess at the owner's intent, so the
+    // filters stay and the logic is named (2026-11-14).
+    manual.push(`the report has filter logic (“${m.reportBooleanFilter}”) that numbers its filters — edit the logic first`);
+  } else {
+    removed.filters = fils.length - keptFils.length;
+    if (removed.filters) m.reportFilters = keptFils;
+  }
 
   for (const key of ['groupingsDown', 'groupingsAcross']) {
     const gs = m[key] || [];
@@ -123,7 +134,8 @@ function sftkRptStripField(meta, objectApi, fieldApi) {
     m[key] = kept;
   }
 
-  if (hits.elsewhere) {
+  // judged on the EDITED copy: a sort that went with its column is no leftover (2026-11-14)
+  if (sftkRptFieldHits(m, objectApi, fieldApi).elsewhere) {
     manual.push('it is referenced in a formula, bucket, cross filter or chart — those are never auto-edited; open the report to fix them');
   }
   for (const p of [...new Set(hits.possible)]) {

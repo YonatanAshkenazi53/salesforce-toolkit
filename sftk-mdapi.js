@@ -290,10 +290,20 @@ function sftkRtEdit(innerXml, visit) {
 }
 
 // How many columns of objApi.fieldApi the type has (0 = not referenced).
+// A column names the field plainly (<field>Field</field>) or REACHED THROUGH A LOOKUP of the
+// table (<field>Parent.Field</field>). The lookup form was not seen at all, so ✂ answered
+// "removed — verified" while the type still named the field (2026-11-14). Which object the
+// lookup reaches cannot be told from the XML (Parent → this object, Owner → User), so the
+// lookup form is counted here (the scan and the verify never call the type clean) and the
+// removers below never edit it — they name it in `viaLookup` (and `skipped`).
 function sftkRtMentions(innerXml, objApi, fieldApi) {
   const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
   let n = 0;
-  sftkRtEdit(innerXml, (field, table) => { if (field.toLowerCase() === f && table.toLowerCase() === o) n++; return 'keep'; });
+  sftkRtEdit(innerXml, (field, table) => {
+    const x = field.toLowerCase();
+    if (table.toLowerCase() === o && (x === f || x.endsWith('.' + f))) n++;
+    return 'keep';
+  });
   return n;
 }
 
@@ -302,33 +312,40 @@ function sftkRtMentions(innerXml, objApi, fieldApi) {
 function sftkRtRemoveField(innerXml, objApi, fieldApi) {
   const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
   const skipped = [];
+  const viaLookup = [];
   const r = sftkRtEdit(innerXml, (field, table, label) => {
+    if (table.toLowerCase() === o && field.toLowerCase().endsWith('.' + f)) { viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`); return 'keep'; }
     if (field.toLowerCase() !== f) return 'keep';
     if (table.toLowerCase() === o) return 'drop';
     skipped.push(`${table}.${field} in “${label}”`);
     return 'keep';
   });
-  return { xml: r.xml, removed: r.dropped, emptied: r.emptied, skipped, changed: r.dropped > 0 };
+  return { xml: r.xml, removed: r.dropped, emptied: r.emptied, skipped: [...viaLookup, ...skipped], viaLookup, changed: r.dropped > 0 };
 }
 
 // ⇄ Replace: the column names the new field in place. When the new field is
 // already a column of the same table, the old column is removed instead
 // (a column may appear once) and `newAlreadyThere` says so.
 function sftkRtReplaceField(innerXml, objApi, fieldApi, newFieldApi) {
-  const newAlreadyThere = sftkRtMentions(innerXml, objApi, newFieldApi) > 0;
+  // a PLAIN column of the new field only: Parent.NewField is not this table's column (2026-11-14)
+  const nf = String(newFieldApi || '').toLowerCase(), no = String(objApi || '').toLowerCase();
+  let newAlreadyThere = false;
+  sftkRtEdit(innerXml, (field, table) => { if (field.toLowerCase() === nf && table.toLowerCase() === no) newAlreadyThere = true; return 'keep'; });
   if (newAlreadyThere) {
     const rm = sftkRtRemoveField(innerXml, objApi, fieldApi);
-    return { xml: rm.xml, swapped: 0, dropped: rm.removed, emptied: rm.emptied, skipped: rm.skipped, newAlreadyThere, changed: rm.changed };
+    return { xml: rm.xml, swapped: 0, dropped: rm.removed, emptied: rm.emptied, skipped: rm.skipped, viaLookup: rm.viaLookup, newAlreadyThere, changed: rm.changed };
   }
   const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
   const skipped = [];
+  const viaLookup = [];
   const r = sftkRtEdit(innerXml, (field, table, label) => {
+    if (table.toLowerCase() === o && field.toLowerCase().endsWith('.' + f)) { viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`); return 'keep'; }
     if (field.toLowerCase() !== f) return 'keep';
     if (table.toLowerCase() === o) return { rename: newFieldApi };
     skipped.push(`${table}.${field} in “${label}”`);
     return 'keep';
   });
-  return { xml: r.xml, swapped: r.renamed, dropped: 0, emptied: r.emptied, skipped, newAlreadyThere, changed: r.renamed > 0 };
+  return { xml: r.xml, swapped: r.renamed, dropped: 0, emptied: r.emptied, skipped: [...viaLookup, ...skipped], viaLookup, newAlreadyThere, changed: r.renamed > 0 };
 }
 
 // The two files a report-type deploy needs (the zip builder lives in sftk-zip.js).
@@ -370,7 +387,8 @@ function sftkMdChildren(innerXml, tag) {
 
 // Does this XML name the field? True when a field-carrying element
 // (criteria <field>, a matching <fieldName>, an outbound message's <fields>,
-// a mapping's <inputField>/<outputField>) holds "Field__c" or
+// a mapping's <inputField>/<outputField>, a workflow time trigger's
+// <offsetFromField> — added 2026-11-14) holds "Field__c" or
 // "Object.Field__c", or when a formula-carrying element (<formula>,
 // <errorConditionFormula>, <recordFilter>) mentions the field as a whole
 // token. Case-insensitive, as Salesforce is.
@@ -378,15 +396,24 @@ function sftkMdMentionsField(innerXml, objApi, fieldApi) {
   const s = String(innerXml || '');
   const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
   if (!f) return false;
-  const nameRe = /<(?:[A-Za-z0-9_.-]+:)?(field|fieldName|fields|inputField|outputField|leftValueReference)(?:\s[^>]*)?>([^<]*)<\//g;
+  const nameRe = /<(?:[A-Za-z0-9_.-]+:)?(field|fieldName|fields|inputField|outputField|leftValueReference|offsetFromField)(?:\s[^>]*)?>([^<]*)<\//g;
   let m;
   while ((m = nameRe.exec(s))) {
     const v = sftkMdUnescape(m[2]).trim().toLowerCase();
     if (v === f || v === `${o}.${f}` || v.endsWith(`.${f}`)) return true;
   }
+  // an approval step's approver can be a User lookup of the record (<approver><name>Field__c</name>
+  // <type>relatedUserField</type>) — a targeted pattern, as <name> elsewhere is an API name, not a field (2026-11-14)
+  const apRe = /<approver>\s*<name>([^<]*)<\/name>\s*<type>relatedUserField<\/type>/g;
+  while ((m = apRe.exec(s))) {
+    const v = sftkMdUnescape(m[1]).trim().toLowerCase();
+    if (v === f || v === `${o}.${f}`) return true;
+  }
   const esc = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const tokenRe = new RegExp(`(^|[^a-z0-9_])${esc}([^a-z0-9_]|$)`, 'i');
-  const formulaRe = /<(?:[A-Za-z0-9_.-]+:)?(formula|errorConditionFormula|recordFilter|booleanFilter)(?:\s[^>]*)?>([^<]*)<\//g;
+  // an entitlement process's <milestoneCriteriaFormula> / <exitCriteriaFormula> too: MetadataComponentDependency
+  // returns nothing for them, so this test is the scan's only eye on them (2026-11-14)
+  const formulaRe = /<(?:[A-Za-z0-9_.-]+:)?(formula|errorConditionFormula|recordFilter|booleanFilter|milestoneCriteriaFormula|exitCriteriaFormula)(?:\s[^>]*)?>([^<]*)<\//g;
   while ((m = formulaRe.exec(s))) {
     if (tokenRe.test(sftkMdUnescape(m[2]))) return true;
   }
@@ -566,13 +593,22 @@ function _sftkApiVer(v) {
   return Number.isFinite(n) && n > 0 ? n.toFixed(1) : String(v || '62.0');
 }
 // The files that put a piece of code back: the source and its -meta.xml.
+//   extra: { status } for Apex (the Tooling Status: an Inactive trigger stays Inactive — a fixed "Active" switched a
+//   trigger the admin had turned off back on, 2026-11-14; "Deleted" is never written back, a ⇄ / ✎ / restore must not
+//   delete); { label, description, availableInTouch, confirmationTokenRequired } for Visualforce (what the page-meta
+//   holds — left out, a deploy resets them to false / empty, 2026-11-14). Written in the schema's order.
 function sftkMdCodeFiles(type, name, source, apiVersion, extra) {
   const s = sftkMdDeleteSpec(type);
   if (!s || !s.code) return null;
+  const x = extra || {};
+  const isApex = s.metaTag === 'ApexClass' || s.metaTag === 'ApexTrigger', isPage = s.metaTag === 'ApexPage';
   const meta = '<?xml version="1.0" encoding="UTF-8"?>\n'
     + `<${s.metaTag} xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>${sftkMdEscape(_sftkApiVer(apiVersion))}</apiVersion>`
-    + (s.metaTag === 'ApexClass' || s.metaTag === 'ApexTrigger' ? '<status>Active</status>' : '')
-    + (extra && extra.label ? `<label>${sftkMdEscape(extra.label)}</label>` : '')
+    + (isApex ? `<status>${x.status === 'Inactive' ? 'Inactive' : 'Active'}</status>` : '')
+    + (isPage && typeof x.availableInTouch === 'boolean' ? `<availableInTouch>${x.availableInTouch}</availableInTouch>` : '')
+    + (isPage && typeof x.confirmationTokenRequired === 'boolean' ? `<confirmationTokenRequired>${x.confirmationTokenRequired}</confirmationTokenRequired>` : '')
+    + (!isApex && x.description ? `<description>${sftkMdEscape(x.description)}</description>` : '')
+    + (!isApex && x.label ? `<label>${sftkMdEscape(x.label)}</label>` : '')
     + `</${s.metaTag}>`;
   return [
     { name: 'package.xml', text: _sftkPkgXml([[type, name]]) },
@@ -592,11 +628,25 @@ function sftkMdBundleFiles(type, name, resources, meta) {
     files.push({ name: p.startsWith(`${s.bundle}/`) ? p : `${s.bundle}/${name}/${p}`, text: String(r.source || '') });
   }
   const m = meta || {};
+  // an LWC's <targets> and <targetConfigs> go back as they were: without them a redeploy un-exposes the component from
+  // every page type (or is refused while a Lightning page still uses it), 2026-11-14. The Tooling Metadata gives
+  // targetConfigs as base64 of the inner XML; a value that is already XML is kept as it is.
+  const tcXml = v => {
+    const t = String(v || '').trim();
+    if (!t || !/^[A-Za-z0-9+/=\s]+$/.test(t)) return t;
+    try { return new TextDecoder().decode(Uint8Array.from(atob(t.replace(/\s+/g, '')), ch => ch.charCodeAt(0))); } catch { return t; }
+  };
+  const targets = m.targets ? [].concat(m.targets.target != null ? m.targets.target : []).filter(Boolean) : [];
+  const tc = type === 'LightningComponentBundle' ? tcXml(m.targetConfigs) : '';
+  const lwcMeta = () => (m.description ? `<description>${sftkMdEscape(m.description)}</description>` : '')
+    + `<isExposed>${m.isExposed === true ? 'true' : 'false'}</isExposed>${m.masterLabel ? `<masterLabel>${sftkMdEscape(m.masterLabel)}</masterLabel>` : ''}`
+    + (tc ? `<targetConfigs>${tc}</targetConfigs>` : '')
+    + (targets.length ? `<targets>${targets.map(t => `<target>${sftkMdEscape(t)}</target>`).join('')}</targets>` : '');
   const tag = type === 'LightningComponentBundle' ? 'LightningComponentBundle' : 'AuraDefinitionBundle';
   const metaFile = type === 'LightningComponentBundle' ? `${s.bundle}/${name}/${name}.js-meta.xml` : `${s.bundle}/${name}/${name}.cmp-meta.xml`;
   files.push({ name: metaFile, text: '<?xml version="1.0" encoding="UTF-8"?>\n'
     + `<${tag} xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>${sftkMdEscape(_sftkApiVer(m.apiVersion))}</apiVersion>`
-    + (type === 'LightningComponentBundle' ? `<isExposed>${m.isExposed === true ? 'true' : 'false'}</isExposed>${m.masterLabel ? `<masterLabel>${sftkMdEscape(m.masterLabel)}</masterLabel>` : ''}` : (m.description ? `<description>${sftkMdEscape(m.description)}</description>` : ''))
+    + (type === 'LightningComponentBundle' ? lwcMeta() : (m.description ? `<description>${sftkMdEscape(m.description)}</description>` : ''))
     + `</${tag}>` });
   return files;
 }
@@ -692,15 +742,22 @@ function _sftkMdWalk(xml, tag, visit) {
   }
   return { xml: out + s.slice(cursor), dropped, changed, kept };
 }
-// A formula's references to the field — bare (Field__c) or Obj.Field__c —
-// swapped for newField (or only counted when newField is null).
+// A formula's references to the field — bare (Field__c), Obj.Field__c, or $Setup.Obj.Field__c (a custom setting's
+// field, 2026-11-14) — swapped for newField (or only counted when newField is null).
+// rel counts the field reached through a relationship (Parent.Field__c, Lookup__r.Field__c), which is NOT swapped:
+// it may be this very field (an Account's Parent is an Account) or another object's field of the same name, so
+// renaming it blind is wrong and leaving it behind reports a half-done edit as done (2026-11-14). Callers refuse
+// when rel > 0. A $-global chain ($User.X, $Setup.Other__c.X) names another object's field and is not counted.
 function _sftkMdSwapToken(text, objApi, fieldApi, newField) {
   const rx = x => String(x || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (!fieldApi) return { text: String(text || ''), n: 0 };
-  const re = new RegExp(`(^|[^A-Za-z0-9_.])((?:${rx(objApi)}\\.)?)${rx(fieldApi)}(?![A-Za-z0-9_])`, 'gi');
-  let n = 0;
-  const out = String(text || '').replace(re, (m, pre, ob) => { n++; return newField ? pre + ob + newField : m; });
-  return { text: out, n };
+  if (!fieldApi) return { text: String(text || ''), n: 0, rel: 0 };
+  const re = new RegExp(`(^|[^A-Za-z0-9_.])((?:\\$Setup\\.${rx(objApi)}\\.|${rx(objApi)}\\.)?)${rx(fieldApi)}(?![A-Za-z0-9_])`, 'gi');
+  let n = 0, rel = 0;
+  const src = String(text || ''), o = String(objApi || '').toLowerCase();
+  const out = src.replace(re, (m, pre, ob) => { n++; return newField ? pre + ob + newField : m; });
+  const chain = new RegExp(`(?<![$A-Za-z0-9_.])([$A-Za-z0-9_.]+)\\.${rx(fieldApi)}(?![A-Za-z0-9_])`, 'gi');
+  for (const m of src.matchAll(chain)) { const head = m[1].toLowerCase(); if (head[0] !== '$' && head !== o) rel++; }
+  return { text: out, n, rel };
 }
 // ✂ on a formula, as a SUGGESTION (user 2026-11-10, on a validation rule's confirm: "why can't we just remove the
 // field reference instead of deactivation?" — "we need to let the user to edit it and suggest what to remove. if its
@@ -850,10 +907,12 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   const refuse = why => { if (!refused) refused = why; };
   const plural = (n, w, ws) => `${n} ${n === 1 ? w : (ws || `${w}s`)}`;
   const verb = nf ? `now ${nf}` : 'removed';
-  // a criteria-like element whose <child> names the field: dropped or renamed
-  const items = (src, tag, child) => {
+  // a criteria-like element whose <child> names the field: dropped or renamed; skip(body) true = not this object's
+  // field whatever its name (a filter line on another <table>, 2026-11-14)
+  const items = (src, tag, child, skip) => {
     let n = 0;
     const r = _sftkMdWalk(src, tag, body => {
+      if (skip && skip(body)) return 'keep';
       const el = sftkMdFindElement(body, child, 0);
       if (!el) return 'keep';
       const v = sftkMdUnescape(body.slice(el.bodyStart, el.bodyEnd));
@@ -873,31 +932,68 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     });
     return { xml: r.xml, n, left: r.kept };
   };
-  // formula text: ⇄ swaps the token; ✂ only counts it (a formula is never cut)
-  const formulas = (src, tag) => {
+  // the mapping lines (<objectMapping><mappingFields>) that carry the field: inputField when inputObject is this
+  // object, outputField when outputObject is. ⇄ renames them; ✂ only counts them. Shared by the lead conversion
+  // settings and a duplicate rule's cross-object match (2026-11-14).
+  const mappings = src => {
     let n = 0;
-    const r = _sftkMdWalk(src, tag, body => {
-      const s = _sftkMdSwapToken(body, objApi, fieldApi, nf);
-      n += s.n;
-      return (nf && s.n) ? { body: s.text } : 'keep';
+    const o = String(objApi || '').toLowerCase();
+    const r = _sftkMdWalk(src, 'objectMapping', body => {
+      const io = (sftkMdChildText(body, 'inputObject') || '').toLowerCase(), oo = (sftkMdChildText(body, 'outputObject') || '').toLowerCase();
+      const m = _sftkMdWalk(body, 'mappingFields', mb => {
+        let out = mb, hit = false;
+        for (const [side, objOf] of [['inputField', io], ['outputField', oo]]) {
+          const e = sftkMdFindElement(out, side, 0);
+          if (!e || objOf !== o || !_sftkMdFieldIs(sftkMdUnescape(out.slice(e.bodyStart, e.bodyEnd)), objApi, fieldApi)) continue;
+          n++;
+          if (nf) { out = out.slice(0, e.bodyStart) + sftkMdEscape(nf) + out.slice(e.bodyEnd); hit = true; }
+        }
+        return hit ? { body: out } : 'keep';
+      });
+      return m.changed ? { body: m.xml } : 'keep';
     });
     return { xml: r.xml, n };
   };
+  // formula text: ⇄ swaps the token; ✂ only counts it (a formula is never cut)
+  const formulas = (src, tag) => {
+    let n = 0, rel = 0;
+    const r = _sftkMdWalk(src, tag, body => {
+      const s = _sftkMdSwapToken(body, objApi, fieldApi, nf);
+      n += s.n; rel += s.rel;
+      return (nf && s.n) ? { body: s.text } : 'keep';
+    });
+    return { xml: r.xml, n, rel };
+  };
+  // the field reached through a relationship is never swapped (see _sftkMdSwapToken), so such a formula is refused
+  // whole rather than deployed half-edited and reported done (2026-11-14)
+  const REL = 'the formula also reaches the field through a relationship (X.Field__c) — edit it in Setup';
   switch (type) {
     case 'ValidationRuleInactive':
     case 'ValidationRule': {
       const f = formulas(xml, 'errorConditionFormula');
-      if (!f.n) { refuse('the rule’s formula does not name the field as a whole token — edit it in Setup'); break; }
-      if (nf) { xml = f.xml; how.push(`formula: ${plural(f.n, 'reference')} ${verb}`); break; }
+      // a rule can show its error AT the field (<errorDisplayField>); the scan counts it, so ✂ / ⇄ must move it too,
+      // or the deployed rule still names the field (2026-11-14). texts() renames it on ⇄ and drops it on ✂ —
+      // with no errorDisplayField the error shows at the top of the page, which Salesforce accepts.
+      const ed = texts(f.xml, 'errorDisplayField');
+      const edWhat = nf ? `error location ${verb}` : 'error location moved to the top of the page';
+      if (f.rel) { refuse(REL); break; }
+      if (!f.n && !ed.n) { refuse('the rule’s formula does not name the field as a whole token — edit it in Setup'); break; }
+      if (nf) { xml = ed.xml; if (f.n) how.push(`formula: ${plural(f.n, 'reference')} ${verb}`); if (ed.n) how.push(edWhat); break; }
+      if (!f.n) { xml = ed.xml; how.push(`${edWhat} — the formula does not use the field`); break; }
       const act = sftkMdFindElement(xml, 'active', 0);
       if (!act || xml.slice(act.bodyStart, act.bodyEnd).trim() !== 'true') { refuse('the rule is already inactive — an inactive rule does not block the delete; re-scan'); break; }
       // ✂ suggests the formula without the conditions that use the field; the rule stays on (user 2026-11-10)
       const fe = sftkMdFindElement(xml, 'errorConditionFormula', 0);
       const d = fe ? sftkFormulaDropField(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), objApi, fieldApi) : { mode: 'none' };
+      // the token sits only in a comment or quoted text: no condition uses it, so switching the rule off would be
+      // done for a reason that is not true (2026-11-14)
+      if (d.mode === 'none') { refuse('the field is named only in a comment or quoted text of the formula — no condition uses it; edit the text in Setup, or ⇄ Replace it'); break; }
       if (d.mode === 'operand') {
         xml = xml.slice(0, fe.bodyStart) + sftkMdEscape(d.text) + xml.slice(fe.bodyEnd);
+        if (ed.n) { xml = texts(xml, 'errorDisplayField').xml; }
         suggested = true;
         how.push(`${plural(d.n, 'condition')} that use${d.n === 1 ? 's' : ''} the field taken out of the formula — the rule stays active on its other conditions`);
+        if (ed.n) how.push(edWhat);
         break;
       }
       // every condition uses the field: nothing would be left of the formula, so the suggestion is to switch it off
@@ -906,6 +1002,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       how.push(d.why === 'constant'
         ? `the rule cannot work without the field — only “${d.left}” would be left of its formula — so it has to be switched off`
         : 'the rule cannot work without the field — every condition of its formula uses it — so it has to be switched off');
+      if (ed.n) { xml = texts(xml, 'errorDisplayField').xml; how.push(edWhat); }
       break;
     }
     case 'CustomField': {
@@ -913,6 +1010,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const r = items(f.xml, 'summaryFilterItems', 'field');
       const sum = texts(r.xml, 'summarizedField');
       if (!nf && (f.n || sum.n)) { refuse(f.n ? 'a formula cannot lose a reference — ⇄ Replace it with another field, or 🗑 delete this formula field' : 'the roll-up sums this field — ⇄ Replace it, or 🗑 delete the roll-up field'); break; }
+      if (f.rel) { refuse(REL); break; }
       if (!f.n && !r.n && !sum.n) { refuse('no formula, roll-up filter or summarized field names the field — edit it in Setup'); break; }
       xml = sum.xml;
       if (f.n) how.push(`formula: ${plural(f.n, 'reference')} ${verb}`);
@@ -924,7 +1022,27 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const lf = sftkMdFindElement(xml, 'lookupFilter', 0);
       if (!lf) { refuse('the field has no lookup filter any more — re-scan'); break; }
       const body = xml.slice(lf.bodyStart, lf.bodyEnd);
-      const r = items(body, 'filterItems', 'field');
+      // a field of the lookup's OWN object is written <valueField>$Source.Field__c</valueField>. When that object is
+      // objApi (a self-lookup, or a filter on the lookup's own object), such a condition names the field too: it is
+      // dropped (✂) or renamed (⇄) like one whose <field> names it, never left behind (2026-11-14).
+      const own = String(sftkMdChildText(xml, 'fullName') || '').split('.')[0].toLowerCase();
+      const isSrc = v => !!own && own === String(objApi || '').toLowerCase() && v.trim().toLowerCase() === `$source.${String(fieldApi || '').toLowerCase()}`;
+      let hits = 0;
+      const w = _sftkMdWalk(body, 'filterItems', it => {
+        let out = it, hit = false;
+        for (const [child, test] of [['field', v => _sftkMdFieldIs(v, objApi, fieldApi)], ['valueField', isSrc]]) {
+          const el = sftkMdFindElement(out, child, 0);
+          if (!el) continue;
+          const v = sftkMdUnescape(out.slice(el.bodyStart, el.bodyEnd));
+          if (!test(v)) continue;
+          hit = true;
+          if (nf) out = out.slice(0, el.bodyStart) + sftkMdEscape(_sftkMdRenameVal(v, nf)) + out.slice(el.bodyEnd);
+        }
+        if (!hit) return 'keep';
+        hits++;
+        return nf ? { body: out } : 'drop';
+      });
+      const r = { xml: w.xml, n: hits, left: w.kept };
       if (!r.n) { refuse('no filter condition names the field — edit the filter in Setup'); break; }
       if (!nf && _sftkMdHasLogic(body)) { refuse('the filter’s logic numbers its conditions — taking one out changes what the others mean; edit it in Setup, or 🗑 remove the whole filter'); break; }
       if (!nf && r.left === 0) { xml = xml.slice(0, lf.start) + xml.slice(lf.end); how.push('the filter had no other condition — the whole lookup filter is removed; the lookup field and its data stay'); break; }
@@ -936,9 +1054,15 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     case 'RestrictionRule': {
       const what = type === 'WebLink' ? 'URL' : 'record filter';
       const f = formulas(xml, type === 'WebLink' ? 'url' : 'recordFilter');
-      if (!f.n) { refuse(`the ${what} does not name the field as a whole token — edit it in Setup`); break; }
+      // a field of User is also named in the rule's <userCriteria> ($User.Field__c = …): read it too, or ⇄ deploys
+      // the rule half-renamed and reports it done (2026-11-14)
+      const u = (type === 'RestrictionRule' && String(objApi || '').toLowerCase() === 'user') ? formulas(f.xml, 'userCriteria') : { xml: f.xml, n: 0, rel: 0 };
+      if (f.rel || u.rel) { refuse(REL); break; }
+      if (!f.n && !u.n) { refuse(`the ${what} does not name the field as a whole token — edit it in Setup`); break; }
       if (!nf) { refuse(type === 'WebLink' ? 'a URL cannot lose a merge field and keep working — ⇄ Replace it with another field, or 🗑 delete the button' : 'a record filter cannot lose a condition here — ⇄ Replace it with another field, or 🗑 delete the rule'); break; }
-      xml = f.xml; how.push(`${what}: ${plural(f.n, 'reference')} ${verb}`);
+      xml = u.xml;
+      if (f.n) how.push(`${what}: ${plural(f.n, 'reference')} ${verb}`);
+      if (u.n) how.push(`user criteria: ${plural(u.n, 'reference')} ${verb}`);
       break;
     }
     case 'WorkflowFieldUpdate': {
@@ -962,12 +1086,18 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const f = formulas(xml, 'formula');
       if (!nf && f.n) { refuse('its formula cannot lose a reference — ⇄ Replace it, or 🗑 delete it'); break; }
       const r = items(f.xml, 'criteriaItems', 'field');
-      if (!r.n && !f.n) { refuse('no criterion names the field — edit it in Setup'); break; }
+      // a time-dependent rule counts its trigger FROM a date field (<workflowTimeTriggers><offsetFromField>): ⇄ moves
+      // it too; ✂ cannot take it out (the trigger needs a base), so it refuses as a whole rather than drop the
+      // criterion, leave the trigger on the field and report done (2026-11-14)
+      const ot = texts(r.xml, 'offsetFromField');
+      if (!r.n && !f.n && !(nf && ot.n)) { refuse('no criterion names the field — edit it in Setup'); break; }
+      if (!nf && ot.n) { refuse('its time trigger counts from this field — ⇄ Replace it with another date field, or 🗑 delete it'); break; }
       if (!nf && r.n && _sftkMdHasLogic(xml)) { refuse('its filter logic numbers the criteria — taking one out changes what the others mean; ⇄ Replace, or edit it in Setup'); break; }
       if (!nf && r.left === 0 && !sftkMdFindElement(xml, 'formula', 0)) { refuse(`its only criterion is this field — with none left it would ${type === 'WorkflowRule' ? 'fire on every record' : 'share every record'}; ⇄ Replace it, or 🗑 delete it`); break; }
-      xml = r.xml;
+      xml = ot.xml;
       if (r.n) how.push(`criteria: ${plural(r.n, 'line')} ${verb}${nf ? '' : `, ${plural(r.left, 'line')} kept`}`);
       if (f.n) how.push(`formula: ${plural(f.n, 'reference')} ${verb}`);
+      if (ot.n) how.push(`time trigger: ${plural(ot.n, 'base field')} ${verb}`);
       break;
     }
     case 'MatchingRule': {
@@ -1034,25 +1164,48 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
         return { body: c.xml };
       });
       const pages = _sftkMdWalk(r.xml, 'approvalPageFields', body => { const t = texts(body, 'field'); hits += t.n; return t.n ? { body: t.xml } : 'keep'; });
+      // a step can route to a User lookup of the record (<approver><name>Field__c</name><type>relatedUserField</type>):
+      // Salesforce blocks the field delete on it. ⇄ renames it; ✂ refuses as a whole — a step cannot lose its approver,
+      // and taking out only the page field would report done while the step still names the field (2026-11-14)
+      let apCut = false;
+      const aps = _sftkMdWalk(pages.xml, 'approver', body => {
+        if ((sftkMdChildText(body, 'type') || '').trim() !== 'relatedUserField') return 'keep';
+        const t = texts(body, 'name');
+        if (!t.n) return 'keep';
+        hits += t.n;
+        if (!nf) { apCut = true; return 'keep'; }
+        return { body: t.xml };
+      });
+      if (apCut) { refuse('a step’s approver is this field — a step cannot lose its approver; ⇄ Replace it with another user field, or 🗑 delete the process'); break; }
       if (formulaCut) { refuse('the entry criteria are a formula that names the field — ⇄ Replace it, or edit the process in Setup'); break; }
       if (logic) { refuse('the criteria’s filter logic numbers them — ⇄ Replace, or edit the process in Setup'); break; }
       if (emptied) { refuse('the field is the only entry criterion — with none left EVERY record could enter the process; ⇄ Replace it, or 🗑 delete the process'); break; }
       if (!hits) { refuse('no criterion or page field names the field — edit the process in Setup'); break; }
-      xml = pages.xml; how.push(`criteria and page fields: ${plural(hits, 'reference')} ${verb}`);
+      xml = aps.xml; how.push(`criteria and page fields: ${plural(hits, 'reference')} ${verb}`);
       break;
     }
     case 'DuplicateRule': {
+      // a cross-object rule (a Lead rule matched against Contacts) maps fields in <duplicateRuleMatchRules><objectMapping>:
+      // ⇄ renames them with the filter; ✂ cannot take a mapped field out of the match, so it refuses as a whole rather
+      // than drop the filter line, leave the mapping and report done (2026-11-14)
+      const mp = mappings(xml);
+      if (!nf && mp.n) { refuse('the rule’s cross-object match maps this field — ⇄ Replace it, or 🗑 delete the rule'); break; }
       const fl = sftkMdFindElement(xml, 'duplicateRuleFilter', 0);
-      if (!fl) { refuse('the rule has no record filter — re-scan'); break; }
-      const body = xml.slice(fl.bodyStart, fl.bodyEnd);
-      const r = items(body, 'duplicateRuleFilterItems', 'field');
-      if (!r.n) { refuse('no filter line names the field — edit it in Setup'); break; }
+      if (!fl && !mp.n) { refuse('the rule has no record filter — re-scan'); break; }
+      const body = fl ? xml.slice(fl.bodyStart, fl.bodyEnd) : '';
+      // a filter line's object is its <table>: a line on ANOTHER table's same-named field (the current user's
+      // User.Region__c) is not this field and stays as it is — the scan already reads <table> this way (2026-11-14)
+      const o = String(objApi || '').toLowerCase();
+      const r = items(body, 'duplicateRuleFilterItems', 'field', b => { const t = (sftkMdChildText(b, 'table') || '').trim().toLowerCase(); return !!t && t !== o; });
+      if (!r.n && !mp.n) { refuse('no filter line names the field — edit it in Setup'); break; }
+      if (!r.n) { xml = mp.xml; how.push(`cross-object match: ${plural(mp.n, 'mapping line')} ${verb}`); break; }
       if (!nf && _sftkMdHasLogic(body)) { refuse('the filter’s logic numbers its lines — ⇄ Replace, or edit it in Setup'); break; }
       if (!nf && r.left === 0) { xml = xml.slice(0, fl.start) + xml.slice(fl.end); how.push('the filter had no other line — the record filter is removed, the rule now checks every record'); break; }
       let i = 0;
       const ren = _sftkMdWalk(r.xml, 'duplicateRuleFilterItems', b => { i++; const so = sftkMdFindElement(b, 'sortOrder', 0); return so ? { body: b.slice(0, so.bodyStart) + String(i) + b.slice(so.bodyEnd) } : 'keep'; });
       xml = xml.slice(0, fl.bodyStart) + (nf ? r.xml : ren.xml) + xml.slice(fl.bodyEnd);
       how.push(`record filter: ${plural(r.n, 'line')} ${verb}${nf ? '' : `, ${plural(r.left, 'line')} kept`}`);
+      if (mp.n) { xml = mappings(xml).xml; how.push(`cross-object match: ${plural(mp.n, 'mapping line')} ${verb}`); }
       break;
     }
     case 'ListView': {
@@ -1077,19 +1230,29 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     case 'QuickAction': {
       const li = items(xml, 'quickActionLayoutItems', 'field');
       const fo = items(li.xml, 'fieldOverrides', 'field');
-      if (!li.n && !fo.n) { refuse('neither the action’s layout nor its predefined values name the field — edit it in Setup'); break; }
-      xml = fo.xml;
+      // a predefined value of ANOTHER field may compute from this one (<fieldOverrides><formula>): Salesforce counts it
+      // as a reference, so ⇄ swaps the token and ✂ refuses as a whole — a formula cannot lose a reference, and dropping
+      // only the layout item would deploy "done" with the field still named (2026-11-14)
+      const fx = formulas(fo.xml, 'formula');
+      if (fx.rel) { refuse(REL); break; }
+      if (!li.n && !fo.n && !fx.n) { refuse('neither the action’s layout nor its predefined values name the field — edit it in Setup'); break; }
+      if (!nf && fx.n) { refuse('a predefined value’s formula names the field — a formula cannot lose a reference; ⇄ Replace it, or 🗑 delete the action'); break; }
+      xml = fx.xml;
       const bits = []; if (li.n) bits.push(`${plural(li.n, 'layout field')} ${verb}`); if (fo.n) bits.push(`${plural(fo.n, 'predefined value')} ${verb}`);
+      if (fx.n) bits.push(`${plural(fx.n, 'formula reference')} ${verb}`);
       how.push(bits.join(', '));
       break;
     }
     case 'CustomMetadataRecord': {
       let n = 0;
+      // only the values the scan counts for THIS object: a bare "Field__c" next to Entity__c = Lead is Lead's
+      // same-named field (lead conversion makes those common) and must stay as it is (2026-11-14)
+      const hold = new Set(sftkMdValuesHolding(xml, objApi, fieldApi).map(x => x.toLowerCase()));
       const r = _sftkMdWalk(xml, 'values', body => {
         const ve = sftkMdFindElement(body, 'value', 0);
         if (!ve) return 'keep';
         const v = sftkMdUnescape(body.slice(ve.bodyStart, ve.bodyEnd));
-        if (!_sftkMdFieldIs(v, objApi, fieldApi)) return 'keep';
+        if (!_sftkMdFieldIs(v, objApi, fieldApi) || !hold.has((sftkMdChildText(body, 'field') || '?').toLowerCase())) return 'keep';
         n++;
         const open = body.slice(ve.start, ve.bodyStart);
         return { body: body.slice(0, ve.start) + (nf ? `${open}${sftkMdEscape(_sftkMdRenameVal(v, nf))}</value>` : '<value xsi:nil="true"/>') + body.slice(ve.end) };
@@ -1105,22 +1268,9 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
         xml = r.xml; how.push(`${plural(r.removed, 'mapping line')} removed, the other lines kept`);
         break;
       }
-      let n = 0;
-      const o = String(objApi || '').toLowerCase();
-      const r = _sftkMdWalk(xml, 'objectMapping', body => {
-        const io = (sftkMdChildText(body, 'inputObject') || '').toLowerCase(), oo = (sftkMdChildText(body, 'outputObject') || '').toLowerCase();
-        const m = _sftkMdWalk(body, 'mappingFields', mb => {
-          let out = mb, hit = false;
-          for (const [side, objOf] of [['inputField', io], ['outputField', oo]]) {
-            const e = sftkMdFindElement(out, side, 0);
-            if (e && objOf === o && _sftkMdFieldIs(sftkMdUnescape(out.slice(e.bodyStart, e.bodyEnd)), objApi, fieldApi)) { out = out.slice(0, e.bodyStart) + sftkMdEscape(nf) + out.slice(e.bodyEnd); hit = true; n++; }
-          }
-          return hit ? { body: out } : 'keep';
-        });
-        return m.changed ? { body: m.xml } : 'keep';
-      });
-      if (!n) { refuse('no mapping line carries the field — re-scan'); break; }
-      xml = r.xml; how.push(`${plural(n, 'mapping line')} now ${nf}`);
+      const r = mappings(xml);
+      if (!r.n) { refuse('no mapping line carries the field — re-scan'); break; }
+      xml = r.xml; how.push(`${plural(r.n, 'mapping line')} now ${nf}`);
       break;
     }
     default:

@@ -19,7 +19,7 @@ const M = extractFunctions('sftk-mdapi.js', [
   'sftkMdMentionsField', 'sftkMdWellFormed', 'sftkMdLeadMappingRemove', 'sftkMdLookupFilterRemove', '_sftkMdFieldIs', '_sftkMdRenameVal',
   '_sftkMdWalk', '_sftkMdSwapToken', 'sftkFormulaDropField', '_sftkMdHasLogic',
 ]);
-const T = extractFunctions('sftk-emailtpl.js', ['sftkTplTextFields', '_sftkTplRx', 'sftkTplHits', 'sftkTplNamesField', 'sftkTplReplace', 'sftkTplRemove', 'sftkTplKind']);
+const T = extractFunctions('sftk-emailtpl.js', ['sftkTplTextFields', '_sftkTplRx', 'sftkTplHits', 'sftkTplNamesField', 'sftkTplReplace', 'sftkTplRemove', 'sftkTplKind', '_sftkTplForeign']);
 const S = extractFunctions('sftk-sweep.js', ['sftkSweepForms', 'sftkSweepHits', 'sftkSweepKindTable', 'sftkSweepSections', '_sftkSweepSectionAt', 'sftkSweepKind', 'sftkSweepRun', 'sftkSweepJoinKind', 'sftkSweepIdQuery', 'sftkSweepTypes', '_sftkSweepSkip', '_sftkSweepFolderKinds']);
 const R = extractFunctions('sftk-fieldreplace.js', ['sftkFlsCopyPlan']);
 // the Aura file names live in field-cleaner.js as a table (not a top-level function): the table itself is evaluated
@@ -199,10 +199,10 @@ describe('ApexTrigger', () => {
     const r = swap([{ path: 'triggers/SftkMxTrgMany.trigger', source: TRG_MANY }], 3, 1);
     expect(r.sources[0].source).toBe(TRG_MANY.split(F).join(NF));
   });
-  // PRODUCT BUG: the -meta.xml of an Apex trigger is always written <status>Active</status> (sftkMdCodeFiles takes no
+  // FIXED 2026-11-14 (it was): the -meta.xml of an Apex trigger is always written <status>Active</status> (sftkMdCodeFiles takes no
   // status; _codeRead in field-cleaner.js passes none). ⇄ / ✎ on an INACTIVE trigger — and the restore of a deleted
   // one — deploys it Active: a trigger that was switched off starts firing.
-  it.skip('PRODUCT BUG: an inactive trigger keeps <status>Inactive</status> through ⇄ / ✎ / restore', () => {
+  it('an inactive trigger keeps <status>Inactive</status> through ⇄ / ✎ / restore', () => {
     const f = M.sftkMdCodeFiles('ApexTrigger', 'SftkMxTrg', TRG_ONE, 62, { status: 'Inactive' });
     expect(f[2].text).toContain('<status>Inactive</status>');
     expect(f[2].text).not.toContain('<status>Active</status>');
@@ -253,10 +253,10 @@ describe('ApexPage (Visualforce page)', () => {
     expect(out).toContain('<!-- SFTK_Mx2__c is shown twice; SFTK_Mx__c_Old is not -->');
     expect(M.sftkMdWellFormed(out)).toBeNull();
   });
-  // PRODUCT BUG: the page's -meta.xml is rebuilt from the api version and the label alone. ⇄ / ✎ / the restore of a
+  // FIXED 2026-11-14 (it was): the page's -meta.xml is rebuilt from the api version and the label alone. ⇄ / ✎ / the restore of a
   // deleted page deploy it without <availableInTouch>, <confirmationTokenRequired> and <description>: a page that was
   // "Available for Lightning Experience, Experience Builder sites, and the mobile app" comes back with the box unticked.
-  it.skip('PRODUCT BUG: a Visualforce page keeps availableInTouch / confirmationTokenRequired / description through ⇄ / ✎ / restore', () => {
+  it('a Visualforce page keeps availableInTouch / confirmationTokenRequired / description through ⇄ / ✎ / restore', () => {
     const f = M.sftkMdCodeFiles('ApexPage', 'SftkMxPage', PAGE_ONE, 62, { label: 'SFTK Mx', availableInTouch: true, confirmationTokenRequired: true, description: 'kept' });
     expect(f[2].text).toContain('<availableInTouch>true</availableInTouch>');
     expect(f[2].text).toContain('<confirmationTokenRequired>true</confirmationTokenRequired>');
@@ -382,11 +382,11 @@ describe('LightningComponentBundle (LWC)', () => {
     expect(r.sources[1].source).toContain('<lightning-output-field field-name="SFTK_Mx2__c"></lightning-output-field>');
     expect(r.sources[2].source).toBe(LWC_CSS);
   });
-  // PRODUCT BUG: the bundle's js-meta.xml is rebuilt from apiVersion, isExposed and masterLabel alone (sftkMdBundleFiles
+  // FIXED 2026-11-14 (it was): the bundle's js-meta.xml is rebuilt from apiVersion, isExposed and masterLabel alone (sftkMdBundleFiles
   // knows no more; _codeRead reads the Tooling Metadata and passes only those plus description). ⇄ / ✎ / the restore of
   // a deleted component therefore deploy it WITHOUT <targets>, <targetConfigs> and <description>: a component exposed to
   // a record page loses where it may be placed (or Salesforce refuses the deploy because a page still uses it).
-  it.skip('PRODUCT BUG: an exposed LWC keeps its <targets> / <targetConfigs> / <description> through ⇄ / ✎ / restore', () => {
+  it('an exposed LWC keeps its <targets> / <targetConfigs> / <description> through ⇄ / ✎ / restore', () => {
     const meta = { apiVersion: 62, isExposed: true, masterLabel: 'SFTK Mx', description: 'kept',
       targets: { target: ['lightning__RecordPage', 'lightning__AppPage'] },
       targetConfigs: '<targetConfig targets="lightning__RecordPage"><objects><object>Account</object></objects></targetConfig>' };
@@ -495,7 +495,8 @@ describe('EmailTemplate — classic text', () => {
     expect(M.sftkMdCodeWays('EmailTemplate')).toBeNull();
     expect(cfgRow('EmailTemplate')).toEqual({ fixable: true, sev: 'silent' });
     expect(FC).toContain("if (type === 'EmailTemplate') label = (await fixEmailTemplate(componentId, componentName, swap)) || label;");
-    expect(FC).toContain('const r = nf ? sftkTplReplace(rec, field, nf) : sftkTplRemove(rec, field);');
+    expect(FC).toContain('const r = nf ? sftkTplReplace(rec, field, nf, _selObj.api) : sftkTplRemove(rec, field, _selObj.api);');
+    expect(FC).toContain('if (r.refused) {');
     expect(T.sftkTplKind(TXT_ONE)).toBe('classic text email template');
     // the whole-org sweep lists the file; it joins no list (the fix needs the record's id)
     expect(S.sftkSweepKind('unpackaged/email/unfiled$public/Mx_Text_One.email', TXT_ONE.Body, { offset: 0, text: '' }, S.sftkSweepForms(OBJ, F))).toMatchObject({ type: 'EmailTemplate', sev: 'mention', component: 'unfiled$public/Mx_Text_One' });
@@ -541,13 +542,13 @@ describe('EmailTemplate — classic text', () => {
     expect(T.sftkTplReplace(TXT_ONE, F, '')).toEqual({ rec: {}, n: 0, fields: [] });
     expect(T.sftkTplRemove(null, F)).toEqual({ rec: {}, n: 0, fields: [] });
   });
-  // PRODUCT BUG: ✂ and ⇄ on a template work on the bare API name, so a merge field of ANOTHER object's field of the
+  // FIXED 2026-11-14 (it was): ✂ and ⇄ on a template work on the bare API name, so a merge field of ANOTHER object's field of the
   // same name ("{!Contact.SFTK_Mx__c}") is taken out / renamed too when Account.SFTK_Mx__c is the field being cleaned.
   // The scan's own test (sftkTplNamesField) does tie the name to the object; the fix does not.
-  it.skip('PRODUCT BUG: ✂ / ⇄ leave "{!Contact.SFTK_Mx__c}" alone when the field is Account.SFTK_Mx__c', () => {
+  it('✂ / ⇄ leave "{!Contact.SFTK_Mx__c}" alone when the field is Account.SFTK_Mx__c (the object passed, as field-cleaner.js does)', () => {
     const rec = { ...TXT_ONE, Body: 'Account tier {!Account.SFTK_Mx__c}, contact tier {!Contact.SFTK_Mx__c}.' };
-    expect(T.sftkTplRemove(rec, F).rec.Body).toBe('Account tier , contact tier {!Contact.SFTK_Mx__c}.');
-    expect(T.sftkTplReplace(rec, F, NF).rec.Body).toBe('Account tier {!Account.SFTK_Mx2__c}, contact tier {!Contact.SFTK_Mx__c}.');
+    expect(T.sftkTplRemove(rec, F, OBJ).rec.Body).toBe('Account tier , contact tier {!Contact.SFTK_Mx__c}.');
+    expect(T.sftkTplReplace(rec, F, NF, OBJ).rec.Body).toBe('Account tier {!Account.SFTK_Mx2__c}, contact tier {!Contact.SFTK_Mx__c}.');
   });
 });
 
@@ -660,16 +661,25 @@ describe('EmailTemplate — Visualforce', () => {
     tplClean(after);
     expect(T.sftkTplNamesField(after, OBJ, NF)).toBe(true);
   });
-  // PRODUCT BUG: in a Visualforce template a merge field is often the whole value of a component attribute that must
+  // FIXED 2026-11-14 (it was): in a Visualforce template a merge field is often the whole value of a component attribute that must
   // be a binding. ✂ takes the expression out and leaves value="" — Visualforce refuses to save an <apex:outputField>
   // (or <apex:repeat>) with an empty value, so the PATCH is refused and ✂ can never succeed on such a template; there
   // is no refusal with a reason up front, and no removal of the component that held the field.
-  it.skip('PRODUCT BUG: ✂ on a Visualforce template leaves <apex:outputField value=""/> — markup Salesforce will not save', () => {
+  it('✂ on a Visualforce template never leaves <apex:outputField value=""/>: a bound outputField goes whole; a binding it cannot take out (<apex:repeat value=…>) is REFUSED with the reason', () => {
     const rec = { ...VFT_ONE, Markup: '<messaging:emailTemplate subject="x" recipientType="Contact" relatedToType="Account">\n<messaging:htmlEmailBody >\n<apex:outputField value="{!relatedTo.SFTK_Mx__c}"/>\n<apex:repeat value="{!relatedTo.SFTK_Mx__c}" var="v">{!v}</apex:repeat>\n</messaging:htmlEmailBody>\n</messaging:emailTemplate>' };
     const r = T.sftkTplRemove(rec, F);
     const out = r.n ? r.rec.Markup : rec.Markup;
     expect(out).not.toContain('<apex:outputField value=""/>');
     expect(out).not.toContain('<apex:repeat value=""');
+    expect(r.refused).toMatch(/binds a component's attribute to SFTK_Mx__c/);
+    expect(r.n).toBe(0);
+    // the outputField alone: it goes whole, the markup stays well-formed
+    const one = { ...VFT_ONE, Markup: rec.Markup.replace(/<apex:repeat[^]*?<\/apex:repeat>\n/, '') };
+    const r1 = T.sftkTplRemove(one, F);
+    expect(r1.refused).toBeUndefined();
+    expect(r1.n).toBe(1);
+    expect(r1.rec.Markup).toBe(one.Markup.replace('<apex:outputField value="{!relatedTo.SFTK_Mx__c}"/>', ''));
+    expect(M.sftkMdWellFormed(r1.rec.Markup)).toBeNull();
   });
 });
 
@@ -727,11 +737,11 @@ describe('EntitlementProcess', () => {
   it('a process on another field is not a mention', () => {
     expect(M.sftkMdMentionsField(EP_ONE.replace('Case.SFTK_Mx__c', 'Case.SFTK_Mx__c_Old'), 'Case', F)).toBe(false);
   });
-  // PRODUCT BUG: a milestone's criteria can be a FORMULA (<milestoneCriteriaFormula>). The scan's mention test reads
+  // FIXED 2026-11-14 (it was): a milestone's criteria can be a FORMULA (<milestoneCriteriaFormula>). The scan's mention test reads
   // <formula>, <errorConditionFormula>, <recordFilter> and <booleanFilter> only, so a process that names the field
   // only in a milestone formula is not listed — and the field's delete is then refused by Salesforce over a blocker
   // the scan never showed.
-  it.skip('PRODUCT BUG: a field named only in <milestoneCriteriaFormula> is a mention', () => {
+  it('a field named only in <milestoneCriteriaFormula> is a mention', () => {
     const xml = '<fullName>sftk mx ep f</fullName><SObjectType>Case</SObjectType><active>true</active><entryStartDateField>Case.CreatedDate</entryStartDateField>'
       + '<milestones><milestoneCriteriaFormula>ISPICKVAL(SFTK_Mx__c, &quot;Hot&quot;) &amp;&amp; NOT(IsClosed)</milestoneCriteriaFormula><milestoneName>Close Case</milestoneName><minutesToComplete>60</minutesToComplete><useCriteriaStartTime>false</useCriteriaStartTime></milestones>'
       + '<name>sftk mx ep f</name><versionNumber>1</versionNumber>';

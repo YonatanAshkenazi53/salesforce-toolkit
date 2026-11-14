@@ -296,24 +296,23 @@ describe('QuickAction', () => {
     swapped(r, before, 2);
     expect(r.how).toEqual([`1 layout field now ${N}, 1 predefined value now ${N}`]);
   });
-  // PRODUCT BUG: a predefined value of ANOTHER field whose <formula> reads this field
+  // FIXED 2026-11-14 (was a product bug): a predefined value of ANOTHER field whose <formula> reads this field
   // (<fieldOverrides><field>Description</field><formula>Account.SFTK_Live_Blk__c</formula></fieldOverrides>) is
   // not seen by the QuickAction case of sftkMdEditField (sftk-mdapi.js: items(li.xml, 'fieldOverrides', 'field') looks
   // at <field> only). ✂ answers "1 layout field removed" and ⇄ "1 layout field now …" while the formula still names
   // the old field — and fixEdit's re-read check (_editStillNames) uses the same blind engine, so it says "verified".
   // Expected: ⇄ swaps the token in the formula too; ✂ refuses (a formula cannot lose a reference) or drops that override.
-  it.skip('PRODUCT BUG: ✂ several mentions — a layout item AND another field’s predefined-value formula that reads the field', () => {
+  it('✂ several mentions — a layout item AND another field’s predefined-value formula that reads the field: refused as a whole', () => {
     const before = qa(ovr('Description', `&quot;was &quot; &amp; Account.${F}`), item('Name') + item(F), item('Phone'));
     const r = rm('QuickAction', before);
-    // either everything goes, or the whole edit is refused — never "done" with the formula still naming the field
-    if (r.refused) refusedWhole(r, before, /formula|predefined/);
-    else gone(r.xml);
+    // a formula cannot lose a reference: the whole edit is refused — never "done" with the formula still naming the field
+    refusedWhole(r, before, /predefined value.s formula names the field/);
   });
-  it.skip('PRODUCT BUG: ⇄ several mentions — the predefined-value formula that reads the field keeps the OLD field', () => {
+  it('⇄ several mentions — the predefined-value formula that reads the field names the new field too', () => {
     const before = qa(ovr('Description', `&quot;was &quot; &amp; Account.${F}`), item('Name') + item(F), item('Phone'));
     swapped(rp('QuickAction', before), before, 2);
   });
-  it.skip('PRODUCT BUG: a predefined-value formula is the ONLY mention — ✂ and ⇄ both say the action does not name the field', () => {
+  it('a predefined-value formula is the ONLY mention — the scan sees it and ⇄ swaps it', () => {
     const before = qa(ovr('Description', `Account.${F}`), item('Name'), item('Phone'));
     expect(M.sftkMdMentionsField(before, 'Account', F)).toBe(true);     // the product's own mention test sees it
     swapped(rp('QuickAction', before), before, 1);
@@ -373,20 +372,20 @@ describe('CustomMetadataRecord', () => {
     expect(M.sftkMdValuesHolding(r.xml, 'Account', N)).toEqual(['Source_Field__c', 'Target_Field__c']);
     expect(r.how).toEqual([`2 values now ${N}`]);
   });
-  // PRODUCT BUG: the scan (sftkMdValuesHolding) knows that a bare "Field__c" next to Entity__c = Lead is LEAD's field,
+  // FIXED 2026-11-14 (was a product bug): the scan (sftkMdValuesHolding) knows that a bare "Field__c" next to Entity__c = Lead is LEAD's field,
   // not Account's — but the CustomMetadataRecord case of sftkMdEditField (sftk-mdapi.js, _sftkMdFieldIs(v, objApi,
   // fieldApi)) takes every bare name. A record that maps Lead's field of the same API name AND holds
   // "Account.SFTK_Live_Blk__c" is rightly listed for Account (one value) — and ✂ / ⇄ then also empties / renames
   // Lead's value. Same-named fields on Lead and Account are the usual case (lead conversion).
   const mixed = cmt(val('Entity__c', 'Lead') + val('Field__c', F) + val('Copy_To__c', `Account.${F}`));
-  it.skip('PRODUCT BUG: ✂ empties another object’s same-named field the scan itself does not count', () => {
+  it('✂ leaves another object’s same-named field the scan does not count', () => {
     expect(holding(mixed)).toEqual(['Copy_To__c']);                    // what the scan lists for Account
     expect(holding(mixed, 'Lead')).toEqual(['Field__c']);              // and that one is Lead's
     const r = rm('CustomMetadataRecord', mixed);
     expect(r.xml).toBe(cmt(val('Entity__c', 'Lead') + val('Field__c', F) + nil('Copy_To__c')));
     expect(r.how).toEqual(['1 value emptied']);
   });
-  it.skip('PRODUCT BUG: ⇄ renames another object’s same-named field the scan itself does not count', () => {
+  it('⇄ leaves another object’s same-named field the scan does not count', () => {
     const r = rp('CustomMetadataRecord', mixed);
     expect(r.xml).toBe(cmt(val('Entity__c', 'Lead') + val('Field__c', F) + val('Copy_To__c', `Account.${N}`)));
   });
@@ -653,25 +652,24 @@ describe('ApprovalProcess', () => {
     expect(r.xml).toContain(`<formula>ISBLANK(${N}) || LEN(Account.${N}) &gt; 3</formula>`);
     expect(r.how).toEqual([`criteria and page fields: 5 references now ${N}`]);
   });
-  // PRODUCT BUG: a User-lookup field can be the APPROVER of a step
+  // FIXED 2026-11-14 (was a product bug): a User-lookup field can be the APPROVER of a step
   // (<assignedApprover><approver><name>SFTK_Live_Blk__c</name><type>relatedUserField</type></approver>). Neither the
   // ApprovalProcess case of sftkMdEditField (sftk-mdapi.js: it walks <entryCriteria> and <approvalPageFields> only)
   // nor sftkMdMentionsField (no <name> under <approver>) reads it. With the field also on the approval page, ✂ says
   // "1 reference removed" and ⇄ "1 reference now …" while the step still routes to the old field; with the approver
   // as the only mention the scan does not list the process at all.
   const approverStep = `<approvalStep><allowDelegate>false</allowDelegate><assignedApprover><approver><name>${F}</name><type>relatedUserField</type></approver><whenMultipleApprovers>FirstResponse</whenMultipleApprovers></assignedApprover><label>Step 1</label><name>Step_1</name></approvalStep>`;
-  it.skip('PRODUCT BUG: ✂ several mentions — a page field AND the step’s approver (relatedUserField): done is claimed, the approver still names the field', () => {
+  it('✂ several mentions — a page field AND the step’s approver (relatedUserField): refused as a whole', () => {
     const before = ap(['Name', F], approverStep, criteria(other));
     const r = rm('ApprovalProcess', before);
-    // a step cannot lose its approver: the whole edit should be refused, or everything goes — never half
-    if (r.refused) refusedWhole(r, before, /approver/);
-    else gone(r.xml);
+    // a step cannot lose its approver: the whole edit is refused — never half
+    refusedWhole(r, before, /a step.s approver is this field/);
   });
-  it.skip('PRODUCT BUG: ⇄ several mentions — the step’s approver (relatedUserField) keeps the OLD field', () => {
+  it('⇄ several mentions — the step’s approver (relatedUserField) names the new field too', () => {
     const before = ap(['Name', F], approverStep, criteria(other));
     swapped(rp('ApprovalProcess', before), before, 2);
   });
-  it.skip('PRODUCT BUG: the approver is the only mention — the product’s mention test does not see the process', () => {
+  it('the approver is the only mention — the product’s mention test sees the process', () => {
     expect(M.sftkMdMentionsField(ap(['Name'], approverStep, criteria(other)), 'Account', F)).toBe(true);
   });
 });

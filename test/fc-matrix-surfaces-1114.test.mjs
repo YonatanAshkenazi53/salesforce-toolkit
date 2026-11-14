@@ -206,7 +206,7 @@ describe('Layout — REMOVE, SEVERAL MENTIONS', () => {
   // PRODUCT BUG: removeFieldFromLayout walks layoutSections only. A field that is on the layout AND in its mini
   // layout (the hover / console mini page: <miniLayout><fields>) loses its slot, the mini layout still lists it,
   // and the fix's own verify (the same function on the re-read) answers 0 — "the field is really gone".
-  it.skip('PRODUCT BUG: a field on the layout and in its mini layout — the mini layout entry goes too', () => {
+  it('a field on the layout and in its mini layout — the mini layout entry goes too', () => {
     const md = layout();
     md.miniLayout.fields.push(F);
     L.removeFieldFromLayout(md, F);
@@ -394,7 +394,7 @@ describe('FlexiPage — REMOVE, ONE MENTION', () => {
   // field of the same name ({!Record.Owner.Status_Code__c} — a User field) is taken out of an Account page while
   // Account.Status_Code__c is being cleaned. ⇄ (sftkFlexiReplaceField) leaves exactly that criterion alone and
   // counts it as "another object's field".
-  it.skip('PRODUCT BUG: a criterion on a related record’s same-named field is another object’s field — ✂ leaves it, as ⇄ does', () => {
+  it('a criterion on a related record’s same-named field is another object’s field — ✂ leaves it, as ⇄ does', () => {
     const md = page([fieldInst('Name')], [richText('rt1', { criteria: [crit(`{!Record.Owner.${F}}`), crit('{!Record.Industry}', 'Banking')] })]);
     const before = clone(md);
     expect(R.sftkFlexiReplaceField(clone(md), OBJ, F, NEW)).toEqual({ swapped: 0, dropped: 0, left: 1 });   // ⇄ knows
@@ -629,7 +629,7 @@ describe('Report — REMOVE, SEVERAL MENTIONS', () => {
   // sftkRptStripField takes a filter out and leaves the logic as it was: three numbers over two filters. Salesforce
   // refuses that save at best; where the count still fits ("1 OR 2" → the survivor is now number 1 and number 2 is
   // gone) the logic no longer says what the owner wrote.
-  it.skip('PRODUCT BUG: the filter logic is re-numbered (or the edit refused) when a numbered filter goes', () => {
+  it('the filter logic — a numbered filter that would go makes the edit refuse it, the logic named (refused, not re-numbered)', () => {
     const src = report({ detailColumns: ['ACCOUNT.NAME'], reportBooleanFilter: '(1 OR 2) AND 3', reportFilters: [fil('INDUSTRY', 'Banking'), fil(QF), fil('TYPE', 'Customer')] });
     const r = RC.sftkRptStripField(src, OBJ, F);
     if (r.changed) {
@@ -655,7 +655,7 @@ describe('Report — REMOVE, SEVERAL MENTIONS', () => {
   // PRODUCT BUG: the report is sorted by the column that goes (sortBy[].sortColumn). The column is taken out, the
   // sort still names it — a sort on a column the report no longer has — and the leftover is reported as "a
   // formula, bucket, cross filter or chart", which it is not.
-  it.skip('PRODUCT BUG: a column the report is sorted by — the sort goes with the column', () => {
+  it('a column the report is sorted by — the sort goes with the column', () => {
     const src = report({ sortBy: [{ sortColumn: QF, sortOrder: 'Desc' }] });
     const r = RC.sftkRptStripField(src, OBJ, F);
     expect(r.changed).toBe(true);
@@ -807,7 +807,7 @@ describe('ReportType — REMOVE, SEVERAL MENTIONS', () => {
   // The remover compares the whole <field> text with the API name, so that column is not seen: not counted by
   // sftkRtMentions (the scan and the fix's verify), not removed, not even listed in "skipped". ✂ answers
   // "1 column removed — verified" and the type still names the field.
-  it.skip('PRODUCT BUG: the field as a plain column and through the Parent lookup (Parent.Field) — both are seen', () => {
+  it('the field as a plain column and through the Parent lookup (Parent.Field) — both are seen', () => {
     const inner = rtype([section('Accounts', [col('Name', 'Account', true), col(F), col(`Parent.${F}`)])]);
     expect(M.sftkRtMentions(inner, OBJ, F)).toBe(2);                     // got: 1
     const r = M.sftkRtRemoveField(inner, OBJ, F);

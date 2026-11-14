@@ -53,9 +53,26 @@ function sftkTplNamesField(rec, objApi, fieldApi) {
   return false;
 }
 
-// ⇄ the field's API name renamed in every text field, whole word, the spelling of the new name as given.
+// Is the name at text[at] another object's field? (2026-11-14) A classic or Lightning merge field always names its
+// object — "{!Contact.X__c}", "{{{Contact.X__c}}}" — so a ONE-segment qualifier that is not objApi (nor, for the people
+// objects, Recipient / receivingUser / sendingUser / Sender — the scan's own rule in sftkTplNamesField) names a
+// same-named field of another object, which ✂ / ⇄ must leave alone. A longer path (Opportunity.Account.X__c) and a
+// bare name count as before. The Visualforce Markup is not tested this way: there the qualifier is any variable.
+function _sftkTplForeign(text, at, objApi) {
+  const o = String(objApi || '').trim().toLowerCase();
+  if (!o) return false;
+  const q = /(?:^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*)\.$/.exec(text.slice(Math.max(0, at - 120), at));
+  if (!q) return false;
+  const x = q[1].toLowerCase();
+  if (x === o) return false;
+  if (['contact', 'lead', 'user'].includes(o) && ['recipient', 'receivinguser', 'sendinguser', 'sender'].includes(x)) return false;
+  return true;
+}
+
+// ⇄ the field's API name renamed in every text field, whole word, the spelling of the new name as given. With objApi,
+// another object's field of the same name ("{!Contact.X__c}" when the field is Account.X__c) is left as it is.
 //   → { rec (the changed fields only), n (places), fields: [k…] }
-function sftkTplReplace(rec, fieldApi, newField) {
+function sftkTplReplace(rec, fieldApi, newField, objApi) {
   const re = _sftkTplRx(fieldApi, 'gi'), nf = String(newField || '').trim();
   const out = {}, fields = [];
   let n = 0;
@@ -64,7 +81,7 @@ function sftkTplReplace(rec, fieldApi, newField) {
     const v = rec && rec[k];
     if (typeof v !== 'string' || !v) continue;
     let c = 0;
-    const t = v.replace(re, () => { c++; return nf; });
+    const t = v.replace(re, (m, at, str) => { if (objApi && k !== 'Markup' && _sftkTplForeign(str, at, objApi)) return m; c++; return nf; });
     if (c) { out[k] = t; n += c; fields.push(k); }
   }
   return { rec: out, n, fields };
@@ -72,19 +89,38 @@ function sftkTplReplace(rec, fieldApi, newField) {
 
 // ✂ every merge field that names the field, taken out: "{!Account.X}", "{{{Account.X}}}", "{!relatedTo.X}" — the
 // braces and their content go, the text around them stays. A plain mention outside a merge field is left alone.
-//   → { rec, n, fields }
-function sftkTplRemove(rec, fieldApi) {
+// With objApi, a merge field that names only another object's field of the same name stays (2026-11-14).
+// In a Visualforce Markup a component bound to the field (<apex:outputField value="{!relatedTo.X__c}"/>) goes whole —
+// value="" is markup Visualforce will not save — and an attribute that is the binding alone anywhere else (an
+// <apex:repeat value=…>, a rendered=…) is refused with the reason: nothing is half-written (2026-11-14).
+//   → { rec, n, fields } or { rec: {}, n: 0, fields: [], refused }
+function sftkTplRemove(rec, fieldApi, objApi) {
   const f = String(fieldApi || '').trim();
   const out = {}, fields = [];
   let n = 0;
   if (!f) return { rec: out, n, fields };
   const esc = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`\\{\\{\\{[^{}]*?(?<![A-Za-z0-9_])${esc}(?![A-Za-z0-9_])[^{}]*?\\}\\}\\}|\\{![^{}]*?(?<![A-Za-z0-9_])${esc}(?![A-Za-z0-9_])[^{}]*?\\}`, 'gi');
+  const word = new RegExp(`(?<![A-Za-z0-9_])${esc}(?![A-Za-z0-9_])`, 'gi');
+  const bound = `"\\{![^{}"]*?(?<![A-Za-z0-9_])${esc}(?![A-Za-z0-9_])[^{}"]*\\}"`;
+  const cmpRe = new RegExp(`<apex:(?:outputField|inputField|outputText)\\b[^>]*?\\bvalue\\s*=\\s*${bound}[^>]*?\\/>`, 'gi');
+  const attrRe = new RegExp(`=\\s*${bound}`, 'i');
   for (const k of sftkTplTextFields()) {
     const v = rec && rec[k];
     if (typeof v !== 'string' || !v) continue;
-    let c = 0;
-    const t = v.replace(re, () => { c++; return ''; });
+    let c = 0, t = v;
+    if (k === 'Markup') {
+      t = t.replace(cmpRe, () => { c++; return ''; });
+      if (attrRe.test(t)) return { rec: {}, n: 0, fields: [], refused: `the Visualforce markup binds a component's attribute to ${f} — ✂ cannot take it out without breaking the markup; ✎ Edit the markup instead` };
+    }
+    t = t.replace(re, (m, at, str) => {
+      if (k !== 'Markup' && objApi) {
+        // only another object's field named in it: left as it is
+        const own = [...m.matchAll(word)].some(w => !_sftkTplForeign(str, at + w.index, objApi));
+        if (!own) return m;
+      }
+      c++; return '';
+    });
     if (c) { out[k] = t; n += c; fields.push(k); }
   }
   return { rec: out, n, fields };

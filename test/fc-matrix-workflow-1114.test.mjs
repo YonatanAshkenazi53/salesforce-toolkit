@@ -187,26 +187,23 @@ describe('WorkflowRule', () => {
   // A time-dependent rule counts its trigger FROM a date field: <workflowTimeTriggers><offsetFromField>Account.X__c.
   const TT = f => `<workflowTimeTriggers><actions><name>SFTK_Renewal_Alert</name><type>Alert</type></actions><offsetFromField>${f}</offsetFromField><timeLength>-7</timeLength><workflowTimeTriggerUnit>Days</workflowTimeTriggerUnit></workflowTimeTriggers>`;
   const C_DATE = crit('Account.Go_Live__c', 'notEqual', '');
-  // PRODUCT BUG: sftkMdEditField('WorkflowRule') only reads <criteriaItems> and <formula>. A field that is ALSO the
-  // rule's time-trigger base (<offsetFromField>) loses its criterion and keeps the trigger: "changed" says
-  // "criteria: 1 line removed, 1 line kept", the XML still names Account.Go_Live__c, and sftkMdMentionsField does
-  // not read <offsetFromField> either, so the product's own check calls it clean. Half-done instead of refused.
-  it.skip('PRODUCT BUG: ✂ several mentions, a criterion and the time trigger\'s offsetFromField — must go as a whole or refuse as a whole', () => {
+  // Fixed 2026-11-14: sftkMdEditField('WorkflowRule') used to read only <criteriaItems> and <formula>, so a field that
+  // is ALSO the time-trigger base lost its criterion and kept the trigger, reported done. ✂ now refuses as a whole
+  // (the trigger needs a base); ⇄ moves the trigger too; sftkMdMentionsField reads <offsetFromField>.
+  it('✂ several mentions, a criterion and the time trigger\'s offsetFromField — refused as a whole (the trigger needs a base)', () => {
     const src = wr(C_DATE + C_TYPE, TT('Account.Go_Live__c'));
     const ed = rm('WorkflowRule', src, 'Account', 'Go_Live__c');
     if (ed.refused) { refusedWhole(src, ed, /./); return; }
     expect(word(ed.xml, 'Go_Live__c')).toBe(false);
   });
-  // PRODUCT BUG: the same blind spot on ⇄ — the criterion is renamed, <offsetFromField> still names the old field.
-  it.skip('PRODUCT BUG: ⇄ several mentions, a criterion and offsetFromField — every one must become the new field', () => {
+  it('⇄ several mentions, a criterion and offsetFromField — every one must become the new field', () => {
     const src = wr(C_DATE + C_TYPE, TT('Account.Go_Live__c'));
     const ed = rp('WorkflowRule', src, 'Account', 'Go_Live__c', 'Renewal_Date__c');
     if (ed.refused) { refusedWhole(src, ed, /./); return; }
     expect(word(ed.xml, 'Go_Live__c')).toBe(false);
     expect(ed.xml).toContain('<offsetFromField>Account.Renewal_Date__c</offsetFromField>');
   });
-  // PRODUCT BUG: the product's own mention test does not see a field that is ONLY the time-trigger base.
-  it.skip('PRODUCT BUG: sftkMdMentionsField sees a field named only in <offsetFromField>', () => {
+  it('sftkMdMentionsField sees a field named only in <offsetFromField>', () => {
     expect(M.sftkMdMentionsField(wr(C_TYPE, TT('Account.Go_Live__c')), 'Account', 'Go_Live__c')).toBe(true);
   });
   it('one mention, only in offsetFromField: at least nothing is changed (refused)', () => {
@@ -571,29 +568,26 @@ describe('DuplicateRule', () => {
   // A cross-object duplicate rule (a Lead rule matched against Contacts) maps fields in
   // <duplicateRuleMatchRules><objectMapping><mappingFields><inputField>/<outputField>.
   const XMATCH = '<duplicateRuleMatchRules><matchRuleSObjectType>Contact</matchRuleSObjectType><matchingRule>SFTK_Contact_MR</matchingRule><objectMapping><inputObject>Lead</inputObject><mappingFields><inputField>Region__c</inputField><outputField>Contact_Region__c</outputField></mappingFields><mappingFields><inputField>Email</inputField><outputField>Email</outputField></mappingFields><outputObject>Contact</outputObject></objectMapping></duplicateRuleMatchRules>';
-  // PRODUCT BUG: sftkMdEditField('DuplicateRule') only edits <duplicateRuleFilterItems>. A field that is a filter
-  // line AND a mapped field of the rule's cross-object match loses the filter line and keeps the mapping; "changed"
-  // reports "record filter: 1 line removed, 1 line kept" while the product's own sftkMdMentionsField still finds
-  // the field in <inputField>. Half-done instead of all-or-refuse.
-  it.skip('PRODUCT BUG: ✂ several mentions, a filter line and a cross-object mapping — must go as a whole or refuse as a whole', () => {
+  // Fixed 2026-11-14: sftkMdEditField('DuplicateRule') used to edit only <duplicateRuleFilterItems>, so a field that
+  // is a filter line AND a mapped field of the cross-object match lost the line and kept the mapping, reported done.
+  // ✂ now refuses as a whole; ⇄ renames the mapping with the filter; a line on another <table> is left alone.
+  it('✂ several mentions, a filter line and a cross-object mapping — refused as a whole (the match maps the field)', () => {
     const src = dr(flt(di('Region__c', 'equals', 'EMEA', 1, 'Lead') + di('LeadSource', 'equals', 'Web', 2, 'Lead')), XMATCH, 'Lead.SFTK_DR');
     const ed = rm('DuplicateRule', src, 'Lead');
     if (ed.refused) { refusedWhole(src, ed, /./); return; }
     expect(M.sftkMdMentionsField(ed.xml, 'Lead', 'Region__c')).toBe(false);
     expect(word(ed.xml, 'Region__c')).toBe(false);
   });
-  // PRODUCT BUG: the same on ⇄ — the filter line is renamed, the mapping's <inputField> still names the old field.
-  it.skip('PRODUCT BUG: ⇄ several mentions, a filter line and a cross-object mapping — every one must become the new field', () => {
+  it('⇄ several mentions, a filter line and a cross-object mapping — every one must become the new field', () => {
     const src = dr(flt(di('Region__c', 'equals', 'EMEA', 1, 'Lead') + di('LeadSource', 'equals', 'Web', 2, 'Lead')), XMATCH, 'Lead.SFTK_DR');
     const ed = rp('DuplicateRule', src, 'Lead');
     if (ed.refused) { refusedWhole(src, ed, /./); return; }
     expect(word(ed.xml, 'Region__c')).toBe(false);
     expect(ed.xml).toContain('<inputField>Territory__c</inputField>');
   });
-  // PRODUCT BUG: a filter line's object is its <table>. A line on the same-named field of ANOTHER table (the
-  // current user's User.Region__c) is taken for this object's field: it is dropped on ✂ and renamed on ⇄.
-  // (<table>User</table> is the assumed spelling of a "Current User" line; the product never reads <table> at all.)
-  it.skip('PRODUCT BUG: ✂ leaves a filter line on another table\'s same-named field alone', () => {
+  // A filter line's object is its <table>: a line on the same-named field of ANOTHER table (the current user's
+  // User.Region__c) is not this field. (<table>User</table> is the assumed spelling of a "Current User" line.)
+  it('✂ leaves a filter line on another table\'s same-named field alone', () => {
     const src = dr(flt(di('Region__c', 'equals', 'EMEA', 1) + di('Region__c', 'equals', 'EMEA', 2, 'User') + di('Type', 'equals', 'Customer', 3)));
     const ed = rm('DuplicateRule', src);
     expect(ed.refused).toBeNull();

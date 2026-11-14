@@ -9,7 +9,7 @@ import { extractFunctions } from './extract.mjs';
 const FC = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8');
 const CSS = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 const M = extractFunctions('sftk-mdapi.js', ['sftkMdEditField', 'sftkFormulaDropField', 'sftkMdEditWays', 'sftkMdPretty', 'sftkMdLineDiff', '_sftkMdFieldIs', '_sftkMdRenameVal', '_sftkMdWalk',
-  '_sftkMdSwapToken', '_sftkMdHasLogic', 'sftkMdFindElement', 'sftkMdUnescape', 'sftkMdEscape', 'sftkMdChildText', 'sftkMdLeadMappingRemove', 'sftkMdMentionsField', 'sftkMdPackageFiles',
+  '_sftkMdSwapToken', '_sftkMdHasLogic', 'sftkMdFindElement', 'sftkMdUnescape', 'sftkMdEscape', 'sftkMdChildText', 'sftkMdLeadMappingRemove', 'sftkMdMentionsField', 'sftkMdValuesHolding', 'sftkMdChildren', 'sftkMdPackageFiles',
   'sftkMdDeleteSpec', '_sftkMdDeleteTable', '_sftkPkgXml', 'sftkMdRecordFileXml']);
 const X = n => readFileSync(new URL(`./fixtures/md-edit/${n}.xml`, import.meta.url), 'utf8');
 const O = 'Account', F = 'SFTK_Live_Blk__c', N = 'SFTK_Live_Blk2__c';
@@ -134,7 +134,7 @@ describe('every kind of the demo field, ✂ and ⇄', () => {
   });
   it('a token swap never touches a longer name or another object’s same-named field path', () => {
     const t = M._sftkMdSwapToken('A__c + AA__c + X.A__c + Account.A__c + A__cx', 'Account', 'A__c', 'B__c');
-    expect(t).toEqual({ text: 'B__c + AA__c + X.A__c + Account.B__c + A__cx', n: 2 });
+    expect(t).toEqual({ text: 'B__c + AA__c + X.A__c + Account.B__c + A__cx', n: 2, rel: 1 });   // rel: X.A__c, reached through a relationship and left alone (2026-11-14)
   });
   it('the ways per kind; code and pages have none (🗑 or Setup)', () => {
     expect(M.sftkMdEditWays('WorkflowRule')).toEqual({ remove: true, replace: true });
