@@ -354,42 +354,48 @@ function sftkRtRemoveField(innerXml, objApi, fieldApi) {
   return { xml: r.xml, removed: r.dropped, emptied: r.emptied, skipped: [...viaLookup, ...skipped], viaLookup, changed: r.dropped > 0 };
 }
 
-// ⇄ Replace: the column names the new field in place. When the new field is
-// already a column of the same table, the old column is removed instead
-// (a column may appear once) and `newAlreadyThere` says so.
+// ⇄ Replace: the column names the new field in place — a plain column (Field) and a lookup path that ends on this
+// object (Parent.Field → Parent.NewField) alike. When the renamed column is already on the same table, the old one is
+// removed instead (a column may appear once): `dropped` counts those, and `newAlreadyThere` says the PLAIN new field
+// was already a column. One pass for both, so a Parent.Field column is renamed even when the plain new field is
+// already there (review 2, 2026-11-14: it was dropped with the plain column, the parent's column lost).
 function sftkRtReplaceField(innerXml, objApi, fieldApi, newFieldApi) {
-  // a PLAIN column of the new field only: Parent.NewField is not this table's column (2026-11-14)
-  const nf = String(newFieldApi || '').toLowerCase(), no = String(objApi || '').toLowerCase();
-  let newAlreadyThere = false;
-  sftkRtEdit(innerXml, (field, table) => { if (field.toLowerCase() === nf && table.toLowerCase() === no) newAlreadyThere = true; return 'keep'; });
-  if (newAlreadyThere) {
-    const rm = sftkRtRemoveField(innerXml, objApi, fieldApi);
-    return { xml: rm.xml, swapped: 0, dropped: rm.removed, emptied: rm.emptied, skipped: rm.skipped, viaLookup: rm.viaLookup, newAlreadyThere, changed: rm.changed };
-  }
   const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const nf = String(newFieldApi || '').toLowerCase();
   const skipped = [];
   const viaLookup = [];
-  // the columns already on the table: a path renamed onto one of them is dropped instead (a column appears once)
+  // the columns already on the table: a column renamed onto one of them is dropped instead (a column appears once)
   const have = new Set();
   sftkRtEdit(innerXml, (field, table) => { if (table.toLowerCase() === o) have.add(field.toLowerCase()); return 'keep'; });
-  let pathDropped = 0;
+  // a PLAIN column of the new field only: Parent.NewField is not this table's own column (2026-11-14)
+  const newAlreadyThere = have.has(nf);
+  let dropped = 0;
+  const onto = to => {
+    if (have.has(to.toLowerCase())) return null;
+    have.add(to.toLowerCase());
+    return { rename: to };
+  };
   const r = sftkRtEdit(innerXml, (field, table, label, reach) => {
     if (table.toLowerCase() === o && field.toLowerCase().endsWith('.' + f)) {
       const how = reach(objApi);
       if (how === 'this') {
-        const to = field.slice(0, field.length - f.length) + newFieldApi;
-        if (have.has(to.toLowerCase())) { pathDropped++; return 'drop'; }
-        return { rename: to };
+        const d = onto(field.slice(0, field.length - f.length) + newFieldApi);
+        if (!d) { dropped++; return 'drop'; }
+        return d;
       }
       if (how === 'unknown') viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`);
       return 'keep';
     }
     if (field.toLowerCase() !== f) return 'keep';
-    if (table.toLowerCase() === o) return { rename: newFieldApi };
+    if (table.toLowerCase() === o) {
+      const d = onto(newFieldApi);
+      if (!d) { dropped++; return 'drop'; }
+      return d;
+    }
     skipped.push(`${table}.${field} in “${label}”`);
     return 'keep';
   });
-  return { xml: r.xml, swapped: r.renamed, dropped: pathDropped, emptied: r.emptied, skipped: [...viaLookup, ...skipped], viaLookup, newAlreadyThere, changed: r.renamed + pathDropped > 0 };
+  return { xml: r.xml, swapped: r.renamed, dropped, emptied: r.emptied, skipped: [...viaLookup, ...skipped], viaLookup, newAlreadyThere, changed: r.renamed + dropped > 0 };
 }
 
 // The two files a report-type deploy needs (the zip builder lives in sftk-zip.js).

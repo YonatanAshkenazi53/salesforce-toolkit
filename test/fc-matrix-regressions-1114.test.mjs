@@ -318,3 +318,159 @@ describe('EmailTemplate — Visualforce: a single-quoted binding is a bound comp
     expect(r.rec.Markup).toContain('value="{!relatedTo.Account.Region__c}"');
   });
 });
+
+describe('EmailTemplate — Visualforce: every standard relationship hop is followed to its object (review 2, 2026-11-14)', () => {
+  it('relatedTo.PartnerAccount.X on an Opportunity is Account’s: ✂ and ⇄ take both Account mentions', () => {
+    const m = vfm('relatedToType="Opportunity"', 'A {!relatedTo.Account.Region__c} P {!relatedTo.PartnerAccount.Region__c}');
+    const r = TP.sftkTplRemove({ Markup: m }, 'Region__c', 'Account');
+    expect(r).toEqual({ rec: { Markup: vfm('relatedToType="Opportunity"', 'A  P ') }, n: 2, fields: ['Markup'] });
+    const p = TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'Account');
+    expect(p.n).toBe(2);
+    expect(p.rec.Markup).not.toMatch(/Region__c/);
+  });
+  it('relatedTo.ConvertedAccount.X on a Lead is Account’s: removed, not "no merge field"', () => {
+    const r = TP.sftkTplRemove({ Markup: vfm('relatedToType="Lead"', '{!relatedTo.ConvertedAccount.Region__c}') }, 'Region__c', 'Account');
+    expect(r.n).toBe(1);
+  });
+  it('relatedTo.CompanySigned.X on a Contract is User’s, next to Owner’s', () => {
+    const r = TP.sftkTplRemove({ Markup: vfm('relatedToType="Contract"', '{!relatedTo.Owner.Region__c} {!relatedTo.CompanySigned.Region__c}') }, 'Region__c', 'User');
+    expect(r.n).toBe(2);
+    expect(r.rec.Markup).not.toMatch(/Region__c/);
+  });
+  it('a hop not in the map is never guessed from its name: refused with the reason, nothing written', () => {
+    const r = TP.sftkTplRemove({ Markup: vfm('relatedToType="Opportunity"', '{!relatedTo.Account.Region__c} {!relatedTo.Mystery.Region__c}') }, 'Region__c', 'Account');
+    expect(r).toMatchObject({ n: 0, rec: {} });
+    expect(r.refused).toMatch(/through “\{!relatedTo\.Mystery\.Region__c\}” — which object's field that is cannot be told/);
+  });
+});
+
+describe('EmailTemplate — Visualforce: a standard lookup named for its object is followed, never refused (review 3, 2026-11-14)', () => {
+  it('Entitlement.Region__c through relatedTo.Entitlement on a Case: ⇄ renames it, ✂ takes it out', () => {
+    const m = vfm('relatedToType="Case"', '{!relatedTo.Entitlement.Region__c}');
+    const p = TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'Entitlement');
+    expect(p.refused).toBeUndefined();
+    expect(p).toEqual({ rec: { Markup: vfm('relatedToType="Case"', '{!relatedTo.Entitlement.Area__c}') }, n: 1, fields: ['Markup'] });
+    const r = TP.sftkTplRemove({ Markup: m }, 'Region__c', 'Entitlement');
+    expect(r).toEqual({ rec: { Markup: vfm('relatedToType="Case"', '') }, n: 1, fields: ['Markup'] });
+  });
+  it('Case.Region__c next to relatedTo.Entitlement.Region__c: the Case mention goes or is renamed, Entitlement’s is left alone', () => {
+    const m = vfm('relatedToType="Case"', '{!relatedTo.Region__c} {!relatedTo.Entitlement.Region__c}');
+    const p = TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'Case');
+    expect(p.refused).toBeUndefined();
+    expect(p.rec.Markup).toBe(vfm('relatedToType="Case"', '{!relatedTo.Area__c} {!relatedTo.Entitlement.Region__c}'));
+    const r = TP.sftkTplRemove({ Markup: m }, 'Region__c', 'Case');
+    expect(r).toEqual({ rec: { Markup: vfm('relatedToType="Case"', ' {!relatedTo.Entitlement.Region__c}') }, n: 1, fields: ['Markup'] });
+  });
+  it('Individual.Region__c through relatedTo.Individual on a Contact is Individual’s; cleaning Contact’s leaves it alone', () => {
+    const m = vfm('relatedToType="Contact"', '{!relatedTo.Region__c} {!relatedTo.Individual.Region__c}');
+    const i = TP.sftkTplRemove({ Markup: m }, 'Region__c', 'Individual');
+    expect(i).toEqual({ rec: { Markup: vfm('relatedToType="Contact"', '{!relatedTo.Region__c} ') }, n: 1, fields: ['Markup'] });
+    const c = TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'Contact');
+    expect(c.refused).toBeUndefined();
+    expect(c.rec.Markup).toBe(vfm('relatedToType="Contact"', '{!relatedTo.Area__c} {!relatedTo.Individual.Region__c}'));
+  });
+  it('PricebookEntry.Product2 on an OpportunityLineItem ends on Product2', () => {
+    const m = vfm('relatedToType="OpportunityLineItem"', '{!relatedTo.PricebookEntry.Product2.Region__c}');
+    expect(TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'Product2').rec.Markup).toContain('{!relatedTo.PricebookEntry.Product2.Area__c}');
+    expect(TP.sftkTplRemove({ Markup: m }, 'Region__c', 'OpportunityLineItem').n).toBe(0);
+  });
+  it('a custom …__r or a polymorphic What hop is still refused with the reason', () => {
+    expect(TP.sftkTplRemove({ Markup: vfm('relatedToType="Case"', '{!relatedTo.Thing__r.Region__c}') }, 'Region__c', 'Case').refused).toMatch(/cannot be told/);
+    expect(TP.sftkTplRemove({ Markup: vfm('relatedToType="Task"', '{!relatedTo.What.Region__c}') }, 'Region__c', 'Account').refused).toMatch(/cannot be told/);
+  });
+});
+
+describe('EmailTemplate — Visualforce: $User / $Organization / $Setup name their object (review 2, 2026-11-14)', () => {
+  const u = { Markup: vfm('relatedToType="Account"', 'Tier {!relatedTo.Region__c} / me {!$User.Region__c} {!$Organization.Region__c}') };
+  it('cleaning User.Region__c: {!$User.Region__c} goes, the Account’s and the Organization’s stay', () => {
+    const r = TP.sftkTplRemove(u, 'Region__c', 'User');
+    expect(r.refused).toBeUndefined();
+    expect(r.n).toBe(1);
+    expect(r.rec.Markup).toContain('Tier {!relatedTo.Region__c} / me  {!$Organization.Region__c}');
+  });
+  it('cleaning Account.Region__c: relatedTo’s goes or is renamed, $User’s and $Organization’s are left alone — not refused', () => {
+    const r = TP.sftkTplRemove(u, 'Region__c', 'Account');
+    expect(r.refused).toBeUndefined();
+    expect(r.rec.Markup).toContain('Tier  / me {!$User.Region__c} {!$Organization.Region__c}');
+    const p = TP.sftkTplReplace(u, 'Region__c', 'Area__c', 'Account');
+    expect(p.refused).toBeUndefined();
+    expect(p.rec.Markup).toContain('Tier {!relatedTo.Area__c} / me {!$User.Region__c} {!$Organization.Region__c}');
+  });
+  it('$Setup.Obj.X is Obj’s field', () => {
+    const r = TP.sftkTplRemove({ Markup: vfm('relatedToType="Account"', '{!$Setup.MySet__c.Region__c} {!relatedTo.Region__c}') }, 'Region__c', 'MySet__c');
+    expect(r.n).toBe(1);
+    expect(r.rec.Markup).toContain(' {!relatedTo.Region__c}');
+  });
+});
+
+describe('EmailTemplate — Visualforce: a hop after a global is followed from the global’s object (review 3, 2026-11-14)', () => {
+  const h = 'recipientType="Contact" relatedToType="Account"';
+  it('{!$User.Manager.Region__c} is User’s own field: ⇄ renames it and ✂ takes it out, like {!recipient.Manager.Region__c}', () => {
+    const m = vfm(h, '{!$User.Manager.Region__c}');
+    expect(TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'User')).toEqual({ rec: { Markup: vfm(h, '{!$User.Manager.Area__c}') }, n: 1, fields: ['Markup'] });
+    expect(TP.sftkTplRemove({ Markup: m }, 'Region__c', 'User').n).toBe(1);
+    const viaRecipient = vfm('recipientType="User" relatedToType="Account"', '{!recipient.Manager.Region__c}');
+    expect(TP.sftkTplReplace({ Markup: viaRecipient }, 'Region__c', 'Area__c', 'User').n).toBe(1);
+  });
+  it('{!$User.Contact.Region__c} / {!$User.Account.Region__c} are Contact’s / Account’s, not User’s', () => {
+    const m = vfm(h, '{!$User.Contact.Region__c} {!$User.Account.Region__c}');
+    expect(TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'Contact').rec.Markup).toBe(vfm(h, '{!$User.Contact.Area__c} {!$User.Account.Region__c}'));
+    expect(TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'Account').rec.Markup).toBe(vfm(h, '{!$User.Contact.Region__c} {!$User.Account.Area__c}'));
+    expect(TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'User')).toEqual({ rec: {}, n: 0, fields: [] });
+  });
+  it('a hop after a global that the map does not know is refused with the reason, never taken as foreign', () => {
+    const p = TP.sftkTplReplace({ Markup: vfm(h, '{!$User.Mystery__r.Region__c}') }, 'Region__c', 'Area__c', 'User');
+    expect(p).toMatchObject({ n: 0, rec: {} });
+    expect(p.refused).toMatch(/through “\{!\$User\.Mystery__r\.Region__c\}?” — which object's field that is cannot be told/);
+  });
+  it('{!$Setup.MySet__c.Owner.Region__c} is followed from MySet__c: User’s field', () => {
+    const m = vfm(h, '{!$Setup.MySet__c.Owner.Region__c}');
+    expect(TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'User').n).toBe(1);
+    expect(TP.sftkTplReplace({ Markup: m }, 'Region__c', 'Area__c', 'MySet__c').n).toBe(0);
+  });
+});
+
+describe('ReportType ⇄ — a lookup path ending on the object is renamed, never lost, when the new field is already a column (review 2, 2026-11-14)', () => {
+  it('Region__c + Area__c + Parent.Region__c on Account: the plain old column goes, Parent.Region__c becomes Parent.Area__c', () => {
+    const x = rtype('Account', [col('Region__c', 'Account'), col('Area__c', 'Account'), col('Parent.Region__c', 'Account')]);
+    const r = M.sftkRtReplaceField(x, 'Account', 'Region__c', 'Area__c');
+    expect(r).toMatchObject({ swapped: 1, dropped: 1, newAlreadyThere: true, viaLookup: [], changed: true });
+    expect(r.xml).toBe(rtype('Account', [col('Area__c', 'Account'), col('Parent.Area__c', 'Account')]));
+    expect(M.sftkRtMentions(r.xml, 'Account', 'Region__c')).toBe(0);
+  });
+  it('Parent.Area__c already there: Parent.Region__c is dropped and counted in `dropped`, and the success text says so', () => {
+    const x = rtype('Account', [col('Region__c', 'Account'), col('Parent.Region__c', 'Account'), col('Parent.Area__c', 'Account')]);
+    const r = M.sftkRtReplaceField(x, 'Account', 'Region__c', 'Area__c');
+    expect(r).toMatchObject({ swapped: 1, dropped: 1, newAlreadyThere: false, changed: true });
+    expect(r.xml).toBe(rtype('Account', [col('Area__c', 'Account'), col('Parent.Area__c', 'Account')]));
+    const fc = read('field-cleaner.js');
+    const body = fc.slice(fc.indexOf('async function fixReportType('), fc.indexOf('async function fixReportType(') + 8000);
+    expect(body).toMatch(/if \(swap && res\.dropped\) bits\.push\(/);
+    expect(body).toContain('the renamed column was already on the type');
+  });
+});
+
+describe('ReportType ⇄ — the success text of a plain rename states no removal (review 3, 2026-11-14)', () => {
+  // the message lines of fixReportType, run as they are in field-cleaner.js
+  const fcSrc = read('field-cleaner.js');
+  const at = fcSrc.indexOf('const bits = [];', fcSrc.indexOf('async function fixReportType('));
+  const msg = new Function('swap', 'res', 'swapTo',
+    fcSrc.slice(at, fcSrc.indexOf('return `✅ Report type updated', at)) + 'return bits.join(" · ");');
+  it('Region__c → Area__c with nothing dropped: "1 column now names Area__c", never "undefined columns removed"', () => {
+    const r = M.sftkRtReplaceField(rtype('Account', [col('Region__c', 'Account')]), 'Account', 'Region__c', 'Area__c');
+    expect(r).toMatchObject({ swapped: 1, dropped: 0, changed: true });
+    const t = msg(true, r, 'Area__c');
+    expect(t).toBe('1 column now names Area__c');
+    expect(t).not.toMatch(/undefined|removed/);
+  });
+  it('✂ still says how many columns were removed', () => {
+    const r = M.sftkRtRemoveField(rtype('Account', [col('Region__c', 'Account'), col('Name', 'Account')]), 'Account', 'Region__c');
+    expect(msg(false, r, '')).toBe('1 column removed');
+  });
+  it('⇄ with a drop still says both counts', () => {
+    const x = rtype('Account', [col('Region__c', 'Account'), col('Parent.Region__c', 'Account'), col('Parent.Area__c', 'Account')]);
+    const t = msg(true, M.sftkRtReplaceField(x, 'Account', 'Region__c', 'Area__c'), 'Area__c');
+    expect(t).toMatch(/^1 column now names Area__c · an old column was removed instead/);
+    expect(t).not.toMatch(/undefined/);
+  });
+});

@@ -61,10 +61,13 @@ function sftkTplNamesField(rec, objApi, fieldApi) {
 // the scan's own rule in sftkTplNamesField) names a same-named field of another object, which ✂ / ⇄ must leave alone.
 // A longer path (Opportunity.Account.X__c) and a bare name count as before.
 // vf (the Visualforce Markup): the qualifier is a variable, so the chain is resolved instead — relatedTo is the
-// relatedToType object, recipient the recipientType one, each further hop a standard relationship (Account → Account,
-// Owner / CreatedBy / LastModifiedBy / Manager → User, ReportsTo → Contact, Parent / MasterRecord → the same object),
-// $ObjectType.Obj.Fields.X is Obj's. What the markup alone cannot tell — a custom relationship (…__r), a polymorphic
-// What / Who, any other variable (an <apex:repeat var>), a type attribute that is missing — answers 'unknown'.
+// relatedToType object, recipient the recipientType one, each further hop a standard relationship of the REL map below
+// (Account / PartnerAccount / ConvertedAccount → Account, Owner / CreatedBy / CompanySigned → User, ReportsTo /
+// CustomerSigned → Contact, Parent / MasterRecord → the same object, Entitlement / Individual / PricebookEntry… → that
+// object), $ObjectType.Obj.Fields.X is Obj's, $User.X
+// User's, $Organization.X the Organization's, $Setup.Obj.X Obj's. What the markup alone cannot tell — a custom
+// relationship (…__r), a polymorphic What / Who, a relationship not in the map, any other variable (an <apex:repeat
+// var>), a type attribute that is missing — answers 'unknown'.
 //   → true (another object's), false (this object's), 'unknown' (vf only)
 function _sftkTplForeign(text, at, objApi, vf) {
   const o = String(objApi || '').trim().toLowerCase();
@@ -76,13 +79,44 @@ function _sftkTplForeign(text, at, objApi, vf) {
     const seg = q[1].slice(0, -1).split('.').map(x => x.toLowerCase());
     const attr = n => { const a = new RegExp(`\\b${n}\\s*=\\s*["']([A-Za-z0-9_]+)["']`, 'i').exec(text); return a ? a[1].toLowerCase() : null; };
     if (seg[0] === '$objecttype') return seg.length === 3 && seg[2] === 'fields' ? seg[1] !== o : 'unknown';
-    let cur = seg[0] === 'relatedto' ? attr('relatedToType') : seg[0] === 'recipient' ? attr('recipientType') : null;
+    // the other globals name their object, as _sftkMdSwapToken's whose() reads them (2026-11-14 review): $User.X is
+    // User's, $Profile.X Profile's, $UserRole.X UserRole's, $Organization.X Organization's, $Setup.Obj.X Obj's;
+    // anything else under a global ($Label, $Resource, $Api…) is never this object's field
+    // A hop after the global ($User.Manager.X, $Setup.Obj.Owner.X) is followed through the REL map below from the
+    // global's object, like relatedTo / recipient (2026-11-14 review: $User.Manager.X__c is User's own field).
+    let cur = null, from = 1;
+    if (seg[0][0] === '$') {
+      const G = { $user: 'user', $profile: 'profile', $userrole: 'userrole', $organization: 'organization' };
+      if (seg[0] === '$setup') { if (seg.length < 2) return true; cur = seg[1]; from = 2; }
+      else if (Object.prototype.hasOwnProperty.call(G, seg[0])) cur = G[seg[0]];
+      else return true;
+    } else cur = seg[0] === 'relatedto' ? attr('relatedToType') : seg[0] === 'recipient' ? attr('recipientType') : null;
     if (!cur) return 'unknown';
-    const alias = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', reportsto: 'contact' };
-    for (const h of seg.slice(1)) {
-      if (/__r$/.test(h) || h === 'what' || h === 'who') return 'unknown';
+    // the standard relationships whose object is fixed — sftk-mdapi.js's REL map, plus a few more a template reaches
+    // (2026-11-14 review: PartnerAccount was taken for an object named "partneraccount" and its mention left in place).
+    // A hop not in it (…__r, What / Who, any other) cannot be told from the markup: 'unknown', never guessed from its name.
+    const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
+      account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
+      reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
+      campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
+      recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group',
+      companysigned: 'user', activatedby: 'user', customersigned: 'contact', billtocontact: 'contact', shiptocontact: 'contact',
+      asset: 'asset', quote: 'quote' };
+    // the standard lookups whose relationship name IS their object (2026-11-14 review 3: Case.Entitlement,
+    // Contact.Individual, OpportunityLineItem.PricebookEntry… were refused as unknowable, taking every correct edit of
+    // the template down with them). A hop in neither list — a custom …__r, a polymorphic What / Who, an unknown
+    // name — still answers 'unknown'.
+    const SAME = new Set(['entitlement', 'individual', 'pricebookentry', 'servicecontract', 'workorder', 'workorderlineitem',
+      'businesshours', 'contractlineitem', 'orderitem', 'quotelineitem', 'opportunitylineitem', 'location', 'operatinghours',
+      'serviceterritory', 'serviceresource', 'serviceappointment', 'productitem', 'productrequest', 'returnorder', 'shipment',
+      'assetwarranty', 'warrantyterm', 'solution', 'emailmessage', 'campaignmember', 'socialpersona', 'socialpost',
+      'livechattranscript', 'livechatvisitor', 'messagingsession', 'messagingenduser', 'voicecall', 'callcenter',
+      'dandbcompany', 'milestonetype', 'slaprocess', 'assignedresource', 'worktype', 'servicecrew', 'skill',
+      'organization', 'network', 'community', 'idea', 'brandtemplate', 'emailtemplate', 'folder', 'document']);
+    for (const h of seg.slice(from)) {
       if (h === 'parent' || h === 'masterrecord') continue;
-      cur = alias[h] || h;
+      cur = Object.prototype.hasOwnProperty.call(REL, h) ? REL[h] : SAME.has(h) ? h : null;
+      if (!cur) return 'unknown';
     }
     return cur !== o;
   }
