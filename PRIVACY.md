@@ -56,12 +56,18 @@ not exfiltrate data past this policy.
 | `sftk_seed_pii`, `sftk_seed_keys` | Org Seeder rules: which fields to mask and how, which field identifies a record, and the masking salt. Field **names** only — never values |
 | `sftk_terms_accepted` | The version of the licence agreement you accepted and when. Nothing else |
 | `sftk_history[].undo` | Per run: whether a restore point exists, which objects it covers, and why any were skipped. The restore point itself (record ids and the current values of every writable field, for each object a deployment can write) lives in the IndexedDB database `sftk_undo` on this PC — never in chrome.storage — for the newest 10 runs only, and it is deleted by the same retention window, by “Clear cached org data” and by “Clear All” |
-| `sftk_dark`, `sftk_tour_*`, `ds_whatsnew_seen`, `sftk_ao_*`, `sftk_schema_version` | Theme, first-run flags, last-seen release, per-view options, storage schema version |
+| `sftk_dark`, `sftk_tour_*`, `ds_whatsnew_seen`, `ds_review_line_dismissed`, `sftk_ao_*`, `sftk_schema_version` | Theme, first-run flags, last-seen release, whether the store-review line in What's New was closed, per-view options, storage schema version |
 
 All of it is data **about your orgs, for you**, on your machine. Nothing in this
 table is ever transmitted anywhere. Uninstalling the extension deletes all of it,
 and **Data Studio → History → "Clear cached org data"** clears the org-data keys
 above on demand.
+
+**Report a problem** sends nothing by itself. It opens a GitHub issue form in a new
+tab with the extension version, browser name and major version, OS family, browser
+language, the app, the tool or view you were in (a name from the extension's own list)
+and the theme filled in — nothing from your org. You read the form and decide whether
+to submit it; GitHub's own privacy terms apply to what you post there.
 
 A few short-lived values (an in-flight scan's progress, a pending modal's state)
 are held in `chrome.storage.session`, which the browser discards when it closes.

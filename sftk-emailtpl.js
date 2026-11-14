@@ -46,32 +46,54 @@ function sftkTplNamesField(rec, objApi, fieldApi) {
   if (!o || !f) return false;
   const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const text = sftkTplTextFields().map(k => (rec && typeof rec[k] === 'string') ? rec[k] : '').join('\n');
-  if (new RegExp(`(?<![A-Za-z0-9_])${esc(o)}\\.${esc(f)}(?![A-Za-z0-9_])`, 'i').test(text)) return true;
+  // 2026-11-14 review 5: every mention written with a qualifier is resolved by _sftkTplForeign — the SAME rule ✂ / ⇄
+  // apply — instead of the scan's own regexes, which offered a Contact / Lead field for {{{Sender.X__c}}} (always a
+  // User) and an Opportunity template for {{{Opportunity.Account.X__c}}} (Account's). A qualified mention counts when it
+  // is this object's; Recipient (a Contact, a Lead or a User) counts for those three, so the template is offered and the
+  // fix refuses with the reason. A bare name, or a mention whose object cannot be told (a …__r hop), counts only when
+  // the template is about the object (RelatedEntityType / relatedToType), as before.
+  const vfT = String((rec && rec.TemplateType) || '').toLowerCase() === 'visualforce';
+  const mk = rec && typeof rec.Markup === 'string' ? rec.Markup : '';
+  const re = _sftkTplRx(f, 'gi');
+  let loose = false;                                                        // a bare name, or one that cannot be told
+  for (const k of sftkTplTextFields()) {
+    const v = rec && rec[k];
+    if (typeof v !== 'string' || !v) continue;
+    const vf = k === 'Markup' || vfT;
+    for (const m of v.matchAll(re)) {
+      if (!/[A-Za-z0-9_]\.$/.test(v.slice(Math.max(0, m.index - 2), m.index))) { loose = true; continue; }
+      const info = {};
+      const fo = _sftkTplForeign(v, m.index, o, vf, k === 'Markup' ? v : mk, info);
+      if (fo === false) return true;
+      // a Visualforce recipient.X with no recipientType is still offered for the people objects, as before
+      const vfRcp = vf && ['contact', 'lead', 'user'].includes(o.toLowerCase()) && /(?:^|[^A-Za-z0-9_.$])recipient\.[A-Za-z0-9_.]*$/i.test(v.slice(Math.max(0, m.index - 200), m.index));
+      if (fo === 'unknown') { if (info.recipient || vfRcp) return true; loose = true; }
+    }
+  }
+  if (!loose) return false;
   if (String((rec && rec.RelatedEntityType) || '').toLowerCase() === o.toLowerCase()) return true;
-  if (new RegExp(`relatedToType\\s*=\\s*["']${esc(o)}["']`, 'i').test(text)) return true;
-  if (['contact', 'lead', 'user'].includes(o.toLowerCase()) && new RegExp(`(?<![A-Za-z0-9_])(recipient|receivingUser|sendingUser|Sender)\\.${esc(f)}(?![A-Za-z0-9_])`, 'i').test(text)) return true;
-  // classic templates spell the user who receives / sends it Receiving_User / Sending_User (2026-11-14)
-  if (o.toLowerCase() === 'user' && new RegExp(`(?<![A-Za-z0-9_])(Receiving_User|Sending_User)\\.${esc(f)}(?![A-Za-z0-9_])`, 'i').test(text)) return true;
-  return false;
+  return new RegExp(`relatedToType\\s*=\\s*["']${esc(o)}["']`, 'i').test(text);
 }
 
 // Is the name at text[at] another object's field? (2026-11-14) A classic or Lightning merge field always names its
 // object — "{!Contact.X__c}", "{{{Contact.X__c}}}" — so a ONE-segment qualifier that is not objApi (nor, for the people
 // objects, Recipient / receivingUser / sendingUser / Sender, and for User the classic Receiving_User / Sending_User —
 // the scan's own rule in sftkTplNamesField) names a same-named field of another object, which ✂ / ⇄ must leave alone.
-// A longer path (Opportunity.Account.X__c) and a bare name count as before.
+// A longer path (Opportunity.Account.X__c) is walked to the object it ends on (review 5); a bare name counts as before.
 // vf (the Visualforce Markup): the qualifier is a variable, so the chain is resolved instead — relatedTo is the
-// relatedToType object, recipient the recipientType one, each further hop a standard relationship of the REL map below
+// relatedToType object, recipient the recipientType one, each further hop a standard relationship of the shared map (sftk-relmap.js)
 // (Account / PartnerAccount / ConvertedAccount → Account, Owner / CreatedBy / CompanySigned → User, ReportsTo /
 // CustomerSigned → Contact, Parent / MasterRecord → the same object, Entitlement / Individual / PricebookEntry… → that
 // object), $ObjectType.Obj.Fields.X is Obj's, $User.X
 // User's, $Organization.X the Organization's, $Setup.Obj.X Obj's. What the markup alone cannot tell — a custom
-// relationship (…__r), a polymorphic What / Who, a relationship not in the map, any other variable (an <apex:repeat
+// relationship (…__r), a polymorphic What / Who, Parent where it can be any object, any other variable (an <apex:repeat
 // var>), a type attribute that is missing — answers 'unknown'.
 // src: where relatedToType / recipientType are read (default: text) — a Visualforce template's Subject (or any other
 // text field of it) holds Visualforce merge syntax too, its types declared in the Markup (2026-11-14 review 4).
-//   → true (another object's), false (this object's), 'unknown' (vf only)
-function _sftkTplForeign(text, at, objApi, vf, src) {
+//   → true (another object's), false (this object's), 'unknown' (cannot be told)
+// info (optional, 2026-11-14 review 5): a classic / Lightning 'unknown' sets info.why (the TRUE reason, for the
+// refusal text) and info.recipient (it is the polymorphic Recipient).
+function _sftkTplForeign(text, at, objApi, vf, src, info) {
   const o = String(objApi || '').trim().toLowerCase();
   if (!o) return false;
   const before = text.slice(Math.max(0, at - 200), at);
@@ -84,63 +106,55 @@ function _sftkTplForeign(text, at, objApi, vf, src) {
     // the other globals name their object, as _sftkMdSwapToken's whose() reads them (2026-11-14 review): $User.X is
     // User's, $Profile.X Profile's, $UserRole.X UserRole's, $Organization.X Organization's, $Setup.Obj.X Obj's;
     // anything else under a global ($Label, $Resource, $Api…) is never this object's field
-    // A hop after the global ($User.Manager.X, $Setup.Obj.Owner.X) is followed through the REL map below from the
+    // A hop after the global ($User.Manager.X, $Setup.Obj.Owner.X) is followed through the shared map (sftk-relmap.js) from the
     // global's object, like relatedTo / recipient (2026-11-14 review: $User.Manager.X__c is User's own field).
+    // The $ roots and every hop are resolved by the ONE shared resolver in sftk-relmap.js (sftkRelGlobal / sftkRelWalk,
+    // 2026-11-14): this function kept a private copy of the map (with a SAME list of lookups named for their object,
+    // which the shared rule covers — any standard hop not in the map is its own object) that drifted from the others.
+    // A custom relationship (…__r), a polymorphic What / Who, or Parent on Attachment / Note… cannot be told from the
+    // markup: 'unknown'.
     let cur = null, from = 1;
-    if (seg[0][0] === '$') {
-      const G = { $user: 'user', $profile: 'profile', $userrole: 'userrole', $organization: 'organization' };
-      if (seg[0] === '$setup') { if (seg.length < 2) return true; cur = seg[1]; from = 2; }
-      else if (Object.prototype.hasOwnProperty.call(G, seg[0])) cur = G[seg[0]];
-      else return true;
+    const gl = sftkRelGlobal(seg);
+    if (gl) {
+      if (!gl.obj) return true;                                             // $Label, $Resource, $Api… — never this object's
+      cur = gl.obj; from = gl.from;
     } else cur = seg[0] === 'relatedto' ? attr('relatedToType') : seg[0] === 'recipient' ? attr('recipientType') : null;
     if (!cur) return 'unknown';
-    // the standard relationships whose object is fixed — sftk-mdapi.js's REL map, plus a few more a template reaches
-    // (2026-11-14 review: PartnerAccount was taken for an object named "partneraccount" and its mention left in place).
-    // A hop not in it (…__r, What / Who, any other) cannot be told from the markup: 'unknown', never guessed from its name.
-    const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
-      account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
-      reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
-      campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
-      recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group',
-      companysigned: 'user', activatedby: 'user', customersigned: 'contact', billtocontact: 'contact', shiptocontact: 'contact',
-      asset: 'asset', quote: 'quote' };
-    // the standard lookups whose relationship name IS their object (2026-11-14 review 3: Case.Entitlement,
-    // Contact.Individual, OpportunityLineItem.PricebookEntry… were refused as unknowable, taking every correct edit of
-    // the template down with them). A hop in neither list — a custom …__r, a polymorphic What / Who, an unknown
-    // name — still answers 'unknown'.
-    const SAME = new Set(['entitlement', 'individual', 'pricebookentry', 'servicecontract', 'workorder', 'workorderlineitem',
-      'businesshours', 'contractlineitem', 'orderitem', 'quotelineitem', 'opportunitylineitem', 'location', 'operatinghours',
-      'serviceterritory', 'serviceresource', 'serviceappointment', 'productitem', 'productrequest', 'returnorder', 'shipment',
-      'assetwarranty', 'warrantyterm', 'solution', 'emailmessage', 'campaignmember', 'socialpersona', 'socialpost',
-      'livechattranscript', 'livechatvisitor', 'messagingsession', 'messagingenduser', 'voicecall', 'callcenter',
-      'dandbcompany', 'milestonetype', 'slaprocess', 'assignedresource', 'worktype', 'servicecrew', 'skill',
-      'organization', 'network', 'community', 'idea', 'brandtemplate', 'emailtemplate', 'folder', 'document']);
-    // Parent is the same object on most (Account, Case, Campaign…), but Case on CaseComment / EmailMessage and any
-    // object on Attachment / Note / FeedItem (2026-11-14 review 3).
-    const PARENT = { casecomment: 'case', emailmessage: 'case', attachment: null, note: null, feeditem: null, feedcomment: null, entitysubscription: null, contentdocumentlink: null };
-    for (const h of seg.slice(from)) {
-      if (h === 'masterrecord') continue;
-      if (h === 'parent') {
-        if (Object.prototype.hasOwnProperty.call(PARENT, cur)) { cur = PARENT[cur]; if (!cur) return 'unknown'; }
-        continue;
-      }
-      if (Object.prototype.hasOwnProperty.call(REL, h)) { cur = REL[h]; continue; }
-      if (SAME.has(h)) { cur = h; continue; }
-      // A custom relationship (…__r) or a polymorphic What / Who cannot be told from the markup. Any other standard hop
-      // is a lookup named after its object (GiftCommitment, Program, ContentDocument, Territory2…) — taken as that
-      // object, as before review 3 closed the map and refused whole templates over it (2026-11-14 review 3).
-      if (/__r$/.test(h) || h === 'what' || h === 'who') return 'unknown';
-      cur = h;
-    }
-    return cur !== o;
+    const r = sftkRelWalk(cur, seg.slice(from));
+    if (r.kind) return 'unknown';
+    // sftkMdIsOwnObj (sftk-mdapi.js, a page global loaded before this file), not !==: a Task / Event template's
+    // {!relatedTo.Region__c} IS Activity.Region__c, as every other remover takes it — the literal compare called it
+    // another object's, so ✂ / ⇄ of Activity.Region__c left it named and reported done (2026-11-14 review 6).
+    return !sftkMdIsOwnObj(r.obj, o);
   }
-  const q = /(?:^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*)\.$/.exec(before);
-  if (!q) return false;
-  const x = q[1].toLowerCase();
-  if (x === o) return false;
-  if (['contact', 'lead', 'user'].includes(o) && ['recipient', 'receivinguser', 'sendinguser', 'sender'].includes(x)) return false;
-  if (o === 'user' && ['receiving_user', 'sending_user'].includes(x)) return false;
-  return true;
+  // classic / Lightning (2026-11-14 review 5): the WHOLE path is walked through the shared resolver, as the formula,
+  // flow and Lightning page removers do — only a one-segment qualifier was read, so Opportunity.Account.X__c and
+  // Opportunity.Owner.X__c counted as the field of every object at once. The root names its object: an object name, a
+  // $ global, or a merge variable — Sender / sendingUser / receivingUser (classic Sending_User / Receiving_User) are
+  // always the User who sends or receives it, never a Contact or Lead. Recipient can be a Contact, a Lead or a User:
+  // when the path can end on objApi and on another object, which one owns the field cannot be told — 'unknown'.
+  const q = /(?:^|[^A-Za-z0-9_.$])((?:[$A-Za-z_][A-Za-z0-9_]*\.)+)$/.exec(before);
+  if (!q) return false;                                                     // a bare name: as before
+  const seg = q[1].slice(0, -1).split('.').map(x => x.toLowerCase());
+  const unknown = (why, rcp) => { if (info) { info.why = why; info.recipient = !!rcp; } return 'unknown'; };
+  let starts, from = 1;
+  const gl = sftkRelGlobal(seg);
+  if (gl) {
+    if (!gl.obj) return true;                                               // $Label, $Api… — never this object's
+    starts = [gl.obj]; from = gl.from;
+  } else if (['sender', 'sendinguser', 'receivinguser', 'sending_user', 'receiving_user'].includes(seg[0])) starts = ['user'];
+  else if (seg[0] === 'recipient') starts = ['contact', 'lead', 'user'];
+  else starts = [seg[0]];
+  const ends = starts.map(s => sftkRelWalk(s, seg.slice(from)));
+  const bad = ends.find(r => r.kind);
+  if (bad) return unknown(bad.kind === 'custom' ? 'a custom relationship (…__r) does not name the object it leads to'
+    : 'the path goes through a relationship that can lead to more than one object (What / Who, or a Parent that can be any object)');
+  // own-object test through sftkMdIsOwnObj, as the Visualforce branch above (2026-11-14 review 6): {!Task.Region__c}
+  // is Activity's field. Every end on objApi's own table → false; none → true; some (Recipient's three) → 'unknown'.
+  const own = ends.filter(r => sftkMdIsOwnObj(r.obj, o)).length;
+  if (!own) return true;
+  if (own === ends.length) return false;
+  return unknown('Recipient can be a Contact, a Lead or a User', true);
 }
 
 // ⇄ the field's API name renamed in every text field, whole word, the spelling of the new name as given. With objApi,
@@ -160,14 +174,17 @@ function sftkTplReplace(rec, fieldApi, newField, objApi) {
   for (const k of sftkTplTextFields()) {
     const v = rec && rec[k];
     if (typeof v !== 'string' || !v) continue;
-    let c = 0, unk = null;
+    let c = 0, unk = null, why = null;
     const vf = k === 'Markup' || vfT;
     const t = v.replace(re, (m, at, str) => {
-      const fo = objApi ? _sftkTplForeign(str, at, objApi, vf, k === 'Markup' ? str : mk) : false;
-      if (fo === 'unknown') { if (!unk) { const b = str.lastIndexOf('{', at); unk = str.slice(b < 0 ? at : b, at + m.length); } return m; }
+      const info = {};
+      const fo = objApi ? _sftkTplForeign(str, at, objApi, vf, k === 'Markup' ? str : mk, info) : false;
+      if (fo === 'unknown') { if (!unk) { const b = str.lastIndexOf('{', at); unk = str.slice(b < 0 ? at : b, at + m.length); why = info.why || null; } return m; }
       if (fo) return m;
       c++; return nf;
     });
+    // a classic / Lightning mention is refused with its own reason (Recipient's three objects, a …__r hop — review 5)
+    if (unk && !vf) return { rec: {}, n: 0, fields: [], refused: `the template reaches ${String(fieldApi).trim()} through “${unk}” — ${why}, so which object's field that is cannot be told and ⇄ will not rename it; ✎ Edit the template instead` };
     if (unk) return { rec: {}, n: 0, fields: [], refused: `the Visualforce markup reaches ${String(fieldApi).trim()} through “${unk}” — which object's field that is cannot be told from the markup, so ⇄ will not rename it; ✎ Edit the markup instead` };
     if (c) { out[k] = t; n += c; fields.push(k); }
   }
@@ -201,9 +218,16 @@ function sftkTplRemove(rec, fieldApi, objApi) {
   // Markup (2026-11-14 review 4); src is where those types are read
   const vfT = String((rec && rec.TemplateType) || '').toLowerCase() === 'visualforce';
   const mk = rec && typeof rec.Markup === 'string' ? rec.Markup : '';
+  // a classic / Lightning mention that cannot be told carries its own TRUE reason (review 5, 2026-11-14)
+  let lastWhy = null;
+  const whyOf = (m, vf) => vf || !lastWhy ? why(m) : `the template reaches ${f} through “${m}” — ${lastWhy}, so which object's field that is cannot be told and ✂ will not take it out; ✎ Edit the template instead`;
   const owner = (m, at, str, vf, src) => {
     if (!objApi) return 'own';
-    const ws = [...m.matchAll(word)].map(w => _sftkTplForeign(str, at + w.index, objApi, vf, src));
+    const ws = [...m.matchAll(word)].map(w => {
+      const info = {}, r = _sftkTplForeign(str, at + w.index, objApi, vf, src, info);
+      if (r === 'unknown' && info.why) lastWhy = info.why;
+      return r;
+    });
     return ws.includes(false) ? 'own' : ws.includes('unknown') ? 'unknown' : 'foreign';
   };
   for (const k of sftkTplTextFields()) {
@@ -226,7 +250,7 @@ function sftkTplRemove(rec, fieldApi, objApi) {
       if (w === 'foreign') return m;                                        // only another object's field named in it: left as it is
       c++; return '';
     });
-    if (unk) return { rec: {}, n: 0, fields: [], refused: why(unk) };
+    if (unk) return { rec: {}, n: 0, fields: [], refused: whyOf(unk, vf) };
     if (c) { out[k] = t; n += c; fields.push(k); }
   }
   return { rec: out, n, fields };

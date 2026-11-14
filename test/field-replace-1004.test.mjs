@@ -304,7 +304,7 @@ describe('Field Cleaner — step 3 and what it changes', () => {
   });
   it('layout / page / report: the swap goes through the same verified write, and the re-read judges it', () => {
     expect(FC).toContain('const sw = swap ? sftkLayoutReplaceField(metadata, _selField.api, swapTo, { readOnly: _replReadOnly() }) : null;');
-    expect(FC).toContain('return { ok: left === 0 && hasNew, text: null };');
+    expect(FC).toContain('return { ok: left === 0 && !vOpts.refused && hasNew, text: null };');   // review 7 (2026-11-14): a refusal on the re-read is not clean
     expect(FC).toContain('return { ok: again.swapped + again.dropped === 0, text: null };');
     expect(FC).toContain('? sftkRptReplaceField(d.reportMetadata, obj, field, swapTo, sftkRptTokenMatch, sftkRptFieldHits)');
   });

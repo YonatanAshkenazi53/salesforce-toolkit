@@ -1,0 +1,24 @@
+name: Suggest an improvement
+description: An idea for the Toolkit or Data Studio (Data Deployment).
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste client data, org URLs, session links or record ids — this issue is public.
+  - type: dropdown
+    id: app
+    attributes:
+      label: App
+      options:
+        - Toolkit
+        - Data Studio (Data Deployment)
+    validations:
+      required: false
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: What you are trying to do, and what would make it easier.
+    validations:
+      required: true

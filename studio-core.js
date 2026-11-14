@@ -1070,6 +1070,12 @@ const CMD_VIEWS = [
   // Activity is a panel of the top bar, not a view — Quick nav opens it the way its button does (owner 2026-11-13:
   // "activity is missing from quick nav")
   { i: 'clock',     label: 'Activity',         view: '__activity', desc: 'Everything the Toolkit and Data Studio did, and when — history, undo, export' },
+  // Report a problem (sftk-report.js) — the same action as the topbar flag: a prefilled GitHub issue, nothing from the org.
+  // It is an action that opens github.com, not a view, so it renders under its own "Help" header after the views
+  // (group). The desc is the SAME string as the Toolkit palette row (popup.js); `keys` are extra search words the
+  // label and desc do not carry (bug, feedback, support…) — design review 2026-11-14. Must stay LAST: the render
+  // and the Enter handler index navItems in this order, and the Help header opens at the first grouped row.
+  { i: 'flag',      label: 'Report a problem', view: '__report',  desc: 'Report a bug — prefilled GitHub issue (GitHub account needed), nothing from your org', group: 'Help', keys: 'bug feedback issue support help github' },
 ];
 
 // Toolkit (popup) features — selecting one opens/focuses the Toolkit
@@ -1141,7 +1147,7 @@ function openCommandPalette() {
   function buildItems(filter) {
     const q = filter.toLowerCase().trim();
     const navItems = CMD_VIEWS.filter(v => _viewAvailable(v.view)).filter(v =>
-      !q || v.label.toLowerCase().includes(q) || v.desc.toLowerCase().includes(q)
+      !q || v.label.toLowerCase().includes(q) || v.desc.toLowerCase().includes(q) || (v.keys || '').includes(q)
     );
     // a Toolkit tab this build does not carry is not offered (sftk-build.js)
     const toolkitItems = CMD_TOOLKIT.filter(t => typeof sftkShips !== 'function' || sftkShips(t.tab)).filter(t =>
@@ -1161,8 +1167,11 @@ function openCommandPalette() {
     let html = '';
 
     if (navItems.length) {
-      html += `<div class="ds-cmd-section-hdr">Navigate</div>`;
+      // views under Navigate; grouped actions (Report a problem → Help) under their own header after them
+      let hdr = '';
       navItems.forEach((v, i) => {
+        const want = v.group || 'Navigate';
+        if (want !== hdr) { hdr = want; html += `<div class="ds-cmd-section-hdr">${esc(hdr)}</div>`; }
         const cls = i === activeIdx ? ' ds-cmd-active' : '';
         html += `<div class="ds-cmd-item${cls}" data-cmd-view="${esc(v.view)}">
           <span class="ds-cmd-item-icon">${dsIcon(v.i)}</span>
@@ -1225,6 +1234,7 @@ function openCommandPalette() {
   function navigateTo(view) {
     closePalette();
     if (view === '__activity') { eid('sftkFeedBtn')?.click(); return; }
+    if (view === '__report') { if (typeof sftkReportOpen === 'function') sftkReportOpen({ app: 'studio', where: _currentView }); return; }
     navigateToView(view);   // U6: through the hash so Back/Forward work
   }
 

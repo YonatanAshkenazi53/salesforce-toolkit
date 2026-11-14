@@ -36,6 +36,9 @@
              (user 2026-07-26: "not as a feature :)"). Badge dot filled by
              studio-whatsnew.js while the newest version is unread. -->
         <button class="ds-whatsnew-top" id="dsWhatsNewTop" aria-label="What's New — what shipped, per version" title="What's New — what shipped, per version"><span class="ds-glyph ds-i" data-i="megaphone" aria-hidden="true"></span><span class="ds-pro-only">What's New</span><span id="dsWhatsNewBadge" aria-hidden="true"></span></button>
+        <!-- Report a problem (sftk-report.js): opens a prefilled GitHub issue form — version, browser, OS,
+             language, the view you are in and the theme; nothing from the org. -->
+        <button id="sftkReportBtn" class="dbg-btn sftk-report-btn" title="Report a problem — prefilled GitHub issue (nothing from your org)" aria-label="Report a problem — opens a prefilled GitHub issue; sending it needs a GitHub account; nothing from your org is included"><span class="ds-glyph ds-i" data-i="flag" aria-hidden="true"></span></button>
         <!-- E4 professional mode — swaps emoji chrome for plain text, tightens
              density. State lives in ds_settings.proMode (chrome.storage.local);
              applyProMode() in studio-core.js drives body.ds-pro + this button. -->
@@ -204,6 +207,8 @@
   <script src="sftk-write.js"></script>
   <script src="sftk-history.js"></script>
   <script src="sftk-feed.js"></script>
+  <!-- Report a problem: the prefilled GitHub issue URL (allowed fields only). Before studio-core.js, whose palette calls it. -->
+  <script src="sftk-report.js"></script>
   <script src="sftk-cmdt.js"></script>
   <script src="sftk-identity.js"></script>
   <script src="sftk-undo.js"></script>

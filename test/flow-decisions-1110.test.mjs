@@ -11,10 +11,16 @@ const S = extractFunctions('sftk-flowsurgery.js', ['sftkFlowRefPreview', 'sftkFl
 // the real remover, lifted out of the tool's closure
 const at = FC.indexOf('  function removeFieldRefs(metadata, objApi, fieldApi, opts) {');
 const stop = FC.indexOf('    return changes;', at);
-const removeFieldRefs = new Function('sftkFormulaDropField', `${FC.slice(at, FC.indexOf('}', stop) + 1)}; return removeFieldRefs;`)(M.sftkFormulaDropField);
+// review 5 (2026-11-14): a flow resource's object comes from sftk-fieldreplace.js's resolver, as the page loads it — a
+// two-segment reference whose root the flow does not resolve is no longer taken for the field
+const FR = extractFunctions('sftk-fieldreplace.js', ['_sftkFrLow', 'sftkFlowResourceObjects']);
+const removeFieldRefs = new Function('sftkFormulaDropField', 'sftkFlowResourceObjects', `${FC.slice(at, FC.indexOf('}', stop) + 1)}; return removeFieldRefs;`)(M.sftkFormulaDropField, FR.sftkFlowResourceObjects);
 
 const cond = (left, right) => ({ leftValueReference: left, operator: 'EqualTo', rightValue: right ? { elementReference: right } : { stringValue: 'x' } });
+// a record-triggered flow on Account: $Record is the Account (review 5, 2026-11-14 — the fixture had no start object,
+// and $Record.F__c on a flow that names no record was matched only because an unresolved root used to be)
 const flow = () => ({
+  start: { object: 'Account' },
   decisions: [
     { name: 'D1', label: 'Mixed', rules: [{ name: 'R1', label: 'Two', conditionLogic: 'and', conditions: [cond('$Record.F__c'), cond('$Record.Name')] }] },
     { name: 'D2', label: 'Alone', rules: [{ name: 'R2', label: 'Only', conditionLogic: 'and', conditions: [cond('$Record.F__c')] }] },
@@ -81,7 +87,11 @@ describe('the preview of the fix', () => {
 });
 
 // The third way (user 2026-11-10: "1."): an outcome that rests on the field alone goes as a whole — opt-in only.
+// acct is an Account record variable (review 5, 2026-11-14: the fixtures used it undeclared, and an unresolved root
+// was matched as the field; it is now left alone as untellable)
+const ACCT = [{ name: 'acct', dataType: 'SObject', objectType: 'Account' }];
 const flow3 = () => ({
+  variables: ACCT,
   start: { connector: { targetReference: 'Which' } },
   decisions: [{ name: 'Which', label: 'Which One', defaultConnectorLabel: 'Anything else',
     rules: [
@@ -91,6 +101,7 @@ const flow3 = () => ({
   assignments: [{ name: 'Mark_Email', assignmentItems: [{ assignToReference: 'note' }] }, { name: 'Mark_Name', assignmentItems: [{ assignToReference: 'note' }] }],
 });
 const lone = () => ({
+  variables: ACCT,
   start: { connector: { targetReference: 'Gate' } },
   decisions: [{ name: 'Gate', label: 'Gate', defaultConnector: { targetReference: 'After' }, rules: [{ name: 'Only', label: 'Only', conditionLogic: 'and', conditions: [cond('acct.F__c')], connector: { targetReference: 'Side' } }] }],
   assignments: [{ name: 'After', assignmentItems: [{ assignToReference: 'x' }] }, { name: 'Side', assignmentItems: [{ assignToReference: 'x' }] }],

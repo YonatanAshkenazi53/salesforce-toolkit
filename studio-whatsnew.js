@@ -48,7 +48,11 @@ function sftkWnEsc(s) {
 }
 
 // Inline markdown → escaped HTML. Supports exactly what CHANGELOG.md uses:
-// `code` and **bold**. Everything else is literal text.
+// `code`, **bold** and [text](https://…) links. Everything else is literal text.
+// Links (2026-11-14, for the store-review line): http(s) only — a
+// [text](javascript:…) or any other scheme does not match and stays plain,
+// escaped text. The URL is escaped into the attribute; target=_blank with
+// rel="noopener noreferrer", so the opened page gets no handle on this one.
 //
 // Escaping strategy: walk the string, escape each plain segment AND each
 // marked-up run separately, so no attacker-controlled substring can ever be
@@ -58,14 +62,17 @@ function sftkInlineMdToHtml(raw) {
   const codeStyle = 'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;'
     + 'font-size:.9em;padding:1px 5px;border-radius:4px;'
     + 'background:var(--surface2,#F8F8F8);border:1px solid var(--border-light,#E5E4E2)';
-  const re = /`([^`]+)`|\*\*([\s\S]+?)\*\*/g;
+  const linkStyle = 'color:var(--brand,#0176D3);text-decoration:underline';
+  const re = /`([^`]+)`|\*\*([\s\S]+?)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^\s()<>"']+)\)/g;
   let out = '';
   let last = 0;
   let m = re.exec(src);
   while (m !== null) {
     out += sftkWnEsc(src.slice(last, m.index));
     if (m[1] !== undefined) out += '<code style="' + codeStyle + '">' + sftkWnEsc(m[1]) + '</code>';
-    else out += '<strong>' + sftkWnEsc(m[2]) + '</strong>';
+    else if (m[2] !== undefined) out += '<strong>' + sftkWnEsc(m[2]) + '</strong>';
+    else out += '<a href="' + sftkWnEsc(m[4]) + '" target="_blank" rel="noopener noreferrer" style="' + linkStyle + '">'
+      + sftkWnEsc(m[3]) + '</a>';
     last = m.index + m[0].length;
     m = re.exec(src);
   }
@@ -233,6 +240,26 @@ function sftkWhatsNewBodyHtml(versions, opts) {
   return html;
 }
 
+// The quiet store-review line (2026-11-14): one sentence after the newest release card, only
+// while the newest release is 1.1.x and only until the user closes it (×,
+// remembered in chrome.storage.local under ds_review_line_dismissed). Not a
+// popup, not a counter, never shown anywhere but this page. Both apps render
+// What's New through this file, so both show it. Built through
+// sftkInlineMdToHtml so the link is the same safe http(s)-only link.
+function sftkWnReviewHtml(latest, dismissed) {
+  const v = String(latest === null || latest === undefined ? '' : latest).trim();
+  if (!/^1\.1(?:\.|$)/.test(v) || dismissed) return '';
+  const store = 'https://chromewebstore.google.com/detail/admin-toolkit-for-salesforce/hnlnanhfagbkhlgpmbndindielldfghk/reviews';
+  // The look lives in styles.css (.sftk-wn-review*), loaded by both apps, so the dark / OLED tokens
+  // apply and the close button gets a 24px target, a hover fill and a focus ring (design review 2026-11-14).
+  return '<div id="sftkWnReview" class="sftk-wn-review">'
+    + '<span class="sftk-wn-review-text">'
+    + sftkInlineMdToHtml('Finding the Toolkit useful? A [review on the Chrome Web Store](' + store + ') helps others find it.')
+    + '</span>'
+    + '<button type="button" class="sftk-wn-review-x" data-wn-review-dismiss="1" title="Hide this line" aria-label="Hide this line">'
+    + '<span aria-hidden="true">×</span></button></div>';
+}
+
 // ════════════════════════════════════════════════════════════════
 // IMPURE — fetch, storage, rendering
 // ════════════════════════════════════════════════════════════════
@@ -257,6 +284,17 @@ async function sftkLoadChangelog(force) {
     _wnCache = { versions: [], error: (e && e.message) || String(e), source: url };
   }
   return _wnCache;
+}
+
+const SFTK_WN_REVIEW_KEY = 'ds_review_line_dismissed';
+
+async function sftkWnReviewDismissed() {
+  try {
+    const d = await chrome.storage.local.get(SFTK_WN_REVIEW_KEY);
+    return !!(d && d[SFTK_WN_REVIEW_KEY]);
+  } catch (_) {
+    return false;
+  }
 }
 
 async function sftkWhatsNewSeenVersion() {
@@ -302,9 +340,21 @@ async function sftkWhatsNewRenderInto(el, opts) {
   const data = await sftkLoadChangelog(!!o.force);
   const seen = await sftkWhatsNewSeenVersion();
   const latest = data.versions.length ? String(data.versions[0].version || '') : '';
+  const review = data.error ? '' : sftkWnReviewHtml(latest, await sftkWnReviewDismissed());
   el.innerHTML = data.error
     ? sftkWhatsNewErrorHtml(data.error, data.source)
     : sftkWhatsNewBodyHtml(data.versions, { seen });
+  // The review line sits AFTER the newest release card, so the news comes first and the request
+  // second (design review 2026-11-14); with no card it falls back to the top.
+  if (review) {
+    const first = el.querySelector(':scope > section');
+    if (first) first.insertAdjacentHTML('afterend', review);
+    else el.insertAdjacentHTML('afterbegin', review);
+  }
+  el.querySelector('[data-wn-review-dismiss]')?.addEventListener('click', () => {
+    el.querySelector('#sftkWnReview')?.remove();
+    try { chrome.storage.local.set({ [SFTK_WN_REVIEW_KEY]: latest || '1' }); } catch (_) { /* shows again next time — harmless */ }
+  });
   return latest;
 }
 

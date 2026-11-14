@@ -64,7 +64,7 @@ describe('wiring (pins)', () => {
 // 2026-11-10: the everyday scan reads every email template's text ("מה שלא ראיתי בסריקה זה email alerts, lightning
 // email templates, classic email templates" — "אנחנו צריכים לתמוך בשלושתם")
 describe('sftkTplNamesField — a template names the field of THIS object', () => {
-  const T = extractFunctions('sftk-emailtpl.js', ['sftkTplTextFields', '_sftkTplRx', 'sftkTplHits', 'sftkTplNamesField']);
+  const T = extractFunctions('sftk-emailtpl.js', ['sftkTplTextFields', '_sftkTplRx', 'sftkTplHits', 'sftkTplNamesField', '_sftkTplForeign']);
   it('classic, Lightning, Visualforce and recipient merge fields; a same-named field of another object does not count', () => {
     expect(T.sftkTplNamesField({ Body: 'Dear {!Account.X__c}' }, 'Account', 'X__c')).toBe(true);
     expect(T.sftkTplNamesField({ HtmlValue: '<p>{{{Account.X__c}}}</p>' }, 'Account', 'X__c')).toBe(true);

@@ -1,0 +1,93 @@
+name: Report a problem
+description: Something in the Toolkit or Data Studio (Data Deployment) did not work as expected.
+title: "[version] Where: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report this.
+
+        **Please do not paste client data, org URLs (My Domain), session links, user names or record ids.**
+        This issue is public. A screenshot is welcome — blur anything that belongs to an org first.
+
+        When you open this form from the extension, the version, browser, OS, language, app, tool and theme
+        below are filled in for you. Nothing from your org is sent; check the fields before you submit.
+
+        Submitting needs a free GitHub account. No account? The Support tab of the extension's
+        Chrome Web Store page works too.
+  - type: input
+    id: version
+    attributes:
+      label: Extension version
+      description: Shown in What's New. Filled in when opened from the extension.
+      placeholder: "1.1.0"
+    validations:
+      required: false
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: "Chrome 131"
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows / macOS / Linux / ChromeOS"
+    validations:
+      required: false
+  - type: input
+    id: language
+    attributes:
+      label: Browser language
+      placeholder: "en-US"
+    validations:
+      required: false
+  - type: input
+    id: app
+    attributes:
+      label: App
+      description: Toolkit or Data Studio (Data Deployment). Filled in when opened from the extension.
+      placeholder: "Toolkit / Data Studio (Data Deployment)"
+    validations:
+      required: false
+  - type: input
+    id: where
+    attributes:
+      label: Tool or view
+      description: The tool (Toolkit) or view (Data Studio) you were in.
+      placeholder: "Field Cleaner"
+    validations:
+      required: false
+  - type: input
+    id: theme
+    attributes:
+      label: Theme
+      placeholder: "light / dark / oled"
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe it in your own words. Leave out names of records, users and orgs.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. See …
+    validations:
+      required: false

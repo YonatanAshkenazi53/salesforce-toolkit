@@ -255,39 +255,31 @@ function sftkMdMissingFields(innerXml, fields) {
 // on another object: Owner.Field__c is User's) or 'unknown' (a custom lookup, Parent__r.Field__c, whose object the XML
 // does not tell); null when the column is not under objApi's own table (2026-11-14 review: Owner.Region__c on an
 // Account table is User.Region__c, and counting it blocked the fix of the plain column).
+// A column of ANOTHER table whose lookup path ends on objApi is objApi's field too: 'this' (2026-11-14 review 5 —
+// Owner.Region__c on a Case table is User.Region__c, as every formula / flow / page remover reads it; the report-type
+// code never saw it, so ✂ / ⇄ of User.Region__c failed with a false "has no column of User.Region__c"). Anything else
+// on another table — a plain column, a path ending elsewhere or not told, a joined table (Account.Contacts, whose
+// object its relationship name does not tell) — stays null: never counted, never edited.
+// "objApi's own table" also takes Task and Event when objApi is Activity (sftkMdIsOwnObj).
 function sftkRtEdit(innerXml, visit) {
-  // the standard relationships whose object is fixed — kept in step with _sftkMdSwapToken's map
-  const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
-    account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
-    reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
-    campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
-    recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group',
-    companysigned: 'user', activatedby: 'user', customersigned: 'contact', billtocontact: 'contact', shiptocontact: 'contact' };
-  // Parent on CaseComment / EmailMessage is Case; on Attachment / Note / FeedItem… it can be any object (null) — read
-  // as _sftkMdSwapToken and sftk-emailtpl.js read it (2026-11-14 review 4: an EmailMessage type's Parent.Region__c
-  // column is Case's field, and ✂ dropped it)
-  const PARENT = { casecomment: 'case', emailmessage: 'case', attachment: null, note: null, feeditem: null, feedcomment: null, entitysubscription: null, contentdocumentlink: null };
-  const has = (m, k) => Object.prototype.hasOwnProperty.call(m, k);
+  // Each hop is resolved by the ONE shared resolver, sftkRelWalk / sftkRelHop in sftk-relmap.js (2026-11-14): this
+  // function kept a private copy of the map that drifted from the other copies. Parent on an EmailMessage type is Case
+  // (review 4: ✂ dropped its Parent.Region__c column), on Attachment / Note… any object; a custom lookup (Lookup__r)
+  // or a What / Who does not tell its object; any other standard lookup is named for its object (Asset, Entitlement…).
   const _reach = (field, table, objApi) => {
-    const o = String(objApi || '').toLowerCase();
-    if (String(table).toLowerCase() !== o) return null;
+    const t = String(table || '').trim().toLowerCase();
     const segs = String(field).toLowerCase().split('.');
     segs.pop();
-    if (!segs.length) return 'plain';
-    let cur = o;
-    for (const seg of segs) {
-      if (seg === 'parent' || seg === 'masterrecord') {
-        if (seg === 'parent' && has(PARENT, cur)) { cur = PARENT[cur]; if (!cur) return 'unknown'; }
-        continue;
-      }
-      if (has(REL, seg)) { cur = REL[seg]; continue; }
-      // a custom lookup (Lookup__r) or a polymorphic What / Who: the XML does not tell the object
-      if (/__r$/.test(seg) || seg === 'what' || seg === 'who') return 'unknown';
-      // any other standard lookup is named for its object (Asset, Entitlement…), as the formula and email-template
-      // code read it — 2026-11-14 review 4: taking it as 'unknown' blocked the fix of the plain column
-      cur = seg;
+    if (!t || t.indexOf('.') >= 0) return null;
+    if (!sftkMdIsOwnObj(t, objApi)) {
+      if (!segs.length) return null;
+      const x = sftkRelWalk(t, segs);
+      return !x.kind && sftkMdIsOwnObj(x.obj, objApi) ? 'this' : null;
     }
-    return cur === o ? 'this' : 'other';
+    if (!segs.length) return 'plain';
+    const r = sftkRelWalk(t, segs);
+    if (r.kind) return 'unknown';
+    return sftkMdIsOwnObj(r.obj, objApi) ? 'this' : 'other';
   };
   const s = String(innerXml || '');
   let out = '', cursor = 0;
@@ -336,12 +328,17 @@ function sftkRtEdit(innerXml, visit) {
 // (Lookup__r); a path that ends on another object (Owner → User) is that object's field and not counted (2026-11-14
 // review). The removers edit a path that ends on this object like a plain column; an unknown path is never edited —
 // they name it in `viaLookup` (and `skipped`).
+// The path may stand on ANOTHER table and end on this object (Owner.Region__c on a Case table is User.Region__c):
+// counted and edited like the rest (2026-11-14 review 5) — sftkRtEdit's reach answers 'this' for it. A path of another
+// table whose object is not told is that table's business and stays out of the count (null), as before.
 function sftkRtMentions(innerXml, objApi, fieldApi) {
-  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const f = String(fieldApi || '').toLowerCase();
   let n = 0;
   sftkRtEdit(innerXml, (field, table, label, reach) => {
     const x = field.toLowerCase();
-    if (table.toLowerCase() === o && (x === f || x.endsWith('.' + f)) && reach(objApi) !== 'other') n++;
+    if (!(x === f || x.endsWith('.' + f))) return 'keep';
+    const how = reach(objApi);
+    if (how === 'plain' || how === 'this' || how === 'unknown') n++;
     return 'keep';
   });
   return n;
@@ -350,19 +347,16 @@ function sftkRtMentions(innerXml, objApi, fieldApi) {
 // ✂ Remove: the column goes; a same-named field under another table is
 // listed in `skipped`, never touched.
 function sftkRtRemoveField(innerXml, objApi, fieldApi) {
-  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const f = String(fieldApi || '').toLowerCase();
   const skipped = [];
   const viaLookup = [];
   const r = sftkRtEdit(innerXml, (field, table, label, reach) => {
-    if (table.toLowerCase() === o && field.toLowerCase().endsWith('.' + f)) {
-      const how = reach(objApi);
-      if (how === 'this') return 'drop';
-      if (how === 'unknown') viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`);
-      return 'keep';
-    }
-    if (field.toLowerCase() !== f) return 'keep';
-    if (table.toLowerCase() === o) return 'drop';
-    skipped.push(`${table}.${field} in “${label}”`);
+    const x = field.toLowerCase();
+    if (!(x === f || x.endsWith('.' + f))) return 'keep';
+    const how = reach(objApi);
+    if (how === 'plain' || how === 'this') return 'drop';
+    if (how === 'unknown') viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`);
+    else if (how === null && x === f) skipped.push(`${table}.${field} in “${label}”`);
     return 'keep';
   });
   return { xml: r.xml, removed: r.dropped, emptied: r.emptied, skipped: [...viaLookup, ...skipped], viaLookup, changed: r.dropped > 0 };
@@ -373,40 +367,40 @@ function sftkRtRemoveField(innerXml, objApi, fieldApi) {
 // removed instead (a column may appear once): `dropped` counts those, and `newAlreadyThere` says the PLAIN new field
 // was already a column. One pass for both, so a Parent.Field column is renamed even when the plain new field is
 // already there (review 2, 2026-11-14: it was dropped with the plain column, the parent's column lost).
+// A column may appear once PER TABLE, so the columns already there are keyed by table: Owner.Region__c on a Case table
+// (User's field, review 5 2026-11-14) is renamed against the Case table's columns, not this object's.
 function sftkRtReplaceField(innerXml, objApi, fieldApi, newFieldApi) {
-  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const f = String(fieldApi || '').toLowerCase();
   const nf = String(newFieldApi || '').toLowerCase();
   const skipped = [];
   const viaLookup = [];
-  // the columns already on the table: a column renamed onto one of them is dropped instead (a column appears once)
+  const key = (table, field) => `${String(table).trim().toLowerCase()}|${String(field).toLowerCase()}`;
+  // the columns already on each table: a column renamed onto one of them is dropped instead (a column appears once)
   const have = new Set();
-  sftkRtEdit(innerXml, (field, table) => { if (table.toLowerCase() === o) have.add(field.toLowerCase()); return 'keep'; });
-  // a PLAIN column of the new field only: Parent.NewField is not this table's own column (2026-11-14)
-  const newAlreadyThere = have.has(nf);
+  // a PLAIN column of the new field on this object's own table only: Parent.NewField is not its own column (2026-11-14)
+  let newAlreadyThere = false;
+  sftkRtEdit(innerXml, (field, table, label, reach) => {
+    have.add(key(table, field));
+    if (field.toLowerCase() === nf && reach(objApi) === 'plain') newAlreadyThere = true;
+    return 'keep';
+  });
   let dropped = 0;
-  const onto = to => {
-    if (have.has(to.toLowerCase())) return null;
-    have.add(to.toLowerCase());
+  const onto = (table, to) => {
+    if (have.has(key(table, to))) return null;
+    have.add(key(table, to));
     return { rename: to };
   };
   const r = sftkRtEdit(innerXml, (field, table, label, reach) => {
-    if (table.toLowerCase() === o && field.toLowerCase().endsWith('.' + f)) {
-      const how = reach(objApi);
-      if (how === 'this') {
-        const d = onto(field.slice(0, field.length - f.length) + newFieldApi);
-        if (!d) { dropped++; return 'drop'; }
-        return d;
-      }
-      if (how === 'unknown') viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`);
-      return 'keep';
-    }
-    if (field.toLowerCase() !== f) return 'keep';
-    if (table.toLowerCase() === o) {
-      const d = onto(newFieldApi);
+    const x = field.toLowerCase();
+    if (!(x === f || x.endsWith('.' + f))) return 'keep';
+    const how = reach(objApi);
+    if (how === 'plain' || how === 'this') {
+      const d = onto(table, field.slice(0, field.length - f.length) + newFieldApi);
       if (!d) { dropped++; return 'drop'; }
       return d;
     }
-    skipped.push(`${table}.${field} in “${label}”`);
+    if (how === 'unknown') viaLookup.push(`${table}.${field} in “${label}” (reached through a lookup)`);
+    else if (how === null && x === f) skipped.push(`${table}.${field} in “${label}”`);
     return 'keep';
   });
   return { xml: r.xml, swapped: r.renamed, dropped, emptied: r.emptied, skipped: [...viaLookup, ...skipped], viaLookup, newAlreadyThere, changed: r.renamed + dropped > 0 };
@@ -470,8 +464,7 @@ function sftkMdMentionsField(innerXml, objApi, fieldApi) {
   // <type>relatedUserField</type>) — a targeted pattern, as <name> elsewhere is an API name, not a field (2026-11-14)
   const apRe = /<approver>\s*<name>([^<]*)<\/name>\s*<type>relatedUserField<\/type>/g;
   while ((m = apRe.exec(s))) {
-    const v = sftkMdUnescape(m[1]).trim().toLowerCase();
-    if (v === f || v === `${o}.${f}`) return true;
+    if (_sftkMdFieldIs(sftkMdUnescape(m[1]), o, f)) return true;   // the edit's own test (Task. / Event. for Activity, review 7)
   }
   const esc = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const tokenRe = new RegExp(`(^|[^a-z0-9_])${esc}([^a-z0-9_]|$)`, 'i');
@@ -794,9 +787,28 @@ if (typeof globalThis !== 'undefined') {
 // would no longer be a working component, the edit is REFUSED with the reason
 // and the way that does work — nothing is deployed on a refusal.
 // Returns { xml, changed, how: [strings], refused: string|null }.
+// A qualified value (Obj.Field__c) is this field when Obj is objApi's own object through sftkMdIsOwnObj: a Task rule's
+// <criteriaItems><field>Task.Region__c</field> / <offsetFromField>Task.Due__c</offsetFromField> IS Activity.Region__c.
+// It compared `${o}.${f}` literally, so ✂ / ⇄ of an Activity field did nothing on those items while the scan
+// (sftkMdMentionsField) and the formula path counted them (2026-11-14 review 7). One way only, as sftkMdIsOwnObj.
 function _sftkMdFieldIs(v, objApi, fieldApi) {
   const x = String(v == null ? '' : v).trim().toLowerCase(), f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
-  return !!f && (x === f || x === `${o}.${f}`);
+  if (!f) return false;
+  if (x === f || x === `${o}.${f}`) return true;
+  const d = x.indexOf('.');
+  return d > 0 && x.slice(d + 1) === f && sftkMdIsOwnObj(x.slice(0, d), o);
+}
+// Is a component of object compObj (its <fullName>'s object, its <targetObject>, a report-type table…) on objApi's own
+// fields? Activity is selectable as an object (the picker lists every EntityDefinition row), and a custom field defined
+// on Activity IS a field of every Task and Event: Salesforce keeps no Activity validation rule, field update or action —
+// they are Task's and Event's. Every own-object gate compared 'task' with 'activity' literally, so ✂ / ⇄ of
+// Activity.Region__c refused a Task rule's bare Region__c with a false "Task's same-named field" (2026-11-14 review 5).
+// One way only: cleaning Task.Region__c does not make an Event component its own. Not a relationship hop, so it is
+// not in sftk-relmap.js's map; field-cleaner.js may call it as a page global (popup.html loads this file before it).
+function sftkMdIsOwnObj(compObj, objApi) {
+  const c = String(compObj == null ? '' : compObj).trim().toLowerCase(), o = String(objApi == null ? '' : objApi).trim().toLowerCase();
+  if (!c || !o) return false;
+  return c === o || (o === 'activity' && (c === 'task' || c === 'event'));
 }
 // "Account.Old__c" → "Account.New__c", "Old__c" → "New__c": the spelling is kept.
 function _sftkMdRenameVal(v, newField) {
@@ -847,46 +859,36 @@ function _sftkMdSwapToken(text, objApi, fieldApi, newField, ctxObj) {
   const rx = x => String(x || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (!fieldApi) return { text: String(text || ''), n: 0, rel: 0 };
   const o = String(objApi || '').toLowerCase(), ctx = String(ctxObj || objApi || '').toLowerCase(), known = !!ctxObj;
-  const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
-    account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
-    reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
-    campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
-    recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group',
-    companysigned: 'user', activatedby: 'user', customersigned: 'contact', billtocontact: 'contact', shiptocontact: 'contact' };
-  // Parent is the same object on most (Account, Case, Campaign…), Case on CaseComment / EmailMessage, and any object on
-  // Attachment / Note / FeedItem… (null = cannot be told) — as sftk-emailtpl.js reads it (2026-11-14 review 4)
-  const PARENT = { casecomment: 'case', emailmessage: 'case', attachment: null, note: null, feeditem: null, feedcomment: null, entitysubscription: null, contentdocumentlink: null };
-  const has = (m, k) => Object.prototype.hasOwnProperty.call(m, k);
+  // Every hop and $ root is resolved by the ONE shared resolver in sftk-relmap.js (sftkRelHop / sftkRelGlobal,
+  // 2026-11-14): this function kept a private copy of the map that drifted from the other copies. Parent is the same
+  // object on most, Case on CaseComment / EmailMessage, any object on Attachment / Note… (review 4).
   let kind = null;
   const cannot = k => { if (!kind) kind = k; return 'unknown'; };
   // 'this' | 'other' | 'unknown' for the path in front of the field ('' = bare)
   const whose = path => {
     const segs = path.toLowerCase().split('.').filter(Boolean);
-    if (!segs.length) return ctx === o ? 'this' : 'other';
-    if (segs[0][0] === '$') {
-      const g = segs[0];
-      if (g === '$setup') return segs[1] === o && segs.length === 2 ? 'this' : 'other';
-      if (g === '$objecttype') return segs[1] === o && segs[2] === 'fields' && segs.length === 3 ? 'this' : 'other';
-      return g.slice(1) === o && segs.length === 1 ? 'this' : 'other';
+    if (!segs.length) return sftkMdIsOwnObj(ctx, o) ? 'this' : 'other';   // a Task rule's bare X is Activity.X (review 5)
+    const gl = sftkRelGlobal(segs);
+    if (gl) {
+      // a global that names no object ($Label, $Api…): only the old generic $Obj.Field__c form can be this field
+      if (!gl.obj) return gl.global !== '$setup' && gl.global !== '$objecttype' && gl.global.slice(1) === o && segs.length === 1 ? 'this' : 'other';
+      // a hop after the global ($User.Manager.X, $Setup.Obj.Owner.X) is followed like any other path — as
+      // sftk-emailtpl.js already did; it used to be taken as another object's field whatever it ended on
+      const r = sftkRelWalk(gl.obj, segs.slice(gl.from));
+      if (r.kind) return cannot(r.kind);
+      return sftkMdIsOwnObj(r.obj, o) ? 'this' : 'other';
     }
     if (segs.length === 1 && segs[0] === o) return 'this';
-    // sure: cur is a known object — false only at the start, when the host was not given
+    // sure: cur is a known object — false only at the start, when the host was not given; a Parent / MasterRecord hop
+    // from an object that is not known answers 'host' (cannot be told), every other hop names its own object
     let cur = ctx, i = 0, sure = known;
     if (segs[0] === ctx) { i = 1; sure = true; }      // Contact.Account.Field__c in a Contact formula
     for (; i < segs.length; i++) {
-      const seg = segs[i], poly = seg.indexOf(':');   // Owner:User.Field__c
-      if (poly >= 0) { cur = seg.slice(poly + 1); sure = true; continue; }
-      if (seg === 'parent' || seg === 'masterrecord') {
-        if (!sure) return cannot('host');
-        if (seg === 'parent' && has(PARENT, cur)) { cur = PARENT[cur]; if (!cur) return cannot('poly'); }
-        continue;
-      }
-      if (has(REL, seg)) { cur = REL[seg]; sure = true; continue; }
-      if (/__r$/.test(seg)) return cannot('custom');
-      if (seg === 'what' || seg === 'who') return cannot('poly');
-      cur = seg; sure = true;                         // a standard lookup named for its object (Asset, Entitlement…)
+      const r = sftkRelHop(sure ? cur : null, segs[i]);   // Owner:User, Parent, Owner, Lookup__r, Entitlement…
+      if (r.kind) return cannot(r.kind);
+      cur = r.obj; sure = true;
     }
-    return cur === o ? 'this' : 'other';
+    return sftkMdIsOwnObj(cur, o) ? 'this' : 'other';
   };
   const re = new RegExp(`(?<![$A-Za-z0-9_.:])((?:[$A-Za-z0-9_]+[.:])*)${rx(fieldApi)}(?![A-Za-z0-9_])`, 'gi');
   let n = 0, rel = 0;
@@ -1047,8 +1049,12 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   const before = String(innerXml || '');
   const nf = newField ? String(newField) : null;
   const how = [];
-  let xml = before, refused = null, off = false, suggested = false;
+  let xml = before, refused = null, off = false, suggested = false, unsure = false;
   const refuse = why => { if (!refused) refused = why; };
+  // a refusal because WHOSE field a mention is cannot be told: the component may well still name the field, so the
+  // result says so (unsure) — field-cleaner.js's "does it still name it?" probe used to read every refusal as "no", and
+  // reported a hand edit still holding Partner__r.Region__c + a bare Region__c as done (2026-11-14 review 6)
+  const cannotTell = why => { if (!refused) unsure = true; refuse(why); };
   const plural = (n, w, ws) => `${n} ${n === 1 ? w : (ws || `${w}s`)}`;
   const verb = nf ? `now ${nf}` : 'removed';
   // a criteria-like element whose <child> names the field: dropped or renamed; skip(body) true = not this object's
@@ -1105,7 +1111,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   // review 4: ⇄ Account.Region__c renamed a Case rule's Parent.Region__c). No dot (a global action) = not known.
   const fullName = String(sftkMdChildText(before, 'fullName') || '');
   const host = fullName.indexOf('.') > 0 ? fullName.slice(0, fullName.indexOf('.')) : null;
-  const sameObj = !!host && host.toLowerCase() === String(objApi || '').toLowerCase();
+  const sameObj = sftkMdIsOwnObj(host, objApi);   // Task / Event are Activity's own (review 5, 2026-11-14)
   const formulas = (src, tag, ctx) => {
     let n = 0, rel = 0, kind = null;
     const r = _sftkMdWalk(src, tag, body => {
@@ -1118,7 +1124,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   // a path whose object cannot be told is never swapped (see _sftkMdSwapToken), so such a formula is refused whole
   // rather than deployed half-edited and reported done (2026-11-14); the text names the TRUE reason (review 4: an
   // unmapped standard hop was refused as a "custom lookup")
-  const REL = kind => kind === 'host'
+  const relWhy = kind => kind === 'host'
     ? 'the formula also names a field of this name through Parent / MasterRecord, and the object the formula runs on is not known here, so whose field that is cannot be told — edit it in Setup'
     : kind === 'poly'
       ? 'the formula also names a field of this name through a lookup that can reach any object (What / Who, or Parent on this kind of record), so whose field that is cannot be told from the formula — edit it in Setup'
@@ -1135,7 +1141,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       // <errorDisplayField>Region__c</errorDisplayField>, Account's field (2026-11-14 review 4).
       const ed = sameObj ? texts(f.xml, 'errorDisplayField') : { xml: f.xml, n: 0 };
       const edWhat = nf ? `error location ${verb}` : 'error location moved to the top of the page';
-      if (f.rel) { refuse(REL(f.kind)); break; }
+      if (f.rel) { cannotTell(relWhy(f.kind)); break; }
       if (!f.n && !ed.n) { refuse('the rule’s formula does not name the field as a whole token — edit it in Setup'); break; }
       if (nf) { xml = ed.xml; if (f.n) how.push(`formula: ${plural(f.n, 'reference')} ${verb}`); if (ed.n) how.push(edWhat); break; }
       if (!f.n) { xml = ed.xml; how.push(`${edWhat} — the formula does not use the field`); break; }
@@ -1145,8 +1151,10 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const fe = sftkMdFindElement(xml, 'errorConditionFormula', 0);
       const d = fe ? sftkFormulaDropField(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), objApi, fieldApi, null, host) : { mode: 'none' };
       // the token sits only in a comment or quoted text: no condition uses it, so switching the rule off would be
-      // done for a reason that is not true (2026-11-14)
-      if (d.mode === 'none') { refuse('the field is named only in a comment or quoted text of the formula — no condition uses it; edit the text in Setup, or ⇄ Replace it'); break; }
+      // done for a reason that is not true (2026-11-14). The text points to ✎ Edit, not ⇄: _sftkMdSwapToken renames
+      // the token inside string literals and comments as well, so ⇄ would change the value the rule compares
+      // (2026-11-14 review 6)
+      if (d.mode === 'none') { refuse('the field is named only in a comment or quoted text of the formula — no condition uses it; ✎ Edit XML in 🔍 (or Setup) to change that text — ⇄ Replace would rename it inside the quotes too, which changes what the rule compares'); break; }
       if (d.mode === 'operand') {
         xml = xml.slice(0, fe.bodyStart) + sftkMdEscape(d.text) + xml.slice(fe.bodyEnd);
         if (ed.n) { xml = texts(xml, 'errorDisplayField').xml; }
@@ -1169,7 +1177,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const r = items(f.xml, 'summaryFilterItems', 'field');
       const sum = texts(r.xml, 'summarizedField');
       if (!nf && (f.n || sum.n)) { refuse(f.n ? 'a formula cannot lose a reference — ⇄ Replace it with another field, or 🗑 delete this formula field' : 'the roll-up sums this field — ⇄ Replace it, or 🗑 delete the roll-up field'); break; }
-      if (f.rel) { refuse(REL(f.kind)); break; }
+      if (f.rel) { cannotTell(relWhy(f.kind)); break; }
       if (!f.n && !r.n && !sum.n) { refuse('no formula, roll-up filter or summarized field names the field — edit it in Setup'); break; }
       xml = sum.xml;
       if (f.n) how.push(`formula: ${plural(f.n, 'reference')} ${verb}`);
@@ -1185,7 +1193,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       // objApi (a self-lookup, or a filter on the lookup's own object), such a condition names the field too: it is
       // dropped (✂) or renamed (⇄) like one whose <field> names it, never left behind (2026-11-14).
       const own = String(sftkMdChildText(xml, 'fullName') || '').split('.')[0].toLowerCase();
-      const isSrc = v => !!own && own === String(objApi || '').toLowerCase() && v.trim().toLowerCase() === `$source.${String(fieldApi || '').toLowerCase()}`;
+      const isSrc = v => sftkMdIsOwnObj(own, objApi) && v.trim().toLowerCase() === `$source.${String(fieldApi || '').toLowerCase()}`;
       let hits = 0;
       const w = _sftkMdWalk(body, 'filterItems', it => {
         let out = it, hit = false;
@@ -1219,7 +1227,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       // a field of User is also named in the rule's <userCriteria> ($User.Field__c = …): read it too, or ⇄ deploys
       // the rule half-renamed and reports it done (2026-11-14)
       const u = (type === 'RestrictionRule' && String(objApi || '').toLowerCase() === 'user') ? formulas(f.xml, 'userCriteria', 'User') : { xml: f.xml, n: 0, rel: 0 };
-      if (f.rel || u.rel) { refuse(REL(f.kind || u.kind)); break; }
+      if (f.rel || u.rel) { cannotTell(relWhy(f.kind || u.kind)); break; }
       if (!f.n && !u.n) { refuse(`the ${what} does not name the field as a whole token — edit it in Setup`); break; }
       if (!nf) { refuse(type === 'WebLink' ? 'a URL cannot lose a merge field and keep working — ⇄ Replace it with another field, or 🗑 delete the button' : 'a record filter cannot lose a condition here — ⇄ Replace it with another field, or 🗑 delete the rule'); break; }
       xml = u.xml;
@@ -1237,19 +1245,22 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       // ParentId follows the same Parent map as the formulas: Case on CaseComment / EmailMessage, any object (null =
       // cannot be told) on Attachment / Note / FeedItem…, the update's own object elsewhere — an EmailMessage update
       // with <targetObject>ParentId</targetObject> writes Case's field, not EmailMessage's (2026-11-14 review 4)
+      // The lookup is resolved by the ONE shared resolver (sftkRelLookupField in sftk-relmap.js, 2026-11-14) — this
+      // case kept its own small map, which took ReportsToId for an object "reportsto", ConvertedAccountId for
+      // "convertedaccount" and WhatId / WhoId for objects "what" / "who"; the shared map knows them (Contact, Account,
+      // cannot be told).
       const hl = host ? host.toLowerCase() : null;
-      const PARENTOF = { casecomment: 'case', emailmessage: 'case', attachment: null, note: null, feeditem: null, feedcomment: null, entitysubscription: null, contentdocumentlink: null };
-      const LKREL = { ownerid: 'user', createdbyid: 'user', lastmodifiedbyid: 'user',
-        parentid: hl && Object.prototype.hasOwnProperty.call(PARENTOF, hl) ? PARENTOF[hl] : hl, masterrecordid: hl };
-      const writes = !lk ? (host ? host.toLowerCase() : null)
-        : Object.prototype.hasOwnProperty.call(LKREL, lk) ? LKREL[lk]
-        : /__c$/.test(lk) ? null : lk.replace(/id$/, '');
+      const wr = !lk ? (hl ? { obj: hl } : { obj: null, kind: 'host' }) : sftkRelLookupField(hl, lk);
+      const writes = wr.kind ? null : wr.obj;
+      const whyNot = wr.kind === 'host' ? 'the update’s own object is not known here'
+        : wr.kind === 'poly' ? `its <targetObject> ${lk} can point at any object`
+        : `its <targetObject> ${lk} is a custom lookup, which does not tell its object`;
       const tgtNames = !!fe && _sftkMdFieldIs(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), objApi, fieldApi);
-      const target = tgtNames && writes === String(objApi || '').toLowerCase();
+      const target = tgtNames && sftkMdIsOwnObj(writes, objApi);   // a Task update writes Activity.X (review 5)
       const f = formulas(xml, 'formula');
       if (!nf && target) { refuse('the field update WRITES to this field — ⇄ Replace points it at another field, or 🗑 delete the field update'); break; }
       if (!nf && f.n) { refuse('its formula cannot lose a reference — ⇄ Replace it, or 🗑 delete the field update'); break; }
-      if (tgtNames && !writes) { refuse('the update writes a field of this name on a record whose object cannot be told here (no host object, a custom lookup, or a ParentId that can point at any object in <targetObject>) — edit it in Setup'); break; }
+      if (tgtNames && !writes) { cannotTell(`the update writes a field of this name on a record whose object cannot be told here (${whyNot}) — edit it in Setup`); break; }
       if (!target && !f.n) { refuse(tgtNames ? `neither its target nor its formula names the field — the target is ${writes}’s same-named field` : 'neither its target nor its formula names the field — edit it in Setup'); break; }
       xml = f.xml;
       if (target) {
@@ -1416,15 +1427,18 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       // Only when that object is objApi are they this field — ✂ of Account.Region__c stripped Contact.Region__c from
       // Account.NewContact and reported it done (2026-11-14 review 4). Not known (no target, no host) = left alone.
       const tgt = String(sftkMdChildText(xml, 'targetObject') || host || '').trim();
-      const own = !!tgt && tgt.toLowerCase() === String(objApi || '').toLowerCase();
+      const own = sftkMdIsOwnObj(tgt, objApi);   // a Log a Call action (Task) holds Activity's fields (review 5)
       const li = own ? items(xml, 'quickActionLayoutItems', 'field') : { xml, n: 0 };
       const fo = own ? items(li.xml, 'fieldOverrides', 'field') : { xml: li.xml, n: 0 };
       // a predefined value of ANOTHER field may compute from this one (<fieldOverrides><formula>): Salesforce counts it
       // as a reference, so ⇄ swaps the token and ✂ refuses as a whole — a formula cannot lose a reference, and dropping
       // only the layout item would deploy "done" with the field still named (2026-11-14)
       const fx = formulas(fo.xml, 'formula');
-      if (fx.rel) { refuse(REL(fx.kind)); break; }
+      if (fx.rel) { cannotTell(relWhy(fx.kind)); break; }
       if (!li.n && !fo.n && !fx.n) {
+        // not known whose fields the layout holds: unsure only when a layout item / predefined value IS of this name
+        // (2026-11-14 review 6)
+        if (!own && !tgt && !refused && (items(xml, 'quickActionLayoutItems', 'field').n || items(xml, 'fieldOverrides', 'field').n)) unsure = true;
         refuse(own ? 'neither the action’s layout nor its predefined values name the field — edit it in Setup'
           : tgt ? `the action works on a ${tgt} record: its layout and predefined values hold ${tgt}’s fields, not this one — nothing of this field to edit`
           : 'the object the action works on is not known here, so whose fields its layout and predefined values hold cannot be told — edit it in Setup');
@@ -1444,7 +1458,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       // A value is paired with the object value of the same prefix (Source_ / Target_); when the record names this
       // object and another and a bare value cannot be paired, it is refused rather than guessed (2026-11-14 review 4)
       const vr = sftkMdValuesHolding(xml, objApi, fieldApi, true);
-      if (vr.unclear.length) { refuse(`the record names ${objApi} and another object, and which of them ${vr.unclear.join(', ')} belongs to cannot be told from the record — edit it in Setup`); break; }
+      if (vr.unclear.length) { cannotTell(`the record names ${objApi} and another object, and which of them ${vr.unclear.join(', ')} belongs to cannot be told from the record — edit it in Setup`); break; }
       const hold = new Set(vr.hold.map(x => x.toLowerCase()));
       const r = _sftkMdWalk(xml, 'values', body => {
         const ve = sftkMdFindElement(body, 'value', 0);
@@ -1474,7 +1488,9 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     default:
       refuse('this kind is not edited here — 🗑 delete it, or edit it in Setup');
   }
-  if (refused) return { xml: before, changed: false, how: [], refused };
+  // unsure: refused because whose field a mention is cannot be told — the component may still name the field
+  // (present only when true, so a plain refusal keeps its exact shape)
+  if (refused) return unsure ? { xml: before, changed: false, how: [], refused, unsure } : { xml: before, changed: false, how: [], refused };
   // off: the edit switches a validation rule off; suggested: the edit is a proposal the user should read and may edit
   return { xml, changed: xml !== before, how, refused: null, off, suggested };
 }

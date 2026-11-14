@@ -1,4 +1,78 @@
-# Chrome Web Store listing — Admin Toolkit for Salesforce 1.0.0
+# Chrome Web Store listing — Admin Toolkit for Salesforce
+
+# 1.1.0 — DRAFT (2026-11-14)
+
+A draft for the 1.1 update of the same listing; name, category, permission justifications,
+single purpose and privacy policy are unchanged from 1.0.0 below. Every line here is backed by
+a 1.1.0 entry in CHANGELOG.md — if a feature is cut from the store build before release
+(`scripts/pack_store.py`), take its line out here too. Store listing URL (from README.md):
+https://chromewebstore.google.com/detail/admin-toolkit-for-salesforce/hnlnanhfagbkhlgpmbndindielldfghk
+
+## Summary (132 characters max — this one is 130)
+Move records between orgs with a dry run first, clean up fields safely, manage flows, pages and permissions — from your open tabs.
+
+## Description
+
+Admin Toolkit for Salesforce works through the Salesforce tabs you already have open — no
+separate login, no server in between. Nothing about your data leaves your browser except
+to talk directly to your own orgs. Anything that can change something in Salesforce shows
+you what it is about to do and asks first.
+
+NEW IN 1.1
+• Dry run — next to Deploy: the selected inserts (the first 200 of each object) are written
+  to the target in one transaction that Salesforce rolls back, so validation rules, triggers,
+  flows and duplicate rules run on them and nothing is kept. The org is read again to confirm.
+  Deletes, updates and relinks are not part of it, and pauses are not applied.
+• Every refused record says what refused it — a validation rule by its name, a duplicate
+  rule, a flow or trigger, a required field, a restricted picklist — with Salesforce's own
+  error code and message, one line per reason.
+• The pause panel — the target's active validation rules, record-triggered and scheduled
+  flows and duplicate rules, listed under each object of the deployment, each with a tick.
+  Ticked flows and validation rules go off for the run and back on after; ticked duplicate
+  rules are passed by the bypass header and are never switched off or edited.
+• PII treatments — seed a sandbox without the real people in it: values that look real and
+  pass validation (names, e-mails on a .invalid domain, phones, dates moved), proposed per
+  field from what the data looks like, each shown as before → after.
+• Field Cleaner — one scan lists what blocks a field's delete and what only mentions it,
+  across flows, formulas, validation rules, layouts, email templates, report types and more.
+  Each scan ends with a check-only delete, so Salesforce itself says whether it would accept
+  the delete; Delete Field stays locked until it does. Fixes show what will change before you
+  confirm, and save a restore point first.
+• A failed read is said as a failure, never shown as "nothing there".
+• A new look: a ragdoll cat, and a progress bar with the step and the time left on every
+  long load.
+• Report a problem — opens a GitHub issue form with the version, browser and the tool you
+  were in filled in; nothing from your org.
+
+THE TOOLKIT (the popup)
+• Flows — versions, backups and restore; what calls what; switches; API versions.
+• Debugger — one-hour traces, logs read line by line with automation analysis.
+• Lightning Pages — every record page and its assignments; add, remove, clone.
+• Field Cleaner — everything that references a field; fix, replace or delete safely.
+• Copy Permissions — one user's profile, role, permission sets and groups onto another.
+• Flow Access — grant flows to permission sets in one action.
+
+DATA STUDIO
+• Connected Orgs, Data Deployment (with dry run, pause panel and PII treatments), All open
+  orgs, Activity, Org Compare, Org health.
+
+Everything stays on your PC (chrome.storage.local). No analytics, no account, no server.
+Open source under the Apache License 2.0:
+https://github.com/YonatanAshkenazi53/salesforce-toolkit
+
+## What's new (1.1.0) — the dashboard's short "what's new" text
+Dry run before a deployment; every refused record names what refused it; a pause panel for
+validation rules, flows and duplicate rules; PII treatments for seeding sandboxes; a safer
+Field Cleaner that asks Salesforce before any delete; Report a problem.
+
+## Data usage disclosure (1.1 — unchanged answer, one note)
+Still "does not collect or transmit user data". Report a problem only opens a github.com tab
+with the version, browser, OS family, language, app, tool and theme in the URL; the user
+decides whether to submit it, and nothing is sent by the extension itself.
+
+---
+
+# 1.0.0 listing (as published — kept for comparison)
 
 A NEW listing (the user's decision, 2026-09-26): version 1.0.0, name unchanged. Paste the
 blocks below into the developer dashboard; the screenshots are in `dist/store-shots/`

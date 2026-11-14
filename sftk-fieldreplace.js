@@ -167,7 +167,10 @@ function sftkFlowReplaceField(metadata, objApi, oldApi, newApi, opts) {
           return tok;
         }
         const verdict = segs.length === 1 ? (tok === v ? ownerOfBare(path) : { unknown: true }) : ownerOfPath(segs.slice(0, -1));
-        if (verdict.owner && _sftkFrLow(verdict.owner) === objL) { n++; return [...segs.slice(0, -1), newApi].join('.'); }
+        // Own-object test through sftkMdIsOwnObj (sftk-mdapi.js, a page global), the rule ✂ (ownerOfRef) uses: a
+        // custom field on Activity IS a field of every Task and Event, so a Task flow's bare Region__c / $Record.Region__c
+        // is Activity.Region__c. A literal compare left it while ✂ removed it (2026-11-14 review 6).
+        if (verdict.owner && sftkMdIsOwnObj(verdict.owner, objApi)) { n++; return [...segs.slice(0, -1), newApi].join('.'); }
         left.push(verdict.owner ? { why: 'other', object: verdict.owner } : { why: verdict.need ? 'need' : 'unknown' });
         return tok;
       });
@@ -203,6 +206,53 @@ function sftkLayoutReplaceField(metadata, oldApi, newApi, opts) {
     x.it.field = newApi;
     if (opts && opts.readOnly) x.it.behavior = 'Readonly';
     hasNew = true; swapped++;
+  }
+  // The mini layout (hover / console mini page) is a second, separate list of the layout's own field names, and ✂
+  // (removeFieldFromLayout) strips it — so the ⇄ verify, which reruns that remover on the re-read layout, found the old
+  // name still there: ⇄ deployed a half rename and then reported failure (2026-11-14 review 6). Renamed here too, on
+  // the same rule: the first old name takes the new one's place unless the new field is already listed (a field is
+  // listed once), every other old name is dropped. Counted in swapped / blanked, which the callers only sum.
+  // miniLayout.relatedLists is left alone: its fields are the related object's, and ✂ does not touch them either.
+  const ml = metadata && metadata.miniLayout;
+  if (ml && Array.isArray(ml.fields) && ml.fields.some(f => _sftkFrLow(f) === o)) {
+    let miniHasNew = ml.fields.some(f => _sftkFrLow(f) === n);
+    const kept = [];
+    for (const f of ml.fields) {
+      if (_sftkFrLow(f) !== o) { kept.push(f); continue; }
+      if (miniHasNew) { blanked++; continue; }
+      kept.push(newApi); miniHasNew = true; swapped++;
+    }
+    ml.fields = kept;
+  }
+  // The layout's other lists of its own object's fields (2026-11-14 review 7): relatedObjects (the console mini page's
+  // lookup fields), multilineLayoutFields, the highlights panel (summaryLayout.summaryLayoutItems[].field) and the mini
+  // view's related content (relatedContent.relatedContentItems[].layoutItem.field). ✂ strips them and the ⇄ verify
+  // reruns that remover, so a rename that skipped them deployed a half rename. Same rule as the mini layout: the first
+  // old entry takes the new name unless the new field is already in that list, every other old entry is dropped.
+  const renameIn = (arr, get, set) => {
+    if (!Array.isArray(arr) || !arr.some(x => _sftkFrLow(get(x)) === o)) return arr;
+    let has = arr.some(x => _sftkFrLow(get(x)) === n);
+    const kept = [];
+    for (const x of arr) {
+      if (_sftkFrLow(get(x)) !== o) { kept.push(x); continue; }
+      if (has) { blanked++; continue; }
+      kept.push(set(x)); has = true; swapped++;
+    }
+    return kept;
+  };
+  if (metadata) {
+    for (const key of ['relatedObjects', 'multilineLayoutFields']) {
+      if (Array.isArray(metadata[key])) metadata[key] = renameIn(metadata[key], x => x, () => newApi);
+    }
+    const sl = metadata.summaryLayout;
+    if (sl && Array.isArray(sl.summaryLayoutItems)) {
+      sl.summaryLayoutItems = renameIn(sl.summaryLayoutItems, x => x && x.field, x => Object.assign({}, x, { field: newApi }));
+    }
+    const rc = metadata.relatedContent;
+    if (rc && Array.isArray(rc.relatedContentItems)) {
+      rc.relatedContentItems = renameIn(rc.relatedContentItems, x => x && x.layoutItem && x.layoutItem.field,
+        x => Object.assign({}, x, { layoutItem: Object.assign({}, x.layoutItem, { field: newApi }) }));
+    }
   }
   return { swapped, blanked };
 }

@@ -4457,10 +4457,13 @@ const FieldCleaner = (() => {
         const after = JSON.parse(JSON.stringify(res.Metadata));
         let n;
         if (type === 'Layout') {
+          // another object's layout: ⇄ is refused by the fix as ✂ is, so neither previews an edit (2026-11-14 review 5)
+          const lyOpts = { objApi: obj, fullName: res.FullName || res.fullName, isObject: _fcIsLoadedObject };
+          if (swap) { removeFieldFromLayout({}, field, lyOpts); if (lyOpts.refused) return ''; }
           if (swap) { const sw = sftkLayoutReplaceField(after, field, nf, { readOnly: _replReadOnly() }); n = sw.swapped + sw.blanked; }
-          else n = removeFieldFromLayout(after, field);
-        } else if (swap) { const sw = sftkFlexiReplaceField(after, obj, field, nf); n = sw.swapped + sw.dropped; }
-        else n = removeFieldFromFlexiPage(after, obj, field);
+          else n = removeFieldFromLayout(after, field, lyOpts);
+        } else if (swap) { const sw = replaceFieldInFlexiPage(after, obj, field, nf, null, _flexiPageObjOf(res)); n = sw.swapped + sw.dropped; }
+        else n = removeFieldFromFlexiPage(after, obj, field, null, _flexiPageObjOf(res));
         if (!n) return '';
         const xml = m => type === 'Layout' ? buildLayoutXml(m) : ['<FlexiPage>', ...Object.keys(m).sort().flatMap(k => _lxValueToLines(k, m[k], '    ')), '</FlexiPage>'].join('\n');
         // a visibility rule that loses a criterion loses its numbered logic with it (the numbers would point at the
@@ -5626,43 +5629,49 @@ const FieldCleaner = (() => {
     // the variable's (2026-11-14 review: { inputReference: 'con' } on a Contact variable passed the check and ✂
     // Account.Region__c stripped Contact's Region__c). Resolved through the flow's own resources; when it cannot be
     // resolved the element is left whole and named in the refusal ('input').
+    // The WHOLE reference is followed, not only its root (2026-11-14 review 5, round 3): { inputReference:
+    // '$Record.Account' } in a Contact flow writes the related ACCOUNT record, and its bare <field> entries are
+    // Account's. Reading the root alone took them for Contact's, so ✂ Contact.Region__c stripped the Account's
+    // Region__c (another object's field) and ✂ Account.Region__c missed it with no reason given. The hops go
+    // through the ONE shared resolver (sftkRelWalk), as ⇄ follows them; a hop that cannot be told (a custom …__r,
+    // What / Who) answers null, so the element is left whole and named ('input').
     const inputObj = el => {
-      const root = String(el.inputReference).split('.')[0].toLowerCase();
-      if (resObj && resObj.get(root)) return String(resObj.get(root)).toLowerCase();
-      const v = (metadata.variables || []).find(x => x && String(x.name).toLowerCase() === root && x.objectType);
-      if (v) return String(v.objectType).toLowerCase();
-      if ((root === '$record' || root === '$record__prior') && metadata.start && metadata.start.object) return String(metadata.start.object).toLowerCase();
-      return null;
+      const segs = String(el.inputReference).toLowerCase().split('.');
+      const root = segs[0];
+      let base = null;
+      if (resObj && resObj.get(root)) base = String(resObj.get(root)).toLowerCase();
+      else {
+        const v = (metadata.variables || []).find(x => x && String(x.name).toLowerCase() === root && x.objectType);
+        if (v) base = String(v.objectType).toLowerCase();
+        else if ((root === '$record' || root === '$record__prior') && metadata.start && metadata.start.object) base = String(metadata.start.object).toLowerCase();
+      }
+      if (!base) return null;
+      const r = sftkRelWalk(base, segs.slice(1));
+      return r.kind ? null : r.obj;
     };
     const onObj  = el => {
       if (el && !el.object && el.inputReference) {
         const o = inputObj(el);
-        if (o) return o === objL;
+        if (o) return sftkMdIsOwnObj(o, objL);   // a Task record holds Activity's fields (review 5, round 3)
         const named = [...(el.inputAssignments || []).map(a => a && a.field), ...(el.filters || []).map(f => f && f.field)]
           .some(f => f != null && String(f).toLowerCase() === fl);
         if (named) leftAlone.whole.push({ el, why: 'input' });
         return false;
       }
-      return !el || !el.object || String(el.object).toLowerCase() === objL;
+      // sftkMdIsOwnObj, not ===: a Task / Event element or trigger holds Activity's custom fields — it was skipped
+      // silently while cleaning Activity.Region__c (2026-11-14 review 5, round 3)
+      return !el || !el.object || sftkMdIsOwnObj(el.object, objL);
     };
 
     // A path longer than two segments travels through relationships ($Record.Owner.Region__c is User's field,
     // $Record.Parent.Region__c on Account is Account's): only the standard relationships whose object is fixed can be
-    // followed (kept in step with sftk-mdapi.js sftkRtEdit's map); a custom lookup (Thing__r) cannot be told from the
-    // metadata, so it is never edited — it stays reported. A BARE name is a field only under a key that holds a field
-    // (<field>, queriedFields); as a reference (assignToReference, elementReference …) a bare name is a flow resource —
-    // a variable called Region__c is not the field (2026-11-14 review: both were stripped and counted).
-    const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
-      account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
-      reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
-      campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
-      recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group' };
+    // followed by the ONE shared resolver (sftkRelHop / sftkRelWalk / sftkRelGlobal in sftk-relmap.js, 2026-11-14 —
+    // this function kept a private copy of the map that drifted from the others); a custom lookup (Thing__r) cannot be
+    // told from the metadata, so it is never edited — it stays reported. A BARE name is a field only under a key that
+    // holds a field (<field>, queriedFields); as a reference (assignToReference, elementReference …) a bare name is a
+    // flow resource — a variable called Region__c is not the field (2026-11-14 review: both were stripped and counted).
     const startObjL = metadata && metadata.start && metadata.start.object ? String(metadata.start.object).toLowerCase() : '';
     const leftAlone = { other: new Set(), unknown: new Map(), whole: [] };   // what ✂ will not touch, and why (unknown: ref → kind)
-    // Parent is the same object on most, Case on CaseComment / EmailMessage, any object on Attachment / Note / FeedItem —
-    // as sftk-mdapi.js _sftkMdSwapToken and sftk-emailtpl.js read it (2026-11-14 review 4)
-    const PARENT = { casecomment: 'case', emailmessage: 'case', attachment: null, note: null, feeditem: null, feedcomment: null, entitysubscription: null, contentdocumentlink: null };
-    const hasKey = (m, k) => Object.prototype.hasOwnProperty.call(m, k);
     let unknownKind = null;   // why the last 'unknown' answer could not be told: 'custom' | 'poly' | 'root'
     // 'this' | 'other' | 'unknown' | null (not this field's name)
     function ownerOfRef(ref, asField) {
@@ -5671,30 +5680,33 @@ const FieldCleaner = (() => {
       const parts = String(ref).toLowerCase().split('.');
       if (parts[parts.length - 1] !== fl) return null;
       if (parts.length === 1) return asField ? 'this' : null;
-      const root = parts[0], rels = parts.slice(1, -1);
+      const root = parts[0];
+      let rels = parts.slice(1, -1);
       let cur = resObj && resObj.get(root) ? String(resObj.get(root)).toLowerCase()
         : ((root === '$record' || root === '$record__prior') && startObjL) ? startObjL : null;
+      // a global that names its object ($User.X is User's, $Setup.Obj.X Obj's…), read as the formulas and email
+      // templates read it (2026-11-14): $User.Region__c used to be taken for this object's field when the root was
+      // not a flow resource. A global that names no object ($Flow, $Api…) is matched as before.
+      if (!cur) {
+        const gl = sftkRelGlobal(parts.slice(0, -1));
+        if (gl && gl.obj) { cur = gl.obj; rels = parts.slice(gl.from, -1); }
+      }
       if (!rels.length) {
-        if (cur) return cur === objL ? 'this' : 'other';
-        return 'this';   // a two-segment path on a root the metadata does not resolve: matched as before
+        if (cur) return sftkMdIsOwnObj(cur, objL) ? 'this' : 'other';   // $Record of a Task flow: Activity's field too (round 3)
+        // a two-segment path on a root the flow does not resolve to an object (an Apex-defined variable, a screen or
+        // action output…) cannot be told: left alone with that reason, as ⇄ (sftkFlowReplaceField) and the Lightning
+        // pages leave it. 2026-11-14 review 5: it was "matched as before", so ✂ stripped wrap.Region__c of an Apex
+        // class (not a field at all) or another object's field.
+        unknownKind = 'root'; return 'unknown';
       }
       if (!cur) { unknownKind = 'root'; return 'unknown'; }
-      // 2026-11-14 review 4: a standard hop missing from REL (Asset, Entitlement, ServiceContract, Individual…) is a
+      // 2026-11-14 review 4: a standard hop missing from the map (Asset, Entitlement, ServiceContract, Individual…) is a
       // lookup named for its object, as _sftkMdSwapToken / _sftkTplForeign take it. It used to answer 'unknown', so ✂
       // left $Record.Entitlement.Region__c in a Case flow while cleaning Entitlement.Region__c and called it "a custom
       // lookup", which was false. Only a custom …__r, a What / Who, or a Parent that can be any object stay untellable.
-      for (const seg of rels) {
-        if (seg === 'masterrecord') continue;
-        if (seg === 'parent') {
-          if (hasKey(PARENT, cur)) { cur = PARENT[cur]; if (!cur) { unknownKind = 'poly'; return 'unknown'; } }
-          continue;
-        }
-        if (hasKey(REL, seg)) { cur = REL[seg]; continue; }
-        if (/__r$/.test(seg)) { unknownKind = 'custom'; return 'unknown'; }
-        if (seg === 'what' || seg === 'who') { unknownKind = 'poly'; return 'unknown'; }
-        cur = seg;
-      }
-      return cur === objL ? 'this' : 'other';
+      const r = sftkRelWalk(cur, rels);
+      if (r.kind) { unknownKind = r.kind; return 'unknown'; }
+      return sftkMdIsOwnObj(r.obj, objL) ? 'this' : 'other';
     }
     function refMatches(ref, asField) {
       const who = ownerOfRef(ref, asField);
@@ -6667,8 +6679,23 @@ const FieldCleaner = (() => {
     flush();
     return `<pre class="fc-xml-pre fc-xml-diff">${out}</pre>`;
   }
-  // Does this XML still name `f` in a place the edit engine knows? (the probe rename is never deployed)
-  function _editStillNames(type, xml, f) { return !!f && !sftkMdEditField(type, xml, _selObj.api, f, '__SFTK_PROBE__').refused; }
+  // Does this XML still name `f`? (the probe rename is never deployed) A refusal is "no" only when the engine KNOWS
+  // the field is not there: a "cannot tell whose field" refusal (unsure — a Lookup__r. / What. / Parent. mention
+  // beside a bare one) counts as still naming it. Reading it as "no" failed the verify of a correct ⇄ and reported a
+  // hand edit that still held the field as done (2026-11-14 review 6).
+  // Review 7 (2026-11-14): the probe renames formula text with _sftkMdSwapToken, which also counts the name inside a
+  // quoted string or a comment — but ✂ (sftkFormulaDropField) rightly keeps Name = 'Region__c' and /* Region__c */, so
+  // a correct ✂ stayed "still names it" on every re-read and was reported as a failure. The formula elements are read
+  // here as ✂ reads them: string literals and comments blanked first (the same two patterns sftkFormulaDropField
+  // strips). Only the probe's copy is masked; a real or a cannot-tell mention outside quotes still counts (review 6).
+  // A WebLink <url> is left as written: text outside {! } there is not a formula, so the safe reading is kept.
+  function _editStillNames(type, xml, f) {
+    if (!f) return false;
+    const masked = String(xml == null ? '' : xml).replace(/(<(errorConditionFormula|formula|recordFilter|userCriteria)>)([^<]*)(<\/\2>)/g,
+      (m, open, tag, body, close) => open + sftkMdEscape(sftkMdUnescape(body).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""')) + close);
+    const r = sftkMdEditField(type, masked, _selObj.api, f, '__SFTK_PROBE__');
+    return !r.refused || !!r.unsure;
+  }
   // "✎ Edit before deploying" inside a confirm (user 2026-11-08: "we can't edit here"): a folded box with the proposed
   // text; while it is open and changed, the deploy sends what the box holds. For XML the text must stay well-formed
   // and keep its <fullName>; the Go button follows. → { html, onRender(), value() (null = untouched) }
@@ -6898,8 +6925,16 @@ const FieldCleaner = (() => {
     // is already on the layout, the old slot becomes a blank space).
     const swap = _swapOn();
     const swapTo = swap ? _replField.api : '';
+    // review 5 (2026-11-14): ✂ AND ⇄ check the layout is the cleaned object's own — a bare name on another object's
+    // layout is that object's field, and the refusal says so instead of "not found". ⇄ asks before it edits
+    // (removeFieldFromLayout on {} changes nothing): it used to rename Contact.Region__c on a Contact layout while
+    // replacing Account.Region__c, and report it done.
+    const lyOpts = { objApi: _selObj.api, fullName: res.FullName || res.fullName, isObject: _fcIsLoadedObject };
+    if (swap) removeFieldFromLayout({}, _selField.api, lyOpts);
+    if (lyOpts.refused) throw new Error(`"${componentName}": ${lyOpts.refused}.`);
     const sw = swap ? sftkLayoutReplaceField(metadata, _selField.api, swapTo, { readOnly: _replReadOnly() }) : null;
-    const changes = swap ? sw.swapped + sw.blanked : removeFieldFromLayout(metadata, _selField.api);
+    const changes = swap ? sw.swapped + sw.blanked : removeFieldFromLayout(metadata, _selField.api, lyOpts);
+    if (!swap && lyOpts.refused) throw new Error(`"${componentName}": ${lyOpts.refused}.`);
     if (changes === 0) {
       throw new Error(
         `Field not found in "${componentName}" layout sections. ` +
@@ -6938,11 +6973,21 @@ const FieldCleaner = (() => {
           const after = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
             sobject: 'Layout', id: componentId });
           if (!after || after.error || !after.Metadata) return { ok: false, text: null };
-          const left = removeFieldFromLayout(JSON.parse(JSON.stringify(after.Metadata)), _selField.api);
+          const vOpts = { objApi: _selObj.api, fullName: after.FullName || after.fullName || lyOpts.fullName, isObject: _fcIsLoadedObject };
+          const left = removeFieldFromLayout(JSON.parse(JSON.stringify(after.Metadata)), _selField.api, vOpts);
           // a swap is only done when the old field is gone AND the new one is there
-          const hasNew = !swap || (after.Metadata.layoutSections || []).some(sec => (sec.layoutColumns || []).some(col =>
-            (col.layoutItems || []).some(it => it && String(it.field || '').toLowerCase() === swapTo.toLowerCase())));
-          return { ok: left === 0 && hasNew, text: null };
+          // (the mini layout counts too: a field listed only there is renamed there by sftkLayoutReplaceField — review 6, 2026-11-14)
+          // review 7 (2026-11-14): so do relatedObjects, multilineLayoutFields, the highlights panel and related content —
+          // sftkLayoutReplaceField renames there too; and a refusal on the re-read (the field is still the highlights
+          // panel's only item) is NOT clean: it returned 0 and read as "verified" while the layout still named the field
+          const nl = swapTo.toLowerCase(), isNew = v => String(v || '').toLowerCase() === nl, md = after.Metadata;
+          const hasNew = !swap || (md.layoutSections || []).some(sec => (sec.layoutColumns || []).some(col =>
+            (col.layoutItems || []).some(it => it && isNew(it.field))))
+            || ((md.miniLayout && md.miniLayout.fields) || []).some(isNew)
+            || (md.relatedObjects || []).some(isNew) || (md.multilineLayoutFields || []).some(isNew)
+            || ((md.summaryLayout && md.summaryLayout.summaryLayoutItems) || []).some(it => it && isNew(it.field))
+            || ((md.relatedContent && md.relatedContent.relatedContentItems) || []).some(it => it && it.layoutItem && isNew(it.layoutItem.field));
+          return { ok: left === 0 && !vOpts.refused && hasNew, text: null };
         },
       });
       if (wr.accepted && wr.ok) {
@@ -6987,12 +7032,64 @@ const FieldCleaner = (() => {
     }
   }
 
+  // Is api one of the org's objects in the loaded object list? removeFieldFromLayout asks it before it calls a
+  // layout prefix another object's name in a refusal (2026-11-14 review 6): a prefix not found is said to be
+  // unmatched, never named as an object. A missing entry (a capped list) only softens the text; it still refuses.
+  function _fcIsLoadedObject(api) {
+    const a = String(api || '').toLowerCase();
+    return !!a && _allObjects.some(o => String(o.api).toLowerCase() === a);
+  }
+
   // Remove the field from every layoutItem in every section/column.
   // Replaced with emptySpace so the column structure stays valid.
-  function removeFieldFromLayout(metadata, fieldApiName) {
+  // opts (optional, 2026-11-14 review 5): { objApi, fullName } — the object being cleaned and the layout's full name
+  // ("Object-Layout Name"). A layout holds only its OWN object's fields, by bare name: on a layout of another object
+  // a bare Region__c is THAT object's field. When both are given and the layout's object is not objApi, nothing is
+  // changed and opts.refused carries the true reason. Without them the layout is taken as the field's own, as before
+  // (the scan finds layouts through the field's own dependency records). The check comes before any edit, so ⇄
+  // asks it with an empty metadata ({}) — one rule for ✂, ⇄, the preview and the verify (2026-11-14 review 5).
+  function removeFieldFromLayout(metadata, fieldApiName, opts) {
     let changes = 0;
     const fl = fieldApiName.toLowerCase();
+    // the layout's object is the part of its full name before the first '-' (an object's API name never holds one)
+    const fn = opts && opts.fullName ? String(opts.fullName) : '';
+    let lo = fn.indexOf('-') > 0 ? fn.slice(0, fn.indexOf('-')).trim() : '';
+    // LAYOUT_PREFIX_OBJECT — Salesforce's own layout full-name prefixes that are not an object's API name but a page
+    // of one, and hold that object's fields: Close Case and Case Feed (Case), the Person Account layouts (Account),
+    // the User Profile Layout UserAlt (User), and the Live Agent transcript pages LiveChatTranscriptActive /
+    // LiveChatTranscriptWaiting (LiveChatTranscript). Global (the global publisher layout) belongs to no object: null.
+    // Review 5 (2026-11-14): only the two Case ones were mapped, so ✂ on a PersonAccount-… or UserAlt-… layout refused
+    // a correct edit and called the field PersonAccount's / UserAlt's. Review 6 (2026-11-14): the LiveChatTranscript
+    // pages were refused the same way. Kept inside this function because the tests lift it out alone (fcNested).
+    const LAYOUT_PREFIX_OBJECT = { caseclose: 'Case', caseinteraction: 'Case', personaccount: 'Account', useralt: 'User',
+      livechattranscriptactive: 'LiveChatTranscript', livechattranscriptwaiting: 'LiveChatTranscript', global: null };
+    const prefix = lo;
+    const mapped = Object.prototype.hasOwnProperty.call(LAYOUT_PREFIX_OBJECT, lo.toLowerCase());
+    if (mapped) lo = LAYOUT_PREFIX_OBJECT[lo.toLowerCase()] || '';
+    // Own-object test through sftkMdIsOwnObj (sftk-mdapi.js, a page global): a custom field on Activity IS a field of
+    // every Task and Event, so a Task-… / Event-… layout holds Activity.Region__c by its bare name. A plain string
+    // compare refused every Task / Event layout for ✂ and ⇄ with a false "Task's field" (2026-11-14 review 5, round 3).
+    if (prefix && opts.objApi && !(lo && sftkMdIsOwnObj(lo, opts.objApi))) {
+      // review 6 (2026-11-14): the refusal names another object only when the prefix IS one — mapped above to an
+      // object, or found by opts.isObject (the caller's loaded object list). A prefix that is neither (Global, or a
+      // built-in page prefix not in the map) used to be called an object ("LiveChatTranscriptActive's field"): now
+      // the text says the layout's object could not be matched. Still refused — the safe direction.
+      const isObj = lo && (mapped || typeof opts.isObject !== 'function' || opts.isObject(lo));
+      opts.refused = isObj
+        ? `this is a page layout of ${lo}, so its ${fieldApiName} is ${lo}'s field, not ${opts.objApi}'s — nothing was changed`
+        : `the object of this page layout could not be matched to ${opts.objApi} (its name begins "${prefix}"), so its ${fieldApiName} may be another object's field — nothing was changed`;
+      return 0;
+    }
 
+    // The highlights panel (summaryLayout.summaryLayoutItems, Case Feed) names its fields one item each. An item that
+    // is this field goes whole; when it is the panel's ONLY item nothing is changed and the refusal says why — a panel
+    // left with no items is not something this tool deploys blind (2026-11-14 review 7). Checked before any edit.
+    const sumItems = metadata.summaryLayout && Array.isArray(metadata.summaryLayout.summaryLayoutItems) ? metadata.summaryLayout.summaryLayoutItems : null;
+    if (sumItems && sumItems.some(it => it && String(it.field || '').toLowerCase() === fl)
+        && sumItems.every(it => it && String(it.field || '').toLowerCase() === fl)) {
+      if (opts) opts.refused = `${fieldApiName} is the only field in this layout's highlights panel (summary layout), and a panel with no fields left is not deployed by this tool — remove it in the layout editor`;
+      return 0;
+    }
     for (const section of (metadata.layoutSections || [])) {
       for (const col of (section.layoutColumns || [])) {
         if (!Array.isArray(col.layoutItems)) continue;
@@ -7013,6 +7110,30 @@ const FieldCleaner = (() => {
       const kept = mf.filter(x => String(x).toLowerCase() !== fl);
       changes += mf.length - kept.length;
       metadata.miniLayout.fields = kept;
+    }
+    // The layout's other lists of its OWN object's fields (2026-11-14 review 7): the console mini page's lookup fields
+    // (relatedObjects), the fields shown multi-line (multilineLayoutFields), the highlights panel (summaryLayout, its
+    // only-item case refused above) and the mini view's related content (relatedContent.relatedContentItems[].layoutItem).
+    // Only layoutSections and miniLayout.fields were read, so a layout naming the field in one of these was reported
+    // done — and verified, as the verify reruns this function on the re-read — while it still named it.
+    // relatedLists / miniLayout.relatedLists hold the related objects' fields and are left alone.
+    for (const key of ['relatedObjects', 'multilineLayoutFields']) {
+      const arr = metadata[key];
+      if (!Array.isArray(arr)) continue;
+      const kept = arr.filter(x => String(x).toLowerCase() !== fl);
+      changes += arr.length - kept.length;
+      metadata[key] = kept;
+    }
+    if (sumItems) {
+      const kept = sumItems.filter(it => !(it && String(it.field || '').toLowerCase() === fl));
+      changes += sumItems.length - kept.length;
+      metadata.summaryLayout.summaryLayoutItems = kept;
+    }
+    const rc = metadata.relatedContent && metadata.relatedContent.relatedContentItems;
+    if (Array.isArray(rc)) {
+      const kept = rc.filter(it => !(it && it.layoutItem && String(it.layoutItem.field || '').toLowerCase() === fl));
+      changes += rc.length - kept.length;
+      metadata.relatedContent.relatedContentItems = kept;
     }
     return changes;
   }
@@ -7036,22 +7157,43 @@ const FieldCleaner = (() => {
     // are pointed at the new field (sftk-fieldreplace.js).
     const swap = _swapOn();
     const swapTo = swap ? _replField.api : '';
-    const sw = swap ? sftkFlexiReplaceField(metadata, _selObj.api, _selField.api, swapTo) : null;
-    const leftRm = { other: 0, unknown: 0, unknownKinds: {} };   // ✂: mentions of another object's / an untellable object's same-named field
+    // The page's object: its <sobjectType>, else the FlexiPage's EntityDefinitionId (2026-11-14 review 5 — Tooling
+    // may return sobjectType null on a custom record page, as lightning-pages.js notes; ✂ then refused a correct edit
+    // saying the page did not tell its object, when the record did).
+    const pageHint = _flexiPageObjOf(res);
+    const pageOn = String(metadata.sobjectType || pageHint || '');
+    const pageName = /^01I/i.test(pageOn) ? 'another custom object' : pageOn;   // an id that is not the cleaned object's
+    // ✂ and ⇄ fill the same tally: mentions of another object's / an untellable object's same-named field
+    const leftRm = { other: 0, unknown: 0, unknownKinds: {}, otherPage: 0 };
+    // ⇄ decides whose field each mention is exactly as ✂ does (2026-11-14 review 5: it ignored the page's object
+    // and renamed Contact.Region__c on a Contact record page, while ✂ left it)
+    const sw = swap ? replaceFieldInFlexiPage(metadata, _selObj.api, _selField.api, swapTo, leftRm, pageHint) : null;
     // the untellable mentions, each kind with its own true reason (2026-11-14 review 4: all were called "a custom lookup")
     const unknownBits = () => Object.entries(leftRm.unknownKinds).filter(([, n]) => n).map(([k, n]) => {
       const s = n === 1 ? '' : 's';
       if (k === 'custom') return `⚠ ${n} mention${s} through a custom lookup left alone — whose field it is cannot be told from the page; check it in App Builder`;
       if (k === 'poly') return `⚠ ${n} mention${s} through a What / Who or a Parent that can be any object left alone — whose field it is cannot be told from the page; check it in App Builder`;
+      // 2026-11-14 review 5: the page's own record on a page that does not say its object (no <sobjectType>)
+      if (k === 'page') return `⚠ ${n} mention${s} of the page's record left alone — the page does not say which object it is a record page for, so whose field it is cannot be told; check it in App Builder`;
       return `⚠ ${n} mention${s} from a merge field whose object the page does not tell left alone — check it in App Builder`;
     });
-    const changes = swap ? sw.swapped + sw.dropped : removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api, leftRm);
+    // what was left alone and why — the same words for ✂ and ⇄ (review 5: ⇄ called a Parent self-lookup "a related
+    // record, which is another object's field")
+    const leftBits = () => {
+      const bits = [];
+      if (leftRm.otherPage) bits.push(`⚠ ${leftRm.otherPage} mention${leftRm.otherPage === 1 ? '' : 's'} of the page's record left alone (a ${pageName} record page: ${pageName}'s field, not ${_selObj.api}'s)`);
+      if (leftRm.other) bits.push(`⚠ ${leftRm.other} mention${leftRm.other === 1 ? '' : 's'} of a related record's same-named field left alone (another object's field)`);
+      if (leftRm.unknown) bits.push(...unknownBits());
+      return bits;
+    };
+    const changes = swap ? sw.swapped + sw.dropped : removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api, leftRm, pageHint);
     if (changes === 0) {
       throw new Error(
         `No direct field references found in "${componentName}". ` +
-        (swap && sw.left ? `${sw.left} mention(s) reach the field through a related record, which is another object's field and is left alone. ` : '') +
-        (!swap && leftRm.other ? `${leftRm.other} mention(s) reach a related record's same-named field (another object's field) and are left alone. ` : '') +
-        (!swap && leftRm.unknown ? `${unknownBits().map(b => b.replace(/^⚠ /, '')).join('; ')}. ` : '') +
+        // review 5 (2026-11-14): a record page of another object — its record's field is that object's
+        (leftRm.otherPage ? `${leftRm.otherPage} mention(s) of the page's record left alone — this is a ${pageName} record page, so they are ${pageName}'s field, not ${_selObj.api}'s. ` : '') +
+        (leftRm.other ? `${leftRm.other} mention(s) reach a related record's same-named field (another object's field) and are left alone. ` : '') +
+        (leftRm.unknown ? `${unknownBits().map(b => b.replace(/^⚠ /, '')).join('; ')}. ` : '') +
         `The dependency may be inside a custom component — ${swap ? 'change it' : 'remove'} manually in App Builder.`
       );
     }
@@ -7079,10 +7221,10 @@ const FieldCleaner = (() => {
           if (!after || after.error || !after.Metadata) return { ok: false, text: null };
           if (swap) {
             // nothing left to move on re-read = the swap really landed
-            const again = sftkFlexiReplaceField(JSON.parse(JSON.stringify(after.Metadata)), _selObj.api, _selField.api, swapTo);
+            const again = replaceFieldInFlexiPage(JSON.parse(JSON.stringify(after.Metadata)), _selObj.api, _selField.api, swapTo, null, _flexiPageObjOf(after) || pageHint);
             return { ok: again.swapped + again.dropped === 0, text: null };
           }
-          const left = removeFieldFromFlexiPage(JSON.parse(JSON.stringify(after.Metadata)), _selObj.api, _selField.api);
+          const left = removeFieldFromFlexiPage(JSON.parse(JSON.stringify(after.Metadata)), _selObj.api, _selField.api, null, _flexiPageObjOf(after) || pageHint);
           return { ok: left === 0, text: null };
         },
       });
@@ -7092,13 +7234,11 @@ const FieldCleaner = (() => {
         const bits = [];
         if (sw.swapped) bits.push(`${sw.swapped} place${sw.swapped === 1 ? '' : 's'} now use${sw.swapped === 1 ? 's' : ''} ${swapTo}`);
         if (sw.dropped) bits.push(`${sw.dropped} component${sw.dropped === 1 ? '' : 's'} dropped — the page already showed ${swapTo}`);
-        if (sw.left) bits.push(`⚠ ${sw.left} mention${sw.left === 1 ? '' : 's'} through a related record left alone (another object's field)`);
+        bits.push(...leftBits());
         return `✅ Page updated · ${bits.join(' · ')} — verified by re-reading the org`;
       }
-      if (leftRm.other || leftRm.unknown) {
-        const bits = [`${changes} place${changes === 1 ? '' : 's'} removed`];
-        if (leftRm.other) bits.push(`⚠ ${leftRm.other} mention${leftRm.other === 1 ? '' : 's'} of a related record's same-named field left alone (another object's field)`);
-        if (leftRm.unknown) bits.push(...unknownBits());
+      if (leftRm.other || leftRm.unknown || leftRm.otherPage) {
+        const bits = [`${changes} place${changes === 1 ? '' : 's'} removed`, ...leftBits()];
         return `✅ Page updated · ${bits.join(' · ')} — verified by re-reading the org`;
       }
     } finally {
@@ -7116,6 +7256,90 @@ const FieldCleaner = (() => {
     }
   }
 
+  // The object a FlexiPage is a record page of, when its <sobjectType> is empty (2026-11-14 review 5): Tooling may
+  // return Metadata.sobjectType null on a custom object's record page (lightning-pages.js reads EntityDefinitionId
+  // then). EntityDefinitionId is the API name of a standard object but the 01I… id of a custom one — the cleaned
+  // object's own id is answered with its API name; another id is passed on as it is (it is not the cleaned object, so
+  // its record's field is not this field). '' = the page tells nothing more than its <sobjectType>.
+  function _flexiPageObjOf(res) {
+    if (!res || (res.Metadata && res.Metadata.sobjectType)) return '';
+    const e = res.EntityDefinitionId ? String(res.EntityDefinitionId).trim() : '';
+    if (!e || !/^01I/i.test(e)) return e;
+    const mine = String((_selObj && _selObj.durableId) || '');
+    return mine && mine.slice(0, 15).toLowerCase() === e.slice(0, 15).toLowerCase() ? _selObj.api : e;
+  }
+
+  // ⇄ on a Lightning page: sftkFlexiReplaceField (sftk-fieldreplace.js) does the rename, but whose field each mention
+  // is is decided here by ✂'s own remover, so ✂ and ⇄ agree (2026-11-14 review 5). sftkFlexiReplaceField takes every
+  // Record.X for the cleaned object's field and every hop for another object's: it renamed Contact.Region__c on a
+  // Contact record page and left {!Record.Parent.Region__c} on an Account page, calling it another object's field.
+  //   1. a mention that is NOT this field (another object's, the record of another object's page, or one whose object
+  //      cannot be told) is masked, so the rename cannot touch it, and counted in out like ✂ counts it;
+  //   2. sftkFlexiReplaceField renames the rest;
+  //   3. a mention that IS this field and that it left (a self-lookup Parent, a hop that ends on this object, $User…)
+  //      is renamed in place — its last segment only.
+  // out (optional): the tally removeFieldFromFlexiPage fills. pageHint: as removeFieldFromFlexiPage's.
+  // Returns { swapped, dropped, left } — left = the mentions left alone (all of them named in out).
+  function replaceFieldInFlexiPage(metadata, objApi, oldApi, newApi, out, pageHint) {
+    const fl = String(oldApi).toLowerCase();
+    const tally = out && typeof out === 'object' ? out : {};
+    tally.other = tally.other || 0; tally.unknown = tally.unknown || 0;
+    const FIELD_PROPS = ['fieldApiName', 'field', 'fieldName'];
+    const namesOld = v => typeof v === 'string' && v.trim().replace(/^\{!/, '').replace(/\}$/, '').trim().split('.').pop().toLowerCase() === fl;
+    // whose field one mention is: ✂'s remover asked on a page holding that mention alone — null = THIS field
+    const whose = v => {
+      const t = {};
+      const probe = { sobjectType: (metadata && metadata.sobjectType) || undefined, flexiPageRegions: [{ itemInstances: [{ fieldInstance: { fieldItem: v } }] }] };
+      return removeFieldFromFlexiPage(probe, objApi, oldApi, t, pageHint) ? null : t;
+    };
+    // every string that names a field: field components, Dynamic Forms items, visibility criteria (a right-hand side
+    // only as a merge field) — the places ✂ and sftkFlexiReplaceField read
+    const slotsOf = () => {
+      const slots = [];
+      (function walk(node) {
+        if (!node || typeof node !== 'object') return;
+        if (Array.isArray(node)) { node.forEach(walk); return; }
+        if (typeof node.fieldItem === 'string') slots.push({ o: node, k: 'fieldItem' });
+        if (Array.isArray(node.componentInstanceProperties)) {
+          for (const p of node.componentInstanceProperties) if (p && FIELD_PROPS.includes(p.name) && typeof p.value === 'string') slots.push({ o: p, k: 'value' });
+        }
+        for (const key of ['visibilityRule', 'componentVisibilityRule']) {
+          for (const c of ((node[key] && node[key].criteria) || [])) {
+            if (!c) continue;
+            if (typeof c.leftValue === 'string') slots.push({ o: c, k: 'leftValue' });
+            if (typeof c.rightValue === 'string' && c.rightValue.startsWith('{!')) slots.push({ o: c, k: 'rightValue' });
+            else if (c.rightValue && typeof c.rightValue === 'object' && typeof c.rightValue.value === 'string' && c.rightValue.value.startsWith('{!')) slots.push({ o: c.rightValue, k: 'value' });
+          }
+        }
+        for (const k of Object.keys(node)) walk(node[k]);
+      })(metadata && metadata.flexiPageRegions);
+      return slots;
+    };
+    const masks = [];
+    for (const s of slotsOf()) {
+      const v = s.o[s.k];
+      if (!namesOld(v)) continue;
+      const t = whose(v);
+      if (!t) continue;
+      tally.other += t.other || 0; tally.unknown += t.unknown || 0;
+      if (t.otherPage) tally.otherPage = (tally.otherPage || 0) + t.otherPage;
+      for (const [k, n] of Object.entries(t.unknownKinds || {})) { const u = tally.unknownKinds = tally.unknownKinds || {}; u[k] = (u[k] || 0) + n; }
+      masks.push({ o: s.o, k: s.k, v });
+      s.o[s.k] = `\u0000sftk-left-${masks.length}`;   // names no field: the rename passes it by
+    }
+    const sw = sftkFlexiReplaceField(metadata, objApi, oldApi, newApi);
+    for (const m of masks) m.o[m.k] = m.v;
+    let more = 0;
+    const lastSeg = new RegExp(`${String(oldApi).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s*\\}?\\s*)$`, 'i');
+    for (const s of slotsOf()) {
+      const v = s.o[s.k];
+      if (!namesOld(v) || whose(v)) continue;
+      s.o[s.k] = v.replace(lastSeg, `${newApi}$1`);
+      more++;
+    }
+    return { swapped: sw.swapped + more, dropped: sw.dropped, left: masks.length };
+  }
+
   // Remove field references from a FlexiPage metadata object.
   // Handles two patterns:
   //   1. componentVisibilityRule criteria that test the field value
@@ -7124,24 +7348,28 @@ const FieldCleaner = (() => {
   //      → remove the entire component instance
   // out (optional): { other, unknown } — mentions left alone because they name ANOTHER object's
   // same-named field (other) or a field whose object the page does not tell (unknown: a custom lookup).
-  function removeFieldFromFlexiPage(metadata, objApi, fieldApiName, out) {
+  // pageHint (optional, 2026-11-14 review 5): the page's object when its <sobjectType> is empty — the FlexiPage's
+  // EntityDefinitionId (_flexiPageObjOf). <sobjectType> wins when the page has one.
+  function removeFieldFromFlexiPage(metadata, objApi, fieldApiName, out, pageHint) {
     let changes = 0;
     const fl  = fieldApiName.toLowerCase();
     const obj = objApi.toLowerCase();
     const tally = out && typeof out === 'object' ? out : {};
     tally.other = tally.other || 0; tally.unknown = tally.unknown || 0;
-    // why each untellable mention could not be told, counted by kind in tally.unknownKinds: 'custom' | 'poly' | 'root'
+    // why each untellable mention could not be told, counted by kind in tally.unknownKinds: 'custom' | 'poly' | 'root' | 'page'
     // (2026-11-14 review 4) — added only when there is one, so a tally with none keeps its { other, unknown } shape
-    const PARENT = { casecomment: 'case', emailmessage: 'case', attachment: null, note: null, feeditem: null, feedcomment: null, entitysubscription: null, contentdocumentlink: null };
-    const hasKey = (m, k) => Object.prototype.hasOwnProperty.call(m, k);
     let unknownKind = null;
-    // standard relationships whose object is fixed (kept in step with sftk-mdapi.js sftkRtEdit's map);
-    // Parent / MasterRecord are self-lookups — the page record's own object.
-    const REL = { owner: 'user', createdby: 'user', lastmodifiedby: 'user', manager: 'user', delegatedapprover: 'user', user: 'user',
-      account: 'account', convertedaccount: 'account', partneraccount: 'account', contact: 'contact', convertedcontact: 'contact',
-      reportsto: 'contact', opportunity: 'opportunity', convertedopportunity: 'opportunity', lead: 'lead', case: 'case',
-      campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
-      recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group' };
+    // The object of the page's record: the FlexiPage's <sobjectType> (2026-11-14 review 5) — '' when the page does
+    // not say it (unknown kind 'page'). A mention of the page's own record on a page of ANOTHER object is that
+    // object's field: tallied apart in tally.otherPage (added only when there is one), so the fix text says so
+    // instead of calling it "a related record's field".
+    const pageObj = metadata && metadata.sobjectType ? String(metadata.sobjectType).trim().toLowerCase()
+      : pageHint ? String(pageHint).trim().toLowerCase() : '';
+    let pageOther = false;
+    // The hops and $ roots are resolved by the ONE shared resolver (sftkRelWalk / sftkRelGlobal in sftk-relmap.js,
+    // 2026-11-14): this function kept a private copy of the map that drifted from the others. Parent / MasterRecord
+    // are self-lookups — the page record's own object — except Parent on CaseComment / EmailMessage (Case) and on
+    // Attachment / Note… (any object).
     // Whose field a path names: 'this' | 'other' | 'unknown' | null (not this field's name at all).
     // {!Record.Parent.Field} on Account IS Account.Field (Parent is a self-lookup); {!Record.Owner.Field}
     // and {!$User.Field} are User's — another object's field unless User is the one cleaned. Matching any
@@ -7153,31 +7381,40 @@ const FieldCleaner = (() => {
       const segs = String(str).toLowerCase().trim()
         .replace(/^\{!/, '').replace(/\}$/, '').trim().split('.'); // strip {! ... } merge syntax
       if (segs.pop() !== fl) return null;
-      if (!segs.length) return 'this';
-      const root = segs.shift();
       let cur;
-      if (root === 'record' || root === 'objectrecord' || root === '$record' || root === obj) cur = obj;
-      else if (root === '$user') cur = 'user';
-      else { unknownKind = 'root'; return 'unknown'; }
-      // 2026-11-14 review 4: a standard hop missing from REL ({!Record.Asset.Region__c}, Entitlement…) is a lookup named
+      // a $ root names its object through the shared resolver: $User.X User's, and — as the formulas read them
+      // (2026-11-14) — $Profile / $UserRole / $Organization / $Setup.Obj, which this function used to tally 'unknown'
+      const gl = segs.length && segs[0] !== '$record' ? sftkRelGlobal(segs) : null;
+      if (gl && gl.obj) { cur = gl.obj; segs.splice(0, gl.from); }
+      else {
+        // a bare name and the roots Record / ObjectRecord / $Record are the page's OWN record (2026-11-14 review 5): its
+        // object is the page's <sobjectType>, not the object being cleaned. The scan reads every page, so a Contact
+        // record page with {!Record.Region__c} reached ✂ of Account.Region__c and lost Contact's field. A page that
+        // does not say its object cannot be told — never guessed to be the one cleaned.
+        const root = segs.length ? segs.shift() : 'record';
+        // the object named outright ({!Account.Region__c}) is its own answer; {!Task.Region__c} is Activity's too (round 3)
+        if (sftkMdIsOwnObj(root, obj)) cur = root;
+        else if (root === 'record' || root === 'objectrecord' || root === '$record') {
+          if (!pageObj) { unknownKind = 'page'; return 'unknown'; }
+          cur = pageObj;
+          // sftkMdIsOwnObj, not !==: a Task / Event record page's own record holds Activity's custom fields — it was
+          // tallied otherPage and worded "Task's field, not Activity's", for ✂ and ⇄ alike (2026-11-14 review 5, round 3)
+          if (!segs.length && !sftkMdIsOwnObj(cur, obj)) { pageOther = true; return 'other'; }
+        }
+        else { unknownKind = 'root'; return 'unknown'; }
+      }
+      // 2026-11-14 review 4: a standard hop missing from the map ({!Record.Asset.Region__c}, Entitlement…) is a lookup named
       // for its object, as _sftkMdSwapToken / _sftkTplForeign take it — it used to be tallied 'unknown' and reported as
       // "a custom lookup", which was false. Only a custom …__r, a What / Who, or a Parent that can be any object stay so.
-      for (const seg of segs) {
-        if (seg === 'masterrecord') continue;
-        if (seg === 'parent') {
-          if (hasKey(PARENT, cur)) { cur = PARENT[cur]; if (!cur) { unknownKind = 'poly'; return 'unknown'; } }
-          continue;
-        }
-        if (hasKey(REL, seg)) { cur = REL[seg]; continue; }
-        if (/__r$/.test(seg)) { unknownKind = 'custom'; return 'unknown'; }
-        if (seg === 'what' || seg === 'who') { unknownKind = 'poly'; return 'unknown'; }
-        cur = seg;
-      }
-      return cur === obj ? 'this' : 'other';
+      const r = sftkRelWalk(cur, segs);
+      if (r.kind) { unknownKind = r.kind; return 'unknown'; }
+      return sftkMdIsOwnObj(r.obj, obj) ? 'this' : 'other';
     }
     function refMatches(str) {
+      pageOther = false;
       const who = ownerOf(str);
-      if (who === 'other') tally.other++;
+      if (who === 'other' && pageOther) tally.otherPage = (tally.otherPage || 0) + 1;
+      else if (who === 'other') tally.other++;
       else if (who === 'unknown') { tally.unknown++; const k = tally.unknownKinds = tally.unknownKinds || {}; k[unknownKind] = (k[unknownKind] || 0) + 1; }
       return who === 'this';
     }

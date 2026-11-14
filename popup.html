@@ -20,6 +20,9 @@
              name comes from aria-label, which a title= alone does not
              reliably provide to assistive tech. -->
         <button id="dsWhatsNewTop" class="topbar-whatsnew" title="What's New — release notes" aria-label="What's New — release notes"><span data-i="sparkle" aria-hidden="true"></span><span id="dsWhatsNewBadge"></span></button>
+        <!-- Report a problem (sftk-report.js): opens a prefilled GitHub issue form — version, browser, OS,
+             language, the tool you are in and the theme; nothing from the org. -->
+        <button id="sftkReportBtn" class="dbg-btn sftk-report-btn" title="Report a problem — prefilled GitHub issue (nothing from your org)" aria-label="Report a problem — opens a prefilled GitHub issue; sending it needs a GitHub account; nothing from your org is included"><span data-i="flag" aria-hidden="true"></span></button>
         <!-- The glyph is a child span, not the button's text: initDarkTheme
              swaps `data-i` on it, so no textContent assignment can destroy it. -->
         <button id="sftkDarkToggle" class="dbg-btn" title="Switch to dark mode" aria-label="Switch to dark mode"><span id="sftkDarkIcon" data-i="moon" aria-hidden="true"></span></button>
@@ -335,6 +338,9 @@
   <script src="debug-logger.js"></script>
   <script src="sftk-progress.js"></script>
   <script src="sftk-zip.js"></script>
+  <!-- The ONE relationship-hop resolver (which object Owner. / Parent. / $User. lead to): pure, loaded before
+       sftk-mdapi.js, sftk-emailtpl.js and field-cleaner.js, which all ask it. -->
+  <script src="sftk-relmap.js"></script>
   <!-- SOAP Metadata API primitives (pure, string in → string out): Field
        Cleaner reads and edits custom report types with them. -->
   <script src="sftk-mdapi.js"></script>
@@ -342,6 +348,8 @@
   <script src="sftk-archive.js"></script>
   <script src="sftk-history.js"></script>
   <script src="sftk-feed.js"></script>
+  <!-- Report a problem: the prefilled GitHub issue URL (allowed fields only). Before popup.js, whose palette calls it. -->
+  <script src="sftk-report.js"></script>
   <!-- Report/Report-Type cleanup: pure surgery helpers for the Analytics
        REST API (modern stack only — user rule 2026-08-31), loaded before
        field-cleaner.js which drives them. -->

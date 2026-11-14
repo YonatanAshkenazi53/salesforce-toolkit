@@ -8,6 +8,7 @@ const read = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 
 // ═══ sftk-mdapi.js ═════════════════════════════════════════════════════════════════════════════════════════
 const M = new Function(`${read('sftk-mdapi.js')}\nreturn { sftkMdEditField, sftkMdMentionsField, sftkRtMentions, sftkRtRemoveField, sftkRtReplaceField };`)();
+const MX = new Function(`${read('sftk-mdapi.js')}\nreturn { sftkMdEscape, sftkMdUnescape };`)();
 const col = (f, t) => `<columns><checkedByDefault>false</checkedByDefault><field>${f}</field><table>${t}</table></columns>`;
 const rtype = (base, cols) => `<baseObject>${base}</baseObject><sections>${cols.join('')}<masterLabel>S</masterLabel></sections>`;
 const vr = f => `<active>true</active><errorConditionFormula>${f}</errorConditionFormula><errorMessage>e</errorMessage>`;
@@ -155,7 +156,10 @@ const FR = new Function(`${read('sftk-fieldreplace.js')}\nreturn { sftkFlowResou
 const FX = new Function('sftkFlowResourceObjects', `${['removeFieldFromFlexiPage', 'flexiPageReferencesField', 'removeFieldRefs', '_flowLeftWhy'].map(fcNested).join('\n')}
 return { removeFieldFromFlexiPage, flexiPageReferencesField, removeFieldRefs, _flowLeftWhy };`)(FR.sftkFlowResourceObjects);
 const fxRich = criteria => ({ componentInstance: { componentName: 'flexipage:richText', identifier: 'rt1', visibilityRule: { criteria } } });
-const fxPage = (...items) => ({ flexiPageRegions: [{ name: 'main', itemInstances: items }] });
+// a record page says its object in <sobjectType>, as the Tooling API returns it (review 5, 2026-11-14: the remover
+// reads it — these pages are Account record pages; fxPageOn names another object's)
+const fxPageOn = (sobjectType, ...items) => ({ sobjectType, flexiPageRegions: [{ name: 'main', itemInstances: items }] });
+const fxPage = (...items) => fxPageOn('Account', ...items);
 const fxField = { fieldInstance: { fieldItem: 'Record.Region__c' } };
 const fxCrit = (left, right = 'EMEA') => ({ leftValue: left, operator: 'EQUAL', rightValue: right });
 const fxClone = o => JSON.parse(JSON.stringify(o));
@@ -841,12 +845,12 @@ describe('review 4 (2026-11-14)', () => {
     expect(why).toMatch(/only condition of the outcome "R"/);
   });
   it('FlexiPage ✂ Asset.Region__c: {!Record.Asset.Region__c} is that field — the criterion goes, nothing tallied unknown', () => {
-    const md = fxPage(fxRich([fxCrit('{!Record.Asset.Region__c}'), fxCrit('{!Record.Status}')]));
+    const md = fxPageOn('Case', fxRich([fxCrit('{!Record.Asset.Region__c}'), fxCrit('{!Record.Status}')]));
     const out = {};
     expect(FX.removeFieldFromFlexiPage(md, 'Asset', 'Region__c', out)).toBe(1);
     expect(out.unknown).toBe(0);
     expect(critsOf(md).map(c => c.leftValue)).toEqual(['{!Record.Status}']);
-    const k = fxPage(fxRich([fxCrit('{!Record.Asset.Region__c}'), fxCrit('{!Record.Status}')])), o2 = {};
+    const k = fxPageOn('Case', fxRich([fxCrit('{!Record.Asset.Region__c}'), fxCrit('{!Record.Status}')])), o2 = {};
     expect(FX.removeFieldFromFlexiPage(k, 'Case', 'Region__c', o2)).toBe(0);
     expect(o2).toMatchObject({ other: 1, unknown: 0 });
   });
@@ -921,5 +925,765 @@ describe('review 4 (2026-11-14)', () => {
     expect(R6.sftkMdEditField('WorkflowFieldUpdate', c, 'Case', 'Region__c', 'Area__c').how).toEqual(['target field now Area__c']);
     const a = x.replace('EmailMessage.SetCaseRegion', 'Account.SetParentRegion');
     expect(R6.sftkMdEditField('WorkflowFieldUpdate', a, 'Account', 'Region__c', 'Area__c').how).toEqual(['target field now Area__c']);
+  });
+});
+
+// review 5 (2026-11-14), field-cleaner.js: flows and Lightning pages follow CompanySigned / CustomerSigned… through the
+// shared resolver; $Setup.Obj.X in a flow is Obj's field; a Lightning page's record is the page's own <sobjectType>;
+// ✂ on a page layout checks the layout is the cleaned object's own.
+describe('review 5 (2026-11-14)', () => {
+  const asg = (...refs) => ({ name: 'a', assignmentItems: refs.map(r => ({ assignToReference: 'v', operator: 'Assign', value: { elementReference: r } })) });
+  const refsOf = m => m.assignments[0].assignmentItems.map(i => i.value.elementReference);
+
+  it('flow on Contract: $Record.CompanySigned.Region__c is User’s — ✂ User.Region__c removes it (no false "other object")', () => {
+    const m = { start: { object: 'Contract' }, assignments: [asg('$Record.CompanySigned.Region__c', '$Record.ActivatedBy.Region__c')] };
+    expect(FX.removeFieldRefs(m, 'User', 'Region__c')).toBe(2);
+    expect(FX.removeFieldRefs.lastLeft.other).toEqual([]);
+    expect(FX.removeFieldRefs.lastLeft.unknown).toEqual([]);
+  });
+  it('flow on Contract: CustomerSigned / BillToContact / ShipToContact are Contact’s; on Account.Region__c they stay as another object’s', () => {
+    const refs = ['$Record.CustomerSigned.Region__c', '$Record.BillToContact.Region__c', '$Record.ShipToContact.Region__c'];
+    const m = { start: { object: 'Contract' }, assignments: [asg(...refs)] };
+    expect(FX.removeFieldRefs(m, 'Contact', 'Region__c')).toBe(3);
+    const k = { start: { object: 'Order' }, assignments: [asg(...refs)] };
+    expect(FX.removeFieldRefs(k, 'Account', 'Region__c')).toBe(0);
+    expect(FX.removeFieldRefs.lastLeft.other).toEqual(refs);
+  });
+  it('flow: $Setup.Cfg__c.Region__c is Cfg__c’s field — ✂ Cfg__c.Region__c removes it; on Account it is another object’s', () => {
+    const m = { assignments: [asg('$Setup.Cfg__c.Region__c')] };
+    expect(FX.removeFieldRefs(m, 'Cfg__c', 'Region__c')).toBe(1);
+    expect(m.assignments[0].assignmentItems).toHaveLength(0);
+    const k = { assignments: [asg('$Setup.Cfg__c.Region__c')] };
+    expect(FX.removeFieldRefs(k, 'Account', 'Region__c')).toBe(0);
+    expect(refsOf(k)).toEqual(['$Setup.Cfg__c.Region__c']);
+    expect(FX.removeFieldRefs.lastLeft.other).toEqual(['$Setup.Cfg__c.Region__c']);
+    expect(FX._flowLeftWhy(FX.removeFieldRefs.lastLeft)).not.toMatch(/does not tell/);
+  });
+
+  it('Lightning page of Contract: {!Record.CompanySigned.Region__c} is User’s — ✂ User.Region__c takes it out', () => {
+    const md = fxPageOn('Contract', fxRich([fxCrit('{!Record.CompanySigned.Region__c}'), fxCrit('{!Record.CustomerSigned.Region__c}'), fxCrit('{!Record.Status}')]));
+    const out = {};
+    expect(FX.removeFieldFromFlexiPage(md, 'User', 'Region__c', out)).toBe(1);
+    expect(out).toEqual({ other: 1, unknown: 0 });   // CustomerSigned is Contact’s
+    expect(critsOf(md).map(c => c.leftValue)).toEqual(['{!Record.CustomerSigned.Region__c}', '{!Record.Status}']);
+  });
+  const fieldItem = f => ({ fieldInstance: { fieldItem: f, identifier: 'fi1' } });
+  it('a Contact record page: Record.Region__c is Contact’s field — ✂ Account.Region__c changes nothing and says why', () => {
+    const md = fxPageOn('Contact', fieldItem('Record.Region__c'), fxRich([fxCrit('{!Record.Region__c}'), fxCrit('{!Record.Name}')]));
+    const before = fxClone(md), out = {};
+    expect(FX.removeFieldFromFlexiPage(md, 'Account', 'Region__c', out)).toBe(0);
+    expect(md).toEqual(before);
+    expect(out).toMatchObject({ other: 0, unknown: 0, otherPage: 2 });
+    expect(FCJ).toContain("record page, so they are ${pageName}'s field, not ${_selObj.api}'s");   // the page's object, also when only EntityDefinitionId tells it (review 5)
+  });
+  it('a Contact record page: {!Record.Account.Region__c} IS Account’s field and goes; Contact’s own stays', () => {
+    const md = fxPageOn('Contact', fieldItem('Record.Region__c'), fxRich([fxCrit('{!Record.Account.Region__c}'), fxCrit('{!Record.Name}')]));
+    expect(FX.removeFieldFromFlexiPage(md, 'Account', 'Region__c')).toBe(1);
+    expect(critsOf(md).map(c => c.leftValue)).toEqual(['{!Record.Name}']);
+    expect(md.flexiPageRegions[0].itemInstances[0]).toEqual(fieldItem('Record.Region__c'));
+    expect(FX.removeFieldFromFlexiPage(md, 'Contact', 'Region__c')).toBe(1);   // ✂ Contact.Region__c: the page’s own field
+  });
+  it('a page that does not say its object: a Record mention or a bare name cannot be told — left, with that reason', () => {
+    const md = { flexiPageRegions: [{ name: 'main', itemInstances: [fieldItem('Record.Region__c'), fieldItem('Region__c'), fxRich([fxCrit('{!Record.Region__c}'), fxCrit('{!$User.Region__c}')])] }] };
+    const before = fxClone(md), out = {};
+    expect(FX.removeFieldFromFlexiPage(md, 'Account', 'Region__c', out)).toBe(0);
+    expect(md).toEqual(before);
+    expect(out).toMatchObject({ other: 1, unknown: 3, unknownKinds: { page: 3 } });
+    expect(FCJ).toContain('the page does not say which object it is a record page for');
+    // an explicit $ global still names its object on such a page
+    expect(FX.removeFieldFromFlexiPage(fxClone(before), 'User', 'Region__c')).toBe(1);
+  });
+  it('an Account record page: a bare field name and Record.X are this field, as before', () => {
+    const comp = { componentInstance: { componentName: 'flexipage:field', componentInstanceProperties: [{ name: 'fieldApiName', value: 'Region__c' }] } };
+    const md = fxPage(comp, fieldItem('Record.Region__c'), fxRich([fxCrit('{!Record.Region__c}'), fxCrit('{!Record.Name}')]));
+    expect(FX.removeFieldFromFlexiPage(md, 'Account', 'Region__c')).toBe(3);
+    expect(FX.removeFieldFromFlexiPage(fxClone(md), 'Account', 'Region__c')).toBe(0);
+  });
+
+  const LY = new Function(`${fcNested('removeFieldFromLayout')}\nreturn { removeFieldFromLayout };`)();
+  const layout = () => ({ layoutSections: [{ label: 'S', layoutColumns: [{ layoutItems: [{ field: 'Name' }, { field: 'Region__c' }] }] }], miniLayout: { fields: ['Name', 'Region__c'] } });
+  it('✂ on a Contact layout while cleaning Account.Region__c: nothing changed, the refusal names the layout’s object', () => {
+    const md = layout(), opts = { objApi: 'Account', fullName: 'Contact-Contact Layout' };
+    expect(LY.removeFieldFromLayout(md, 'Region__c', opts)).toBe(0);
+    expect(md).toEqual(layout());
+    expect(opts.refused).toBe("this is a page layout of Contact, so its Region__c is Contact's field, not Account's — nothing was changed");
+    expect(FCJ).toContain('if (!swap && lyOpts.refused) throw new Error(');
+  });
+  it('✂ on the object’s own layout (any case; the Close Case layout is Case’s) removes the slot and the mini layout entry', () => {
+    const md = layout(), opts = { objApi: 'account', fullName: 'Account-Account Layout' };
+    expect(LY.removeFieldFromLayout(md, 'Region__c', opts)).toBe(2);
+    expect(opts.refused).toBeUndefined();
+    expect(md.miniLayout.fields).toEqual(['Name']);
+    expect(LY.removeFieldFromLayout(layout(), 'Region__c', { objApi: 'Case', fullName: 'CaseClose-Close Case Layout' })).toBe(2);
+    expect(LY.removeFieldFromLayout(layout(), 'Region__c')).toBe(2);   // no layout name given: the field's own, as before
+  });
+});
+
+// review 5 (2026-11-14), field-cleaner.js round 2: Salesforce's aliased layout prefixes (PersonAccount, UserAlt) are
+// their object's layouts; a record page whose <sobjectType> is empty is told by its EntityDefinitionId; a flow
+// reference on a root the flow does not resolve is left alone with that reason; ⇄ on a Lightning page decides whose
+// field a mention is exactly as ✂ does; ⇄ on another object's page layout is refused as ✂ is.
+describe('review 5 (2026-11-14)', () => {
+  const FR5 = new Function(`${read('sftk-fieldreplace.js')}\nreturn { sftkFlexiReplaceField, sftkFlowReplaceField };`)();
+  const FP = new Function('sftkFlexiReplaceField', `let _selObj = null;
+${['_flexiPageObjOf', 'replaceFieldInFlexiPage', 'removeFieldFromFlexiPage'].map(fcNested).join('\n')}
+return { _flexiPageObjOf, replaceFieldInFlexiPage, removeFieldFromFlexiPage, setSel: o => { _selObj = o; } };`)(FR5.sftkFlexiReplaceField);
+  const LY5 = new Function(`${fcNested('removeFieldFromLayout')}\nreturn { removeFieldFromLayout };`)();
+  const lay = () => ({ layoutSections: [{ layoutColumns: [{ layoutItems: [{ field: 'Name' }, { field: 'Region__c' }] }] }] });
+  const fi = f => ({ fieldInstance: { fieldItem: f } });
+  const crit = l => ({ leftValue: l, operator: 'EQUAL', rightValue: 'EMEA' });
+  const rich = cs => ({ componentInstance: { componentName: 'flexipage:richText', identifier: 'rt', visibilityRule: { criteria: cs } } });
+  const pageOn = (sobjectType, ...items) => ({ sobjectType, type: 'RecordPage', flexiPageRegions: [{ name: 'main', itemInstances: items }] });
+  const crits = md => md.flexiPageRegions[0].itemInstances.find(i => i.componentInstance).componentInstance.visibilityRule.criteria.map(c => c.leftValue);
+
+  // 1 — layouts
+  it('✂ on a PersonAccount-… layout is an Account layout: Account.Region__c is removed, nothing refused', () => {
+    const md = lay(), opts = { objApi: 'Account', fullName: 'PersonAccount-Person Account Layout' };
+    expect(LY5.removeFieldFromLayout(md, 'Region__c', opts)).toBe(1);
+    expect(opts.refused).toBeUndefined();
+    expect(md.layoutSections[0].layoutColumns[0].layoutItems).toEqual([{ field: 'Name' }, { emptySpace: true }]);
+  });
+  it('✂ on the User Profile Layout (UserAlt-…) is a User layout: User.Region__c is removed', () => {
+    const opts = { objApi: 'User', fullName: 'UserAlt-User Profile Layout' };
+    expect(LY5.removeFieldFromLayout(lay(), 'Region__c', opts)).toBe(1);
+    expect(opts.refused).toBeUndefined();
+  });
+  it('an aliased layout of ANOTHER object is still refused, naming its true object (Account, not PersonAccount)', () => {
+    const md = lay(), opts = { objApi: 'Contact', fullName: 'PersonAccount-Person Account Layout' };
+    expect(LY5.removeFieldFromLayout(md, 'Region__c', opts)).toBe(0);
+    expect(md).toEqual(lay());
+    expect(opts.refused).toBe("this is a page layout of Account, so its Region__c is Account's field, not Contact's — nothing was changed");
+  });
+
+  // 5 — layout ⇄
+  it('⇄ asks the same layout check before it renames: a Contact layout is refused while replacing Account.Region__c', () => {
+    const opts = { objApi: 'Account', fullName: 'Contact-Contact Layout' };
+    expect(LY5.removeFieldFromLayout({}, 'Region__c', opts)).toBe(0);   // the probe ⇄ runs: changes nothing, says why
+    expect(opts.refused).toMatch(/^this is a page layout of Contact/);
+    const fix = FCJ.slice(FCJ.indexOf('  async function fixLayout('), FCJ.indexOf('  function removeFieldFromLayout('));
+    const guard = fix.indexOf('if (swap) removeFieldFromLayout({}, _selField.api, lyOpts);');
+    expect(guard).toBeGreaterThan(0);
+    expect(fix.indexOf('if (lyOpts.refused) throw new Error(')).toBeGreaterThan(guard);
+    expect(fix.indexOf('sftkLayoutReplaceField(metadata')).toBeGreaterThan(fix.indexOf('if (lyOpts.refused) throw new Error('));
+    const prev = FCJ.slice(FCJ.indexOf('async function _fixPreviewHtml('), FCJ.indexOf('async function fixOne('));
+    expect(prev).toContain("if (swap) { removeFieldFromLayout({}, field, lyOpts); if (lyOpts.refused) return ''; }");
+    // the own layout passes the probe
+    const own = { objApi: 'Account', fullName: 'PersonAccount-Person Account Layout' };
+    LY5.removeFieldFromLayout({}, 'Region__c', own);
+    expect(own.refused).toBeUndefined();
+  });
+
+  // 2 — a record page that does not say its object in <sobjectType>
+  const nullPage = () => ({ sobjectType: null, type: 'RecordPage', flexiPageRegions: [{ name: 'main', itemInstances: [
+    fi('Record.Region__c'), fi('Record.Name'), rich([crit('{!Record.Region__c}'), crit('{!Record.Name}')])] }] });
+  it('sobjectType null, EntityDefinitionId Account: ✂ Account.Region__c removes the field item and the criterion', () => {
+    FP.setSel({ api: 'Account', durableId: 'Account' });
+    const hint = FP._flexiPageObjOf({ Metadata: nullPage(), EntityDefinitionId: 'Account' });
+    expect(hint).toBe('Account');
+    const md = nullPage(), out = {};
+    expect(FP.removeFieldFromFlexiPage(md, 'Account', 'Region__c', out, hint)).toBe(2);
+    expect(out).toEqual({ other: 0, unknown: 0 });
+    expect(crits(md)).toEqual(['{!Record.Name}']);
+    // without the hint it still cannot be told — never guessed
+    const o2 = {};
+    expect(FP.removeFieldFromFlexiPage(nullPage(), 'Account', 'Region__c', o2)).toBe(0);
+    expect(o2).toMatchObject({ unknown: 2, unknownKinds: { page: 2 } });
+  });
+  it('a custom object’s record page: its 01I… EntityDefinitionId is the cleaned object’s own id → its API name; another id is another object', () => {
+    FP.setSel({ api: 'Thing__c', durableId: '01I5g000000AbCdEAK' });
+    expect(FP._flexiPageObjOf({ Metadata: { sobjectType: null }, EntityDefinitionId: '01I5g000000AbCd' })).toBe('Thing__c');
+    const other = FP._flexiPageObjOf({ Metadata: { sobjectType: null }, EntityDefinitionId: '01I5g000000ZzZz' });
+    expect(other).toBe('01I5g000000ZzZz');
+    const md = nullPage(), out = {};
+    expect(FP.removeFieldFromFlexiPage(md, 'Thing__c', 'Region__c', out, other)).toBe(0);
+    expect(md).toEqual(nullPage());
+    expect(out).toMatchObject({ otherPage: 2 });
+    // the page's own <sobjectType> wins; no EntityDefinitionId tells nothing
+    expect(FP._flexiPageObjOf({ Metadata: { sobjectType: 'Contact' }, EntityDefinitionId: 'Account' })).toBe('');
+    expect(FP._flexiPageObjOf({ Metadata: { sobjectType: null } })).toBe('');
+  });
+  it('the fix, its verify and the preview pass the EntityDefinitionId hint', () => {
+    expect(FCJ).toContain('const pageHint = _flexiPageObjOf(res);');
+    expect(FCJ).toContain('removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api, leftRm, pageHint)');
+    expect(FCJ).toContain('removeFieldFromFlexiPage(JSON.parse(JSON.stringify(after.Metadata)), _selObj.api, _selField.api, null, _flexiPageObjOf(after) || pageHint)');
+    expect(FCJ).toContain('else n = removeFieldFromFlexiPage(after, obj, field, null, _flexiPageObjOf(res));');
+  });
+
+  // 3 — flows: a two-segment path on a root the flow does not resolve
+  it('flow on Contact: wrap.Region__c of an Apex-defined variable is left alone (root) — ✂ agrees with ⇄', () => {
+    const m = { start: { object: 'Contact' }, variables: [{ name: 'wrap', dataType: 'Apex', apexClass: 'Wrap' }],
+      assignments: [{ name: 'a', assignmentItems: [{ assignToReference: 'wrap.Region__c', operator: 'Assign', value: { stringValue: 'x' } }] }] };
+    const before = JSON.parse(JSON.stringify(m));
+    expect(FX.removeFieldRefs(m, 'Account', 'Region__c')).toBe(0);
+    expect(m).toEqual(before);
+    expect(FX.removeFieldRefs.lastLeft.unknown).toEqual(['wrap.Region__c']);
+    expect(FX.removeFieldRefs.lastLeft.unknownKind).toEqual({ 'wrap.Region__c': 'root' });
+    expect(FX._flowLeftWhy(FX.removeFieldRefs.lastLeft)).toMatch(/wrap\.Region__c reaches the field from a resource whose object the flow does not tell/);
+    const r = FR5.sftkFlowReplaceField(JSON.parse(JSON.stringify(before)), 'Account', 'Region__c', 'New__c');
+    expect(r.skipped.map(s => [s.value, s.why])).toEqual([['wrap.Region__c', 'unknown']]);
+  });
+  it('flow: a resolved two-segment path still goes ($Record on the start object, a record variable of the object)', () => {
+    const m = { start: { object: 'Account' }, variables: [{ name: 'acc', dataType: 'SObject', objectType: 'Account' }],
+      assignments: [{ name: 'a', assignmentItems: [
+        { assignToReference: '$Record.Region__c', operator: 'Assign', value: { stringValue: 'x' } },
+        { assignToReference: 'acc.Region__c', operator: 'Assign', value: { stringValue: 'x' } }] }] };
+    expect(FX.removeFieldRefs(m, 'Account', 'Region__c')).toBe(2);
+    expect(m.assignments[0].assignmentItems).toHaveLength(0);
+  });
+
+  // 4 — Lightning page ⇄ decides as ✂ does
+  it('⇄ on a Contact record page leaves Contact’s Record.Region__c, as ✂ does, and counts it as the page record’s field', () => {
+    const md = pageOn('Contact', fi('Record.Region__c'), rich([crit('{!Record.Region__c}'), crit('{!Record.Name}')]));
+    const before = fxClone(md), out = {};
+    expect(FP.replaceFieldInFlexiPage(md, 'Account', 'Region__c', 'New__c', out)).toEqual({ swapped: 0, dropped: 0, left: 2 });
+    expect(md).toEqual(before);
+    expect(out).toMatchObject({ other: 0, unknown: 0, otherPage: 2 });
+    expect(FP.removeFieldFromFlexiPage(fxClone(before), 'Account', 'Region__c')).toBe(0);   // ✂ the same
+  });
+  it('⇄ on an Account page renames {!Record.Parent.Region__c} (Parent is Account) as ✂ removes it — no false "another object" text', () => {
+    const md = pageOn('Account', fi('Record.Region__c'), rich([crit('{!Record.Parent.Region__c}'), crit('{!Record.Owner.Region__c}')]));
+    const out = {};
+    expect(FP.replaceFieldInFlexiPage(md, 'Account', 'Region__c', 'New__c', out)).toEqual({ swapped: 2, dropped: 0, left: 1 });
+    expect(md.flexiPageRegions[0].itemInstances[0]).toEqual(fi('Record.New__c'));
+    expect(crits(md)).toEqual(['{!Record.Parent.New__c}', '{!Record.Owner.Region__c}']);   // Owner is User's: left
+    expect(out).toMatchObject({ other: 1, unknown: 0 });
+    // the verify: a re-run has nothing left to move
+    const again = FP.replaceFieldInFlexiPage(fxClone(md), 'Account', 'Region__c', 'New__c');
+    expect(again.swapped + again.dropped).toBe(0);
+    const fix = FCJ.slice(FCJ.indexOf('  async function fixFlexiPage('), FCJ.indexOf('  function _flexiPageObjOf('));
+    expect(fix).not.toContain('reach the field through a related record, which is another object');
+    expect(fix).not.toContain("through a related record left alone (another object's field)");
+  });
+  it('⇄ on a Contact page renames {!Record.Account.Region__c} (Account’s field); a page with no object is left, or told by its hint', () => {
+    const md = pageOn('Contact', rich([crit('{!Record.Account.Region__c}'), crit('{!Record.Region__c}')]));
+    const out = {};
+    expect(FP.replaceFieldInFlexiPage(md, 'Account', 'Region__c', 'New__c', out)).toEqual({ swapped: 1, dropped: 0, left: 1 });
+    expect(crits(md)).toEqual(['{!Record.Account.New__c}', '{!Record.Region__c}']);
+    const np = nullPage(), o2 = {};
+    expect(FP.replaceFieldInFlexiPage(np, 'Account', 'Region__c', 'New__c', o2)).toMatchObject({ swapped: 0, left: 2 });
+    expect(np).toEqual(nullPage());
+    expect(o2).toMatchObject({ unknown: 2, unknownKinds: { page: 2 } });
+    // with the EntityDefinitionId hint the same page is Account's and both are renamed
+    const hp = nullPage();
+    expect(FP.replaceFieldInFlexiPage(hp, 'Account', 'Region__c', 'New__c', {}, 'Account')).toMatchObject({ swapped: 2, left: 0 });
+    expect(crits(hp)).toEqual(['{!Record.New__c}', '{!Record.Name}']);
+  });
+});
+
+// review 5 (2026-11-14), sftk-mdapi.js round 2: (1) a custom field defined on Activity is a field of every Task and
+// Event — the own-object gates (a bare token, a field update's target, a Log a Call action's layout) take a Task /
+// Event component as Activity's own instead of refusing it with a false "Task's field"; (2) a report-type column of
+// ANOTHER table whose lookup path ends on the cleaned object (Owner.Region__c on a Case table = User.Region__c) is
+// counted, removed and renamed, as every other remover reads it.
+describe('review 5 (2026-11-14)', () => {
+  const R7 = new Function(`${read('sftk-mdapi.js')}\nreturn { sftkMdEditField, sftkMdIsOwnObj, _sftkMdSwapToken, sftkRtMentions, sftkRtRemoveField, sftkRtReplaceField };`)();
+  const taskVr = `<fullName>Task.Need_Region</fullName>${vr('ISBLANK(Region__c)')}`;
+  const taskWfu = '<fullName>Task.Set_Region</fullName><field>Region__c</field><literalValue>EU</literalValue><operation>Literal</operation>';
+  const item = f => `<quickActionLayoutItems><emptySpace>false</emptySpace><field>${f}</field><uiBehavior>Edit</uiBehavior></quickActionLayoutItems>`;
+  const logCall = cols => `<fullName>Account.LogACall</fullName><label>Log a Call</label><quickActionLayout><layoutSectionStyle>TwoColumnsLeftToRight</layoutSectionStyle><quickActionLayoutColumns>${cols}</quickActionLayoutColumns></quickActionLayout><targetObject>Task</targetObject><type>LogACall</type>`;
+
+  it('Activity owns Task and Event, one way only; an empty object owns nothing', () => {
+    expect(R7.sftkMdIsOwnObj('Task', 'Activity')).toBe(true);
+    expect(R7.sftkMdIsOwnObj('event', 'ACTIVITY')).toBe(true);
+    expect(R7.sftkMdIsOwnObj('Activity', 'Task')).toBe(false);
+    expect(R7.sftkMdIsOwnObj('Event', 'Task')).toBe(false);
+    expect(R7.sftkMdIsOwnObj('Account', 'Activity')).toBe(false);
+    expect(R7.sftkMdIsOwnObj('', 'Activity')).toBe(false);
+  });
+  it('a Task validation rule: ⇄ Activity.Region__c renames the bare token (as before the own-object gates)', () => {
+    const r = R7.sftkMdEditField('ValidationRule', taskVr, 'Activity', 'Region__c', 'Region2__c');
+    expect(r.refused).toBeNull();
+    expect(r.xml).toBe(taskVr.replace('ISBLANK(Region__c)', 'ISBLANK(Region2__c)'));
+    expect(r.how).toEqual(['formula: 1 reference now Region2__c']);
+    expect(R7._sftkMdSwapToken('Region__c', 'Activity', 'Region__c', 'N__c', 'Task').n).toBe(1);
+    expect(R7._sftkMdSwapToken('Region__c', 'Activity', 'Region__c', 'N__c', 'Event').n).toBe(1);
+  });
+  it('the gate still holds for a real other object: Account.Region__c in a Task rule is not renamed', () => {
+    const r = R7.sftkMdEditField('ValidationRule', taskVr, 'Account', 'Region__c', 'Region2__c');
+    expect(r.xml).toBe(taskVr);
+    expect(r.refused).toBeTruthy();
+  });
+  it('a Task field update: ⇄ Activity.Region__c renames the target — no false “task’s same-named field”', () => {
+    const r = R7.sftkMdEditField('WorkflowFieldUpdate', taskWfu, 'Activity', 'Region__c', 'Region2__c');
+    expect(r.refused).toBeNull();
+    expect(r.xml).toBe(taskWfu.replace('<field>Region__c</field>', '<field>Region2__c</field>'));
+    expect(r.how).toEqual(['target field now Region2__c']);
+    // ✂ refuses for the TRUE reason: the update writes this field
+    expect(R7.sftkMdEditField('WorkflowFieldUpdate', taskWfu, 'Activity', 'Region__c', null).refused).toMatch(/WRITES to this field/);
+  });
+  it('Log a Call (targetObject Task): ✂ and ⇄ of Activity.Region__c edit its layout item', () => {
+    const before = logCall(item('Subject') + item('Region__c'));
+    const rm = R7.sftkMdEditField('QuickAction', before, 'Activity', 'Region__c', null);
+    expect(rm.refused).toBeNull();
+    expect(rm.changed).toBe(true);
+    expect(rm.xml).toBe(logCall(item('Subject')));
+    expect(rm.how).toEqual(['1 layout field removed']);
+    const rp = R7.sftkMdEditField('QuickAction', before, 'Activity', 'Region__c', 'Region2__c');
+    expect(rp.refused).toBeNull();
+    expect(rp.xml).toBe(logCall(item('Subject') + item('Region2__c')));
+    // the action still holds Task's fields, not Account's: ✂ Account.Region__c is refused with that reason
+    expect(R7.sftkMdEditField('QuickAction', before, 'Account', 'Region__c', null).refused).toMatch(/works on a Task record/);
+  });
+  it('report type: Owner.Region__c on a Case table is User.Region__c — counted, ✂ removed, ⇄ renamed', () => {
+    const x = rtype('Case', [col('CaseNumber', 'Case'), col('Owner.Region__c', 'Case')]);
+    expect(R7.sftkRtMentions(x, 'User', 'Region__c')).toBe(1);
+    const rm = R7.sftkRtRemoveField(x, 'User', 'Region__c');
+    expect(rm).toMatchObject({ removed: 1, changed: true, skipped: [], viaLookup: [] });
+    expect(rm.xml).toBe(rtype('Case', [col('CaseNumber', 'Case')]));
+    expect(R7.sftkRtMentions(rm.xml, 'User', 'Region__c')).toBe(0);
+    const rp = R7.sftkRtReplaceField(x, 'User', 'Region__c', 'Area__c');
+    expect(rp).toMatchObject({ swapped: 1, dropped: 0, changed: true, newAlreadyThere: false });
+    expect(rp.xml).toBe(rtype('Case', [col('CaseNumber', 'Case'), col('Owner.Area__c', 'Case')]));
+    // the Case table's own columns are not the cleaned object's: Case.Region__c / Account.Region__c stay out
+    expect(R7.sftkRtMentions(x, 'Case', 'Region__c')).toBe(0);
+    expect(R7.sftkRtMentions(x, 'Account', 'Region__c')).toBe(0);
+  });
+  it('report type: ⇄ onto a column the OTHER table already has drops the old one (a column appears once per table)', () => {
+    const x = rtype('Case', [col('Owner.Area__c', 'Case'), col('Owner.Region__c', 'Case')]);
+    const rp = R7.sftkRtReplaceField(x, 'User', 'Region__c', 'Area__c');
+    expect(rp).toMatchObject({ swapped: 0, dropped: 1, changed: true, newAlreadyThere: false });
+    expect(rp.xml).toBe(rtype('Case', [col('Owner.Area__c', 'Case')]));
+  });
+  it('report type: another table’s column whose object cannot be told, or a joined table, is never counted or edited', () => {
+    const x = rtype('Case', [col('Lookup__r.Region__c', 'Case'), col('What.Region__c', 'Case'), col('Owner.Region__c', 'Case.Activities'), col('Region__c', 'Case')]);
+    expect(R7.sftkRtMentions(x, 'User', 'Region__c')).toBe(0);
+    const rm = R7.sftkRtRemoveField(x, 'User', 'Region__c');
+    expect(rm).toMatchObject({ changed: false, removed: 0, viaLookup: [] });
+    expect(rm.xml).toBe(x);
+    expect(rm.skipped).toEqual(['Case.Region__c in “S”']);
+  });
+  it('report type: a Task table is Activity’s own — its plain column is Activity.Region__c', () => {
+    const x = rtype('Task', [col('Subject', 'Task'), col('Region__c', 'Task')]);
+    expect(R7.sftkRtMentions(x, 'Activity', 'Region__c')).toBe(1);
+    expect(R7.sftkRtRemoveField(x, 'Activity', 'Region__c').xml).toBe(rtype('Task', [col('Subject', 'Task')]));
+  });
+});
+
+// review 5 (2026-11-14), sftk-emailtpl.js: in classic and Lightning text the whole merge path is walked through the
+// shared resolver — Sender / sendingUser / receivingUser are always a User, a longer path ends on ONE object, and the
+// polymorphic Recipient (Contact, Lead or User) is left alone with its true reason when it could be the object cleaned.
+describe('review 5 (2026-11-14)', () => {
+  it('Sender / receivingUser / sendingUser are a User: ✂ / ⇄ of Contact or Lead leave them, User edits them', () => {
+    const rec = { HtmlValue: 'Hi {{{Sender.Region__c}}}', RelatedEntityType: 'Contact' };
+    expect(TP.sftkTplReplace(rec, 'Region__c', 'N__c', 'Contact')).toEqual({ rec: {}, n: 0, fields: [] });
+    expect(TP.sftkTplRemove(rec, 'Region__c', 'Contact')).toEqual({ rec: {}, n: 0, fields: [] });
+    expect(TP.sftkTplReplace(rec, 'Region__c', 'N__c', 'User')).toEqual({ rec: { HtmlValue: 'Hi {{{Sender.N__c}}}' }, n: 1, fields: ['HtmlValue'] });
+    const lead = { Body: 'Hi {!receivingUser.Region__c} {!sendingUser.Region__c}' };
+    expect(TP.sftkTplReplace(lead, 'Region__c', 'N__c', 'Lead').n).toBe(0);
+    expect(TP.sftkTplRemove(lead, 'Region__c', 'Lead').n).toBe(0);
+    expect(TP.sftkTplRemove(lead, 'Region__c', 'User')).toEqual({ rec: { Body: 'Hi  ' }, n: 2, fields: ['Body'] });
+    // the scan offers the template for User only
+    expect(TP.sftkTplNamesField({ HtmlValue: 'Hi {{{Sender.Region__c}}}' }, 'Contact', 'Region__c')).toBe(false);
+    expect(TP.sftkTplNamesField({ Body: '{!receivingUser.Region__c}' }, 'Lead', 'Region__c')).toBe(false);
+    expect(TP.sftkTplNamesField({ HtmlValue: 'Hi {{{Sender.Region__c}}}' }, 'User', 'Region__c')).toBe(true);
+  });
+  it('a longer path is the field of the object it ends on, and of no other', () => {
+    const acc = { HtmlValue: '{{{Opportunity.Account.Region__c}}}', RelatedEntityType: 'Opportunity' };
+    expect(TP.sftkTplReplace(acc, 'Region__c', 'N__c', 'Opportunity').n).toBe(0);
+    expect(TP.sftkTplRemove(acc, 'Region__c', 'Opportunity').n).toBe(0);
+    expect(TP.sftkTplReplace(acc, 'Region__c', 'N__c', 'Account')).toEqual({ rec: { HtmlValue: '{{{Opportunity.Account.N__c}}}' }, n: 1, fields: ['HtmlValue'] });
+    expect(TP.sftkTplRemove(acc, 'Region__c', 'Account').n).toBe(1);
+    const own = { HtmlValue: '{{{Opportunity.Owner.Region__c}}}', RelatedEntityType: 'Opportunity' };
+    expect(TP.sftkTplReplace(own, 'Region__c', 'N__c', 'Opportunity').n).toBe(0);
+    expect(TP.sftkTplRemove(own, 'Region__c', 'Opportunity').n).toBe(0);
+    expect(TP.sftkTplReplace(own, 'Region__c', 'N__c', 'User').rec.HtmlValue).toBe('{{{Opportunity.Owner.N__c}}}');
+    // the scan: offered for the object the path ends on, not for the template's own object
+    expect(TP.sftkTplNamesField(acc, 'Opportunity', 'Region__c')).toBe(false);
+    expect(TP.sftkTplNamesField(acc, 'Account', 'Region__c')).toBe(true);
+    expect(TP.sftkTplNamesField(own, 'User', 'Region__c')).toBe(true);
+    // a custom relationship cannot be told: refused with that reason, nothing edited
+    const cr = { Body: '{!Opportunity.Thing__r.Region__c}' };
+    expect(TP.sftkTplReplace(cr, 'Region__c', 'N__c', 'Opportunity').refused).toMatch(/custom relationship .* cannot be told/);
+    expect(TP.sftkTplRemove(cr, 'Region__c', 'Account').refused).toMatch(/custom relationship .* cannot be told/);
+    // the plain one-segment form still works
+    expect(TP.sftkTplReplace({ Body: '{!Opportunity.Region__c}' }, 'Region__c', 'N__c', 'Opportunity').n).toBe(1);
+  });
+  it('Recipient (Contact, Lead or User) is left alone for each of the three, with the reason; other objects pass it by', () => {
+    const rec = { HtmlValue: 'Hi {{{Recipient.Region__c}}}' };
+    for (const o of ['Contact', 'Lead', 'User']) {
+      const rp = TP.sftkTplReplace(rec, 'Region__c', 'N__c', o);
+      expect(rp).toMatchObject({ rec: {}, n: 0, fields: [] });
+      expect(rp.refused).toMatch(/Recipient can be a Contact, a Lead or a User, so which object's field that is cannot be told/);
+      const rm = TP.sftkTplRemove(rec, 'Region__c', o);
+      expect(rm).toMatchObject({ rec: {}, n: 0, fields: [] });
+      expect(rm.refused).toMatch(/Recipient can be a Contact, a Lead or a User/);
+      expect(TP.sftkTplNamesField(rec, o, 'Region__c')).toBe(true);   // offered, so the refusal is seen
+    }
+    expect(TP.sftkTplReplace(rec, 'Region__c', 'N__c', 'Account')).toEqual({ rec: {}, n: 0, fields: [] });
+    expect(TP.sftkTplNamesField(rec, 'Account', 'Region__c')).toBe(false);
+    // a hop after Recipient is walked from each of the three: Account leads to Account from all of them, so
+    // Recipient.Account.X is Account's field, never the Contact's
+    expect(TP.sftkTplReplace({ HtmlValue: '{{{Recipient.Account.Region__c}}}' }, 'Region__c', 'N__c', 'Contact').n).toBe(0);
+  });
+});
+
+// review 5 (2026-11-14), field-cleaner.js round 3: a custom field on Activity IS a field of every Task and Event —
+// the layout gate, the flow remover and the Lightning page remover now ask sftkMdIsOwnObj (sftk-mdapi.js, a page
+// global put on globalThis by test/setup-relmap.mjs) as the sftk-mdapi.js removers do; and a flow record element's
+// inputReference is followed through its hops ($Record.Account is the Account record), not read by its root alone.
+describe('review 5 (2026-11-14)', () => {
+  const FR8 = new Function(`${read('sftk-fieldreplace.js')}\nreturn { sftkFlexiReplaceField, sftkFlowResourceObjects };`)();
+  const LY8 = new Function(`${fcNested('removeFieldFromLayout')}\nreturn { removeFieldFromLayout };`)();
+  const FP8 = new Function('sftkFlexiReplaceField', `let _selObj = null;
+${['_flexiPageObjOf', 'replaceFieldInFlexiPage', 'removeFieldFromFlexiPage'].map(fcNested).join('\n')}
+return { replaceFieldInFlexiPage, removeFieldFromFlexiPage };`)(FR8.sftkFlexiReplaceField);
+  const FL8 = new Function('sftkFlowResourceObjects', `${['removeFieldRefs', '_flowLeftWhy'].map(fcNested).join('\n')}
+return { removeFieldRefs, _flowLeftWhy };`)(FR8.sftkFlowResourceObjects);
+  const lay = () => ({ layoutSections: [{ layoutColumns: [{ layoutItems: [{ field: 'Subject' }, { field: 'Region__c' }] }] }] });
+
+  // 1 — layouts
+  it('✂ on a Task layout removes Activity.Region__c, nothing refused; ⇄’s probe passes too', () => {
+    const md = lay(), opts = { objApi: 'Activity', fullName: 'Task-Task Layout' };
+    expect(LY8.removeFieldFromLayout(md, 'Region__c', opts)).toBe(1);
+    expect(opts.refused).toBeUndefined();
+    expect(md.layoutSections[0].layoutColumns[0].layoutItems).toEqual([{ field: 'Subject' }, { emptySpace: true }]);
+    const probe = { objApi: 'Activity', fullName: 'Event-Event Layout' };
+    expect(LY8.removeFieldFromLayout({}, 'Region__c', probe)).toBe(0);
+    expect(probe.refused).toBeUndefined();
+  });
+  it('one way only: cleaning Task.Region__c still refuses an Event layout, and Activity is not Task’s', () => {
+    const md = lay(), opts = { objApi: 'Task', fullName: 'Event-Event Layout' };
+    expect(LY8.removeFieldFromLayout(md, 'Region__c', opts)).toBe(0);
+    expect(md).toEqual(lay());
+    expect(opts.refused).toBe("this is a page layout of Event, so its Region__c is Event's field, not Task's — nothing was changed");
+  });
+
+  // 2 — Lightning pages
+  const taskPage = () => ({ sobjectType: 'Task', flexiPageRegions: [{ name: 'main', itemInstances: [{ fieldInstance: { fieldItem: 'Record.Region__c' } }] }] });
+  it('✂ on a Task record page takes Activity.Region__c out, no otherPage tally', () => {
+    const md = taskPage(), out = {};
+    expect(FP8.removeFieldFromFlexiPage(md, 'Activity', 'Region__c', out)).toBe(1);
+    expect(out.otherPage).toBeUndefined();
+    expect(md.flexiPageRegions[0].itemInstances).toEqual([]);
+  });
+  it('⇄ on a Task record page renames Activity.Region__c in place', () => {
+    const md = taskPage();
+    expect(FP8.replaceFieldInFlexiPage(md, 'Activity', 'Region__c', 'Region2__c')).toMatchObject({ swapped: 1, left: 0 });
+    expect(md.flexiPageRegions[0].itemInstances[0].fieldInstance.fieldItem).toBe('Record.Region2__c');
+  });
+  it('an Event record page is still not Task’s: cleaning Task.Region__c leaves it as otherPage', () => {
+    const md = taskPage(); md.sobjectType = 'Event';
+    const out = {};
+    expect(FP8.removeFieldFromFlexiPage(md, 'Task', 'Region__c', out)).toBe(0);
+    expect(out.otherPage).toBe(1);
+  });
+
+  // 3 / 5 — flows on Task
+  it('✂ Activity.Region__c in a Task record-triggered flow: the start filter, a Get Records on Task and $Record.Region__c go', () => {
+    const md = { start: { object: 'Task', filterLogic: 'and', filters: [{ field: 'Region__c', operator: 'EqualTo' }, { field: 'Status', operator: 'EqualTo' }] },
+      recordLookups: [{ name: 'G', object: 'Task', queriedFields: ['Id', 'Region__c'] }],
+      assignments: [{ name: 'A', assignmentItems: [{ assignToReference: '$Record.Region__c', operator: 'Assign' }, { assignToReference: 'x', operator: 'Assign' }] }] };
+    expect(FL8.removeFieldRefs(md, 'Activity', 'Region__c')).toBe(3);
+    expect(md.start.filters.map(f => f.field)).toEqual(['Status']);
+    expect(md.recordLookups[0].queriedFields).toEqual(['Id']);
+    expect(md.assignments[0].assignmentItems.map(i => i.assignToReference)).toEqual(['x']);
+    expect(FL8.removeFieldRefs.lastLeft.other).toEqual([]);
+  });
+  it('one way only: ✂ Task.Region__c leaves an Event flow’s $Record.Region__c, named as another object’s', () => {
+    const md = { start: { object: 'Event' }, assignments: [{ name: 'A', assignmentItems: [{ assignToReference: '$Record.Region__c', operator: 'Assign' }] }] };
+    expect(FL8.removeFieldRefs(md, 'Task', 'Region__c')).toBe(0);
+    expect(FL8.removeFieldRefs.lastLeft.other).toEqual(['$Record.Region__c']);
+  });
+
+  // 4 — a record element on a related record
+  const updAcct = ref => ({ start: { object: 'Contact' }, variables: [{ name: 'con', dataType: 'SObject', objectType: 'Contact' }],
+    recordUpdates: [{ name: 'UpdAcct', inputReference: ref, inputAssignments: [{ field: 'Region__c' }, { field: 'Name' }] }] });
+  for (const ref of ['$Record.Account', 'con.Account']) {
+    it(`✂ follows inputReference ${ref} to Account: Contact.Region__c leaves it, Account.Region__c takes it out`, () => {
+      const c = updAcct(ref);
+      expect(FL8.removeFieldRefs(c, 'Contact', 'Region__c')).toBe(0);
+      expect(c.recordUpdates[0].inputAssignments).toHaveLength(2);
+      const a = updAcct(ref);
+      expect(FL8.removeFieldRefs(a, 'Account', 'Region__c')).toBe(1);
+      expect(a.recordUpdates[0].inputAssignments).toEqual([{ field: 'Name' }]);
+    });
+  }
+  it('an inputReference through a custom lookup cannot be told: left whole and named, for either object', () => {
+    for (const o of ['Contact', 'Account']) {
+      const md = updAcct('$Record.Thing__r');
+      md.recordUpdates[0].label = 'Upd thing';
+      expect(FL8.removeFieldRefs(md, o, 'Region__c')).toBe(0);
+      expect(md.recordUpdates[0].inputAssignments).toHaveLength(2);
+      expect(FL8._flowLeftWhy(FL8.removeFieldRefs.lastLeft)).toMatch(/"Upd thing" works on a record variable whose object cannot be told/);
+    }
+  });
+});
+
+describe('review 6 (2026-11-14)', () => {
+  // _editStillNames is a nested helper of field-cleaner.js: materialized with the real sftkMdEditField (and, since
+  // review 7, the escape pair it masks formula literals with)
+  const ES = new Function('sftkMdEditField', 'sftkMdEscape', 'sftkMdUnescape', `const _selObj = { api: 'Account' };\n${fcNested('_editStillNames')}\nreturn _editStillNames;`)(M.sftkMdEditField, MX.sftkMdEscape, MX.sftkMdUnescape);
+  const acctVr = f => `<fullName>Account.Check</fullName>${vr(f)}`;
+
+  // 1 — the "still names it?" probe
+  it('a "cannot tell whose field" refusal is unsure, a "does not name it" refusal is not', () => {
+    const r = M.sftkMdEditField('ValidationRule', acctVr('ISBLANK(Region__c) || Partner__r.Region__c = "x"'), 'Account', 'Region__c', '__SFTK_PROBE__');
+    expect(r.refused).toMatch(/custom lookup/);
+    expect(r.unsure).toBe(true);
+    const n = M.sftkMdEditField('ValidationRule', acctVr('ISBLANK(Other__c)'), 'Account', 'Region__c', '__SFTK_PROBE__');
+    expect(n.refused).toMatch(/does not name the field/);
+    expect(!!n.unsure).toBe(false);
+  });
+  it('a hand edit still holding a bare Region__c beside Partner__r.Region__c still names it — never reported done', () => {
+    expect(ES('ValidationRule', acctVr('ISBLANK(Region__c) || Partner__r.Region__c = "x"'), 'Region__c')).toBe(true);
+  });
+  it('after a correct ⇄ Region__c → Area__c beside Partner__r.Area__c: the old field is gone, the new one is there', () => {
+    const after = acctVr('ISBLANK(Area__c) &amp;&amp; Partner__r.Area__c = "x"');
+    expect(ES('ValidationRule', after, 'Region__c')).toBe(false);
+    expect(ES('ValidationRule', after, 'Area__c')).toBe(true);
+  });
+  it('another object’s field through a known hop still reads as not naming it (no false failure)', () => {
+    expect(ES('ValidationRule', acctVr('ISBLANK(Owner.Region__c)'), 'Region__c')).toBe(false);   // User’s field
+    expect(ES('ValidationRule', acctVr('ISBLANK(Region__c)'), 'Region__c')).toBe(true);
+    expect(ES('ValidationRule', acctVr('ISBLANK(Region__c)'), null)).toBe(false);
+  });
+  it('the other cannot-tell refusals are unsure too: a field update on a custom lookup, a WebLink', () => {
+    const fu = M.sftkMdEditField('WorkflowFieldUpdate', '<fullName>Account.Upd</fullName><field>Region__c</field><targetObject>Thing__c</targetObject>', 'Account', 'Region__c', '__SFTK_PROBE__');
+    expect(fu.refused).toMatch(/cannot be told/);
+    expect(fu.unsure).toBe(true);
+    const wl = M.sftkMdEditField('WebLink', '<fullName>Account.L</fullName><url>/x?a={!Account.Region__c}&amp;b={!Partner__r.Region__c}</url>', 'Account', 'Region__c', '__SFTK_PROBE__');
+    expect(wl.refused).toMatch(/custom lookup/);
+    expect(wl.unsure).toBe(true);
+  });
+  it('the probe callers read unsure: post-deploy verify and the hand-edit stillOpen both go through _editStillNames', () => {
+    expect(fcNested('_editStillNames')).toContain('return !r.refused || !!r.unsure;');
+    expect(FCJ).toContain(': !_editStillNames(type, after, field) && (!nf || _editStillNames(type, after, nf));');
+    expect(FCJ).toContain('const stillOpen = !!handAdded && _editStillNames(type, after || finalXml, field)');
+  });
+
+  // 4 — ✂ on a rule whose only mention is in quoted text: the text does not send the user to ⇄
+  it('the comment-or-quoted-text refusal points to ✎ Edit and says ⇄ would rename inside the quotes too', () => {
+    const r = M.sftkMdEditField('ValidationRule', acctVr('ISPICKVAL(Status__c, "Region__c")'), 'Account', 'Region__c', null);
+    expect(r.refused).toMatch(/named only in a comment or quoted text of the formula — no condition uses it/);
+    expect(r.refused).toMatch(/✎ Edit XML in 🔍/);
+    expect(r.refused).toMatch(/⇄ Replace would rename it inside the quotes too/);
+    expect(r.refused).not.toMatch(/or ⇄ Replace it$/);
+    // and that warning is true: ⇄ does rename the quoted token
+    const sw = M.sftkMdEditField('ValidationRule', acctVr('ISPICKVAL(Status__c, "Region__c")'), 'Account', 'Region__c', 'Area__c');
+    expect(sw.xml).toContain('"Area__c"');
+  });
+
+  // 2 — layouts: Salesforce's built-in layout prefixes; an unmatched prefix is not called an object
+  const LY6 = new Function(`${fcNested('removeFieldFromLayout')}\nreturn { removeFieldFromLayout };`)();
+  const lay6 = () => ({ layoutSections: [{ layoutColumns: [{ layoutItems: [{ field: 'Name' }, { field: 'Region__c' }] }] }] });
+  for (const fn of ['LiveChatTranscriptActive-Live Chat Transcript (In Progress) Layout', 'LiveChatTranscriptWaiting-Live Chat Transcript (Waiting) Layout']) {
+    it(`✂ on ${fn.split('-')[0]} removes LiveChatTranscript.Region__c; another object is still refused by name`, () => {
+      const md = lay6(), opts = { objApi: 'LiveChatTranscript', fullName: fn };
+      expect(LY6.removeFieldFromLayout(md, 'Region__c', opts)).toBe(1);
+      expect(opts.refused).toBeUndefined();
+      expect(md.layoutSections[0].layoutColumns[0].layoutItems).toEqual([{ field: 'Name' }, { emptySpace: true }]);
+      const other = { objApi: 'Case', fullName: fn };
+      expect(LY6.removeFieldFromLayout(lay6(), 'Region__c', other)).toBe(0);
+      expect(other.refused).toBe("this is a page layout of LiveChatTranscript, so its Region__c is LiveChatTranscript's field, not Case's — nothing was changed");
+    });
+  }
+  it('the Global layout belongs to no object: refused, and the text does not call Global an object', () => {
+    const md = lay6(), opts = { objApi: 'Account', fullName: 'Global-Global Layout' };
+    expect(LY6.removeFieldFromLayout(md, 'Region__c', opts)).toBe(0);
+    expect(md).toEqual(lay6());
+    expect(opts.refused).toBe('the object of this page layout could not be matched to Account (its name begins "Global"), so its Region__c may be another object\'s field — nothing was changed');
+  });
+  it('a prefix not in the loaded object list is refused as unmatched; one in it is still named', () => {
+    const isObject = o => ['account', 'contact'].includes(o.toLowerCase());
+    const unk = { objApi: 'Account', fullName: 'SomePagePrefix-Some Layout', isObject };
+    expect(LY6.removeFieldFromLayout(lay6(), 'Region__c', unk)).toBe(0);
+    expect(unk.refused).toMatch(/^the object of this page layout could not be matched to Account \(its name begins "SomePagePrefix"\)/);
+    expect(unk.refused).not.toMatch(/SomePagePrefix's field/);
+    const con = { objApi: 'Account', fullName: 'Contact-Contact Layout', isObject };
+    expect(LY6.removeFieldFromLayout(lay6(), 'Region__c', con)).toBe(0);
+    expect(con.refused).toBe("this is a page layout of Contact, so its Region__c is Contact's field, not Account's — nothing was changed");
+    // the object's own layout passes whatever the list says
+    expect(LY6.removeFieldFromLayout(lay6(), 'Region__c', { objApi: 'Account', fullName: 'Account-Account Layout', isObject: () => false })).toBe(1);
+  });
+  it('every product caller of the layout gate passes the loaded object list', () => {
+    const calls = FCJ.split('\n').filter(l => /removeFieldFromLayout\(/.test(l) && !/function removeFieldFromLayout/.test(l) && !l.trim().startsWith('//'));
+    expect(calls.length).toBeGreaterThan(0);
+    expect(FCJ.match(/isObject: _fcIsLoadedObject/g)).toHaveLength(3);
+  });
+});
+
+describe('review 6 (2026-11-14)', () => {
+  // ⇄ on a page layout renames the mini layout too, so the ⇄ verify (✂'s remover on the re-read) finds nothing left
+  const FR6 = new Function(`${read('sftk-fieldreplace.js')}\nreturn { sftkLayoutReplaceField, sftkFlowReplaceField };`)();
+  const LYR = new Function(`${fcNested('removeFieldFromLayout')}\nreturn { removeFieldFromLayout };`)();
+  const lay = (items, mini) => ({ layoutSections: [{ layoutColumns: [{ layoutItems: items }] }], miniLayout: { fields: mini, relatedLists: [{ relatedList: 'RelatedContactList', fields: ['Region__c'] }] } });
+  const leftForCut = md => LYR.removeFieldFromLayout(JSON.parse(JSON.stringify(md)), 'Region__c', { objApi: 'Account', fullName: 'Account-Account Layout' });
+
+  it('⇄ renames the field in the mini layout in place, and ✂’s remover then finds nothing left', () => {
+    const md = lay([{ field: 'Name' }, { field: 'Region__c', behavior: 'Edit' }], ['Name', 'Region__c', 'Phone']);
+    expect(FR6.sftkLayoutReplaceField(md, 'Region__c', 'Area__c')).toEqual({ swapped: 2, blanked: 0 });
+    expect(md.layoutSections[0].layoutColumns[0].layoutItems[1]).toEqual({ field: 'Area__c', behavior: 'Edit' });
+    expect(md.miniLayout.fields).toEqual(['Name', 'Area__c', 'Phone']);
+    expect(leftForCut(md)).toBe(0);
+  });
+  it('the new field already in the mini layout: the old name is dropped, the new one listed once', () => {
+    const md = lay([{ field: 'Region__c' }], ['Area__c', 'Region__c']);
+    expect(FR6.sftkLayoutReplaceField(md, 'Region__c', 'Area__c')).toEqual({ swapped: 1, blanked: 1 });
+    expect(md.miniLayout.fields).toEqual(['Area__c']);
+    expect(leftForCut(md)).toBe(0);
+  });
+  it('a field only in the mini layout is still renamed (counted, so ⇄ does not say "not found")', () => {
+    const md = lay([{ field: 'Name' }], ['Region__c']);
+    expect(FR6.sftkLayoutReplaceField(md, 'Region__c', 'Area__c')).toEqual({ swapped: 1, blanked: 0 });
+    expect(md.miniLayout.fields).toEqual(['Area__c']);
+    expect(leftForCut(md)).toBe(0);
+  });
+  it('the mini layout’s related lists (the related object’s fields) are left alone, as ✂ leaves them', () => {
+    const md = lay([{ field: 'Region__c' }], ['Name']);
+    FR6.sftkLayoutReplaceField(md, 'Region__c', 'Area__c');
+    expect(md.miniLayout.relatedLists[0].fields).toEqual(['Region__c']);
+  });
+  it('the ⇄ layout verify accepts the new field when it sits in the mini layout', () => {
+    expect(FCJ).toContain('|| ((md.miniLayout && md.miniLayout.fields) || []).some(isNew)');   // review 7 reshaped the line
+  });
+
+  // ⇄ in a flow uses the ✂ own-object rule: a Task / Event flow's field is Activity's
+  const taskFlow = () => ({
+    start: { object: 'Task', filters: [{ field: 'Region__c', operator: 'EqualTo' }] },
+    decisions: [{ name: 'D', rules: [{ conditions: [{ leftValueReference: '$Record.Region__c' }] }] }],
+  });
+  it('⇄ of Activity.Region__c renames a Task flow’s bare field and $Record.Region__c', () => {
+    const md = taskFlow();
+    const r = FR6.sftkFlowReplaceField(md, 'Activity', 'Region__c', 'Area__c');
+    expect(md.start.filters[0].field).toBe('Area__c');
+    expect(md.decisions[0].rules[0].conditions[0].leftValueReference).toBe('$Record.Area__c');
+    expect(r.skipped).toEqual([]);
+  });
+  it('one way only: ⇄ of Task.Region__c leaves an Event flow’s field as another object’s', () => {
+    const md = taskFlow(); md.start.object = 'Event';
+    const r = FR6.sftkFlowReplaceField(md, 'Task', 'Region__c', 'Area__c');
+    expect(md.start.filters[0].field).toBe('Region__c');
+    expect(md.decisions[0].rules[0].conditions[0].leftValueReference).toBe('$Record.Region__c');
+    expect(r.skipped.every(s => s.why === 'other' && s.object === 'Event')).toBe(true);
+  });
+});
+
+// review 6 (2026-11-14), sftk-emailtpl.js: _sftkTplForeign compared the walked object with objApi literally, so a
+// Task template's {!relatedTo.Region__c} / {!Task.Region__c} was "another object's" field when Activity.Region__c was
+// cleaned — left named, reported done. It goes through sftkMdIsOwnObj now, as every other remover.
+describe('review 6 (2026-11-14)', () => {
+  it('Visualforce relatedToType="Task": {!relatedTo.Region__c} is Activity’s own field — ✂ takes it out, ⇄ renames it', () => {
+    const rec = { TemplateType: 'visualforce', Markup: vfm('relatedToType="Task"', 'Region: {!relatedTo.Region__c}') };
+    expect(TP.sftkTplNamesField(rec, 'Activity', 'Region__c')).toBe(true);
+    const rm = TP.sftkTplRemove(rec, 'Region__c', 'Activity');
+    expect(rm.n).toBe(1);
+    expect(rm.rec.Markup).not.toMatch(/Region__c/);
+    const rp = TP.sftkTplReplace(rec, 'Region__c', 'Area__c', 'Activity');
+    expect(rp.n).toBe(1);
+    expect(rp.rec.Markup).toContain('{!relatedTo.Area__c}');
+    expect(rp.rec.Markup).not.toMatch(/Region__c/);
+  });
+  it('one way only: an Event template is not Task’s, a Task template is not Account’s', () => {
+    const ev = { TemplateType: 'visualforce', Markup: vfm('relatedToType="Event"', 'Region: {!relatedTo.Region__c}') };
+    expect(TP.sftkTplRemove(ev, 'Region__c', 'Task').n).toBe(0);
+    expect(TP.sftkTplReplace(ev, 'Region__c', 'Area__c', 'Task').n).toBe(0);
+    const tk = { TemplateType: 'visualforce', Markup: vfm('relatedToType="Task"', 'Region: {!relatedTo.Region__c}') };
+    expect(TP.sftkTplRemove(tk, 'Region__c', 'Account').n).toBe(0);
+  });
+  it('classic / Lightning: {!Task.Region__c} and {{{Event.Region__c}}} are Activity’s own field', () => {
+    const rec = { Body: 'R: {!Task.Region__c}', HtmlValue: 'R: {{{Event.Region__c}}}' };
+    expect(TP.sftkTplNamesField(rec, 'Activity', 'Region__c')).toBe(true);
+    const rm = TP.sftkTplRemove(rec, 'Region__c', 'Activity');
+    expect(rm.n).toBe(2);
+    expect(JSON.stringify(rm.rec)).not.toMatch(/Region__c/);
+    const rp = TP.sftkTplReplace(rec, 'Region__c', 'Area__c', 'Activity');
+    expect(rp.n).toBe(2);
+    expect(rp.rec).toEqual({ Body: 'R: {!Task.Area__c}', HtmlValue: 'R: {{{Event.Area__c}}}' });
+    // Account's same-named field stays Account's
+    expect(TP.sftkTplRemove({ Body: '{!Account.Region__c}' }, 'Region__c', 'Activity').n).toBe(0);
+  });
+});
+
+// review 7 (2026-11-14): (1) a layout's other own-object field lists (relatedObjects, multilineLayoutFields, the
+// highlights panel, related content) were never read by ✂, ⇄ or the verify — done/verified while still named;
+// (2) the "still names it?" probe counted the name inside a formula's quotes and comments, so a correct ✂ that kept
+// Name = 'Region__c' failed its verify; (3) _sftkMdFieldIs missed Task.X / Event.X when Activity.X is cleaned.
+describe('review 7 (2026-11-14)', () => {
+  const LY7 = new Function(`${fcNested('removeFieldFromLayout')}\nreturn { removeFieldFromLayout };`)();
+  const FR7 = new Function(`${read('sftk-fieldreplace.js')}\nreturn { sftkLayoutReplaceField };`)();
+  const lay = () => ({
+    layoutSections: [{ layoutColumns: [{ layoutItems: [{ field: 'Partner__c', behavior: 'Edit' }, { field: 'Name' }] }] }],
+    relatedObjects: ['Partner__c', 'ParentId'], multilineLayoutFields: ['Partner__c'],
+    summaryLayout: { masterLabel: 'x', sizeX: 4, sizeY: 1, summaryLayoutStyle: 'Default',
+      summaryLayoutItems: [{ field: 'Partner__c', posX: 0, posY: 0 }, { field: 'Name', posX: 1, posY: 0 }] },
+    relatedContent: { relatedContentItems: [{ layoutItem: { field: 'Partner__c' } }, { layoutItem: { field: 'ParentId' } }] },
+    relatedLists: [{ relatedList: 'RelatedContactList', fields: ['Partner__c'] }],   // another object's field
+  });
+  const opts = () => ({ objApi: 'Account', fullName: 'Account-Account Layout' });
+
+  it('✂ takes the field out of every own-object list, the re-read finds nothing left, related lists are untouched', () => {
+    const md = lay();
+    expect(LY7.removeFieldFromLayout(md, 'Partner__c', opts())).toBe(5);
+    expect(md.relatedObjects).toEqual(['ParentId']);
+    expect(md.multilineLayoutFields).toEqual([]);
+    expect(md.summaryLayout.summaryLayoutItems).toEqual([{ field: 'Name', posX: 1, posY: 0 }]);
+    expect(md.relatedContent.relatedContentItems).toEqual([{ layoutItem: { field: 'ParentId' } }]);
+    expect(md.relatedLists[0].fields).toEqual(['Partner__c']);
+    const v = opts();
+    expect(LY7.removeFieldFromLayout(JSON.parse(JSON.stringify(md)), 'Partner__c', v)).toBe(0);
+    expect(v.refused).toBeUndefined();
+  });
+  it('a field only in relatedObjects is still found (the verify used to call this layout clean)', () => {
+    expect(LY7.removeFieldFromLayout({ relatedObjects: ['Partner__c'] }, 'Partner__c', opts())).toBe(1);
+  });
+  it('the field as the highlights panel’s only item: nothing changed, refused with the reason; the verify reads a refusal as not clean', () => {
+    const md = { layoutSections: [{ layoutColumns: [{ layoutItems: [{ field: 'Partner__c' }] }] }],
+      summaryLayout: { masterLabel: 'x', sizeX: 1, sizeY: 1, summaryLayoutItems: [{ field: 'Partner__c', posX: 0, posY: 0 }] } };
+    const o = opts();
+    expect(LY7.removeFieldFromLayout(md, 'Partner__c', o)).toBe(0);
+    expect(o.refused).toMatch(/only field in this layout's highlights panel/);
+    expect(md.layoutSections[0].layoutColumns[0].layoutItems[0].field).toBe('Partner__c');
+    expect(FCJ).toContain('return { ok: left === 0 && !vOpts.refused && hasNew, text: null };');
+  });
+  it('⇄ renames in every own-object list (dropping duplicates), and the ✂ re-run finds the old name nowhere', () => {
+    const md = lay(); md.multilineLayoutFields.push('Area__c');
+    const r = FR7.sftkLayoutReplaceField(md, 'Partner__c', 'Area__c', {});
+    expect(md.relatedObjects).toEqual(['Area__c', 'ParentId']);
+    expect(md.multilineLayoutFields).toEqual(['Area__c']);   // already listed: the old entry is dropped
+    expect(md.summaryLayout.summaryLayoutItems[0]).toEqual({ field: 'Area__c', posX: 0, posY: 0 });
+    expect(md.relatedContent.relatedContentItems[0].layoutItem.field).toBe('Area__c');
+    expect(md.relatedLists[0].fields).toEqual(['Partner__c']);
+    expect(r.swapped + r.blanked).toBe(5);
+    expect(LY7.removeFieldFromLayout(JSON.parse(JSON.stringify(md)), 'Partner__c', opts())).toBe(0);
+    expect(FCJ).toContain('|| (md.relatedObjects || []).some(isNew) || (md.multilineLayoutFields || []).some(isNew)');
+  });
+
+  // 2 — the probe reads formulas as ✂ does
+  const ES7 = new Function('sftkMdEditField', 'sftkMdEscape', 'sftkMdUnescape', `const _selObj = { api: 'Account' };\n${fcNested('_editStillNames')}\nreturn _editStillNames;`)(M.sftkMdEditField, MX.sftkMdEscape, MX.sftkMdUnescape);
+  const acct = f => `<fullName>Account.Chk</fullName>${vr(f)}`;
+  it('after a correct ✂ that keeps a quoted / commented name, the re-read is clean', () => {
+    for (const f of ["AND(Region__c = 'X', Name = 'Region__c')", "AND(Region__c = 'X', /* Region__c */ Amount__c &gt; 5)", 'AND(Region__c = "X", Name = &quot;Region__c&quot;)']) {
+      const rm = M.sftkMdEditField('ValidationRule', acct(f), 'Account', 'Region__c', null);
+      expect(rm.refused).toBeNull();
+      expect(ES7('ValidationRule', rm.xml, 'Region__c')).toBe(false);
+    }
+  });
+  it('a real mention outside the quotes, and a cannot-tell one, still count as naming it', () => {
+    expect(ES7('ValidationRule', acct("AND(Region__c = 'X', Name = 'Region__c')"), 'Region__c')).toBe(true);
+    expect(ES7('ValidationRule', acct("Name = 'Region__c' || Partner__r.Region__c = 'x'"), 'Region__c')).toBe(true);
+  });
+
+  // 3 — Task. / Event. qualifiers are Activity's own
+  const wf = h => `<fullName>${h}.WR</fullName><active>true</active><criteriaItems><field>${h}.Region__c</field><operation>equals</operation><value>x</value></criteriaItems><criteriaItems><field>${h}.Subject</field><operation>equals</operation><value>y</value></criteriaItems><triggerType>onCreateOnly</triggerType><workflowTimeTriggers><offsetFromField>${h}.Due__c</offsetFromField><timeLength>1</timeLength><workflowTimeTriggerUnit>Days</workflowTimeTriggerUnit></workflowTimeTriggers>`;
+  it('a Task workflow rule’s Task.Region__c criterion is Activity.Region__c: the scan, ⇄ and ✂ agree', () => {
+    const x = wf('Task');
+    expect(M.sftkMdMentionsField(x, 'Activity', 'Region__c')).toBe(true);
+    const rp = M.sftkMdEditField('WorkflowRule', x, 'Activity', 'Region__c', 'Area__c');
+    expect(rp.refused).toBeNull();
+    expect(rp.xml).toContain('<field>Task.Area__c</field>');
+    const rm = M.sftkMdEditField('WorkflowRule', x, 'Activity', 'Region__c', null);
+    expect(rm.refused).toBeNull();
+    expect(rm.xml).not.toMatch(/Region__c/);
+  });
+  it('an Event rule’s <offsetFromField>Event.Due__c</offsetFromField> is renamed for Activity.Due__c', () => {
+    const x = wf('Event');
+    expect(M.sftkMdMentionsField(x, 'Activity', 'Due__c')).toBe(true);
+    const rp = M.sftkMdEditField('WorkflowRule', x, 'Activity', 'Due__c', 'Area__c');
+    expect(rp.refused).toBeNull();
+    expect(rp.xml).toContain('<offsetFromField>Event.Area__c</offsetFromField>');
+  });
+  it('one way only: Event.Region__c is not Task’s, Task.Region__c is not Account’s', () => {
+    expect(M.sftkMdEditField('WorkflowRule', wf('Event'), 'Task', 'Region__c', 'Area__c').refused).toBeTruthy();
+    expect(M.sftkMdEditField('WorkflowRule', wf('Task'), 'Account', 'Region__c', 'Area__c').refused).toBeTruthy();
   });
 });

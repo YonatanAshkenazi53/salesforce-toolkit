@@ -69,6 +69,7 @@ html, body {
 .ds-brand {
   display: flex;
   align-items: center;
+  white-space: nowrap;
   gap: 10px;
   font-weight: 700;
   font-size: 16px;
@@ -4546,8 +4547,9 @@ html, body {
 .ds-cmd-item:hover,
 .ds-cmd-item.ds-cmd-active { background: var(--brand-bg); }
 .ds-cmd-item-icon { font-size: 16px; width: 22px; text-align: center; flex-shrink: 0; }
-.ds-cmd-item-label { font-size: 13px; font-weight: 600; color: var(--text); }
-.ds-cmd-item-desc  { font-size: 11px; color: var(--subtext); margin-left: auto; }
+/* the label never wraps; a long desc wraps on its own side, right-aligned (design review 2026-11-14) */
+.ds-cmd-item-label { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; flex: 0 0 auto; }
+.ds-cmd-item-desc  { font-size: 11px; color: var(--subtext); margin-left: auto; min-width: 0; text-align: right; }
 .ds-cmd-empty {
   padding: 24px 16px;
   text-align: center;
@@ -5989,10 +5991,17 @@ body.ds-pro {
    .adbg-btn-icon rule). */
 .ds-topbar .ds-dark-toggle,
 .ds-topbar .ds-whatsnew-top { width: 28px; padding: 0; }
+/* Report a problem (sftk-report.js) — icon-only square beside What's New. */
+.ds-topbar .sftk-report-btn { width: 28px; padding: 0; }
 /* …until pro mode turns them into text pills, which the existing pro-mode
    block already does; give the width back so the label fits. */
 .ds-pro .ds-topbar .ds-dark-toggle,
 .ds-pro .ds-topbar .ds-whatsnew-top { width: auto; padding: 0 var(--sp-5); border-radius: var(--r-sm); }
+/* Report a problem stays an icon-only square in pro mode too: a "Report" text pill pushed the
+   1500px topbar over its width and wrapped the brand onto two lines (design review 2026-11-14).
+   The flag is a mask glyph, not an emoji, so it shows in pro mode (the .ds-glyph rule hides
+   emoji only — this overrides it for this one button). */
+.ds-pro .ds-topbar .sftk-report-btn .ds-glyph { display: inline-block; }
 .ds-topbar .ds-pro-toggle--on { background: rgba(255,255,255,.30); border-color: rgba(255,255,255,.45); color: #fff; }
 .ds-topbar .ds-trust-badge { font-size: var(--fs-xs); }
 .ds-topbar .ds-trust-arrow { opacity: .55; }

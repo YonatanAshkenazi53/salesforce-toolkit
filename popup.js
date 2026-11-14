@@ -318,17 +318,21 @@ function openToolkitPalette() {
   overlay.id = 'tkCmdOverlay';
   overlay.className = 'tk-cmd-overlay';
   let activeIdx = 0;
+  const reportWhere = typeof sftkReportHere === 'function' ? sftkReportHere().where : 'home';
 
   const ITEMS = [
     ...HOME_FEATURES.map(f => ({ i: f.i, label: f.title, desc: f.desc, run: () => f.action() })),
     { i: 'home',  label: 'Home', desc: 'Back to the tool overview', run: () => renderHomePage() },
     { i: 'clock', label: 'Activity', desc: 'Everything the Toolkit and Data Studio did, and when — history, undo, export', run: () => document.getElementById('sftkFeedBtn')?.click() },
     { i: 'globe', label: 'Open Data Studio', desc: 'Cross-org data compare, transfer & reconcile', run: () => document.getElementById('dataStudioBtn')?.click() },
+    // sftk-report.js — read 'where' when the palette OPENS, i.e. the tool the user was in, not the palette itself.
+    // desc is the same string as Data Studio's row (studio-core.js CMD_VIEWS); `keys` are extra search words.
+    { i: 'flag', label: 'Report a problem', desc: 'Report a bug — prefilled GitHub issue (GitHub account needed), nothing from your org', keys: 'bug feedback issue support help github', run: () => { if (typeof sftkReportOpen === 'function') sftkReportOpen({ app: 'toolkit', where: reportWhere }); } },
   ];
 
   function itemsFor(q) {
     const ql = q.toLowerCase().trim();
-    return ITEMS.filter(i => !ql || i.label.toLowerCase().includes(ql) || i.desc.toLowerCase().includes(ql));
+    return ITEMS.filter(i => !ql || i.label.toLowerCase().includes(ql) || i.desc.toLowerCase().includes(ql) || (i.keys || '').includes(ql));
   }
   function paint(q) {
     const list = itemsFor(q);

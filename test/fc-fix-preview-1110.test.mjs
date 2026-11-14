@@ -12,7 +12,12 @@ describe('the row confirm carries a diff', () => {
     for (const t of ['Layout', 'FlexiPage', 'EmailTemplate', 'Report', 'ReportType']) expect(fn).toContain(`'${t}'`);
   });
   it('it uses the transforms the fix itself runs', () => {
-    for (const f of ['removeFieldFromLayout(', 'sftkLayoutReplaceField(', 'removeFieldFromFlexiPage(', 'sftkFlexiReplaceField(',
+    // a Lightning page's ⇄ goes through replaceFieldInFlexiPage, which decides whose field each mention is as ✂ does and
+    // then calls sftkFlexiReplaceField (2026-11-14 review 5) — the fix runs the same one
+    expect(FC).toContain('const sw = swap ? replaceFieldInFlexiPage(metadata, _selObj.api, _selField.api, swapTo, leftRm, pageHint) : null;');
+    const wrap = FC.slice(FC.indexOf('  function replaceFieldInFlexiPage('), FC.indexOf('  function removeFieldFromFlexiPage('));
+    expect(wrap).toContain('const sw = sftkFlexiReplaceField(metadata, objApi, oldApi, newApi);');
+    for (const f of ['removeFieldFromLayout(', 'sftkLayoutReplaceField(', 'removeFieldFromFlexiPage(', 'replaceFieldInFlexiPage(',
       'sftkTplRemove(', 'sftkTplReplace(', 'sftkRptStripField(', 'sftkRptReplaceField(', 'sftkRtRemoveField(', 'sftkRtReplaceField(']) expect(fn).toContain(f);
   });
   it('it never writes: no PATCH, no deploy, no restore point', () => {
