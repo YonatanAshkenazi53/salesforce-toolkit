@@ -1408,6 +1408,16 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // 2026-11-04). The ledger instead notes which records an earlier step WOULD
   // create (probeIds); a row that points at one is not checked, and says so.
   const PROBE = !!(profile && profile.probe === true);
+  // 2026-11-15 (live re-check, a dry run stopped midway): the engine's notes spoke of a real run inside a dry run —
+  // "2 selected record(s) not inserted — none of their Opportunity parent(s) made it into the target in this run",
+  // "⏸ paused … the rest is still to deploy — ▶ Continue from History". A dry run inserts nothing and has nothing
+  // to continue: its lines say what WOULD happen and what was not checked. Inline (not a helper beside the
+  // engine) so every harness that slices executeProfileTransfer alone keeps running. Said once per call.
+  const probeStopNote = () => {
+    const why = _runStopReason();
+    const line = `🧪 dry run ${why === 'pause' ? 'paused' : why === 'closed' ? 'stopped (the page was closed)' : 'cancelled'} before every record was checked — nothing was written, and the records it did not reach were not checked.`;
+    if (!errors.includes(line)) errors.push(_runNoteStop(line));
+  };
   const idMap        = PROBE ? {} : (sharedIdMap || {});  // srcId → tgtId (all objects — used for reference field remapping)
   const probeEarlier = PROBE && ledger ? (ledger.probeIds = ledger.probeIds || Object.create(null)) : null;
   const summary      = {};
@@ -1588,7 +1598,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     const objType = node.objectType || node.childSObject;
     // Cancel between nodes — never mid-write.
     if (_runCancelled) {
-      errors.push(_runNoteStop(sftkRunStopLine(_runStopReason())));
+      if (PROBE) probeStopNote(); else errors.push(_runNoteStop(sftkRunStopLine(_runStopReason())));
       break;
     }
     postRunProgress({ phase: 'node', obj: objType });
@@ -1741,7 +1751,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           // inserted without its parent — and now the run says which.
           if (ridList && ridList.length) {
             const parentObj = parentNode.objectType || parentNode.childSObject || 'parent';
-            errors.push(`⚠ ${objType}: ${ridList.length} selected record(s) not inserted — none of their ${parentObj} parent(s) made it into the target in this run (see ${parentObj} above); nothing was inserted without its parent. Not inserted: ${ridList.slice(0, 10).join(', ')}${ridList.length > 10 ? '…' : ''}`);
+            // a dry run (2026-11-15): would-be wording, and the true reason when the run was stopped meanwhile
+            if (PROBE) errors.push(_runCancelled
+              ? `⚠ ${objType}: ${ridList.length} selected record(s) not checked — the dry run stopped before their ${parentObj} parent(s) were checked. Not checked: ${ridList.slice(0, 10).join(', ')}${ridList.length > 10 ? '…' : ''}`
+              : `⚠ ${objType}: ${ridList.length} selected record(s) would not be inserted — none of their ${parentObj} parent(s) would be written in this run (see ${parentObj} above); a record is never inserted without its parent. Not checked by the dry run: ${ridList.slice(0, 10).join(', ')}${ridList.length > 10 ? '…' : ''}`);
+            else errors.push(`⚠ ${objType}: ${ridList.length} selected record(s) not inserted — none of their ${parentObj} parent(s) made it into the target in this run (see ${parentObj} above); nothing was inserted without its parent. Not inserted: ${ridList.slice(0, 10).join(', ')}${ridList.length > 10 ? '…' : ''}`);
           }
           continue;
         }
@@ -1785,7 +1799,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           // Phase 4 (live 2026-09-29): with the whole tree in one run, the usual
           // reason is a parent that FAILED earlier in this run — say that, as a
           // warning, instead of blaming the selection.
-          if ((summary[parentObj] && summary[parentObj].failed) > 0) {
+          if (PROBE && (summary[parentObj] && summary[parentObj].failed) > 0) {
+            // a dry run (2026-11-15): would-be wording
+            errors.push(`⚠ ${objType}: ${dropped.length} of ${ridList.length} selected record(s) would not be inserted — their ${parentObj} parent would not be written in this run (see ${parentObj} above), or is outside the run's scope; a record is never inserted without its parent. Not checked by the dry run: ${dropped.slice(0, 10).join(', ')}${dropped.length > 10 ? '…' : ''}`);
+          } else if ((summary[parentObj] && summary[parentObj].failed) > 0) {
             errors.push(`⚠ ${objType}: ${dropped.length} of ${ridList.length} selected record(s) not inserted — their ${parentObj} parent failed to insert in this run (see ${parentObj} above), or is outside the run's scope; nothing was inserted without its parent. Not inserted: ${dropped.slice(0, 10).join(', ')}${dropped.length > 10 ? '…' : ''}`);
           } else diagnostics.push(`${objType}: ${dropped.length} of ${ridList.length} hand-picked record(s) are NOT in this run — their parent (${parentField}) is outside the run's ${parentObj} scope, or they no longer match the filter. Include their parents in the ${parentObj} selection, or clear the child's 🎯 picks to copy every child of the selected parents. Dropped: ${dropped.slice(0, 10).join(', ')}${dropped.length > 10 ? '…' : ''}`);
         }
@@ -2549,7 +2566,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         // Cancel between waves — records already written stay written
         // (allOrNone:false per batch); the summary reports the partial count.
         if (_runCancelled) {
-          errors.push(_runNoteStop(sftkRunStopLine(_runStopReason(), objType, ok, payloads.length, fail)));
+          if (PROBE) probeStopNote(); else errors.push(_runNoteStop(sftkRunStopLine(_runStopReason(), objType, ok, payloads.length, fail)));
           break;
         }
         const starts = [];
@@ -2718,7 +2735,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         });
         postRunProgress({ phase: 'batch', obj: objType,
           done: Math.min(i + STEP, payloads.length), total: payloads.length,
-          created: ok, failed: fail, ...(PROBE ? { probe: true } : {}) });
+          created: ok, failed: fail, ...(PROBE ? { probe: true } : {}),
+          // 2026-11-15 (close-out review): records whose write call threw are neither created nor failed, so an
+          // object whose only call was refused reached done == total with 0 / 0 and its live card said
+          // "written" with a green check. The card is told what the result rows are told (sftkRunUnconfirmedInfo).
+          ...(unconfirmed ? { unconfirmed, refused: !!refusedN && refusedN === unconfirmed } : {}) });
         }
         // Real-time error feed (user 2026-08-18: "like inspector shows,
         // with errors in real time") — every error line this wave produced
@@ -3120,7 +3141,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       try {
         while (round < PL.maxRounds) {
           round++;
-          if (_runCancelled) { errors.push(_runNoteStop(sftkRunStopLine(_runStopReason(), 'dry run', 0, 0, 0))); break; }
+          if (_runCancelled) { probeStopNote(); break; }
           const sending = live.filter(s => s.rows.length);
           if (!sending.length) break;
           postRunProgress({ phase: 'probe', round, subs: sending.map(s => ({ obj: s.objType, n: s.rows.length })) });

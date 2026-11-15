@@ -23,6 +23,11 @@ const SFTK_REL = Object.freeze({
   campaign: 'campaign', contract: 'contract', order: 'order', product2: 'product2', pricebook2: 'pricebook2',
   recordtype: 'recordtype', profile: 'profile', userrole: 'userrole', queue: 'group',
   asset: 'asset', quote: 'quote',
+  // 2026-11-15 (close-out review round 2): standard relationships NOT named for their object. Unlisted, the
+  // fall-through of sftkRelHop read Case's Product as an object called "product", and a rule that really reads
+  // Product2's field was left alone by the removers and demoted by the sweep.
+  product: 'product2', assetprovidedby: 'account', assetservicedby: 'account', rootasset: 'asset',
+  companyauthorizedby: 'user', customerauthorizedby: 'contact', syncedquote: 'quote', originalorder: 'order',
 });
 
 // Parent is a self-lookup on most objects (Account, Case, Campaign…). Where it is not: Case on CaseComment /
@@ -65,6 +70,19 @@ function sftkRelHop(curObj, hop) {
   // an empty hop (A..B) names no object: '' matches none, so the caller reads it as another object's — as every
   // copy did before; callers test `kind`, never a falsy obj, for "cannot be told"
   return { obj: h };                                   // a standard lookup named for its object (Asset, Entitlement…)
+}
+
+// Is the answer of sftkRelHop for this hop POSITIVELY known — not the fall-through "a standard lookup named for its
+// object"? (2026-11-15, close-out review round 2.) That fall-through is safe for a remover (unknown → another
+// object → left alone) but not for the sweep, where "another object" DEMOTES a blocker: CampaignMember's
+// LeadOrContactOwner is User or Group, not an object of that name. known = a typed hop (Owner:User), a listed
+// relationship, or Parent / MasterRecord standing on an object that is itself known (curKnown).
+function sftkRelHopKnown(curObj, hop, curKnown) {
+  const h = String(hop == null ? '' : hop).trim().toLowerCase();
+  const colon = h.indexOf(':');
+  if (colon >= 0) return !!h.slice(colon + 1);
+  if (h === 'parent' || h === 'masterrecord') return !!curObj && curKnown !== false && !sftkRelHop(curObj, h).kind;
+  return Object.prototype.hasOwnProperty.call(SFTK_REL, h);
 }
 
 // The object a lookup ID FIELD points at (a <targetObject> of a cross-object field update: OwnerId, AccountId,

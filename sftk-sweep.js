@@ -257,6 +257,7 @@ function sftkSweepKindTable() {
   Translations:           { label: 'Translations', sev: 'mention', why: 'the translated text goes with the field' },
   ExperienceBundle:       { label: 'Experience Cloud pages', sev: 'mention', why: 'the page or component names the field as text — it breaks where it reads it' },
   CustomLabel:            { label: 'Custom Labels', sev: 'mention', why: 'a label’s text holds the field’s name — nothing stops the delete' },
+  DocText:                { label: 'Named only in descriptive text', sev: 'mention', why: 'the name stands only in a description, help text, label or message of the component — plain text Salesforce does not read as a reference; nothing stops the delete and nothing breaks, the text just goes stale' },
   SameNameOtherObject:    { label: 'Same name, another object', sev: 'mention', why: 'a component of another object holds a field of the same API name by its bare name, or code that names this object nowhere in its file (a file-level test) holds it — most likely that object’s own field, not this one; it does not join the list, and Salesforce’s own delete check decides' },
   Other:                  { label: 'Other components', sev: 'mention', why: 'the component names the field — the delete goes through; what reads it may break' },
   };
@@ -315,6 +316,46 @@ function sftkSweepKind(path, text, hit, forms) {
   const K = (type, component, section, pathOverride) => { const k = T[type] || T.Other; return { type, label: k.label, sev: k.sev, why: k.why || '', component: component || base, section: section || null, path: pathOverride || p, file: pathOverride ? file : null }; };
   const sections = () => sftkSweepSections(text);
   const secAt = () => _sftkSweepSectionAt(sections(), hit ? hit.offset : 0);
+  // 2026-11-15 (live re-check): a picklist whose DESCRIPTION said "the same picklist as SFTK_FC_Test_Status__c
+  // WITHOUT the value Closed" came back as 'Formula & Roll-up Fields | formula' — a 🔒 that joined the list with
+  // "Delete formula or roll-up field" and was counted in the delete zone; Salesforce accepts the delete with it in
+  // place. Documentation text is no reference in any kind. docOnly() → the phrase for the hit when EVERY mention
+  // of the field on the hit's line stands inside a documentation element, else null. Those elements are leaves, so
+  // the tag that opens last before a mention is the element holding it (a description may run over several lines).
+  // Narrow on purpose: a flow's help text, interview label and screen error message take merge fields (a real
+  // reference) — only a flow's description and label are plain; a validation rule's errorMessage is plain (its
+  // errorDisplayField and formula are not); a duplicate rule's alertText is plain. Kept inside this function (not
+  // a helper beside it) so every caller and test that slices sftkSweepKind alone keeps working.
+  const docOnly = () => {
+    if (!hit || !forms || !forms.field) return null;
+    const s = String(text || '');
+    // code and markup are not metadata XML — a "<description>" there is no documentation element; their
+    // -meta.xml companions are
+    const xml = /\.xml$/i.test(p) || /^\s*<\?xml/.test(s) || /^(objects|workflows|sharingRules|matchingRules|duplicateRules|assignmentRules|autoResponseRules|escalationRules|approvalProcesses|flows|flexipages|customMetadata|quickActions|restrictionRules)$/.test(dir);
+    if (!xml || (/^(classes|triggers|pages|components|lwc|aura|email|experiences|staticresources)$/.test(dir) && !/-meta\.xml$/i.test(p))) return null;
+    // a translation file IS labels and help text: its kind already says the translated text goes with the field
+    if (dir === 'objectTranslations' || dir === 'translations') return null;
+    const tags = { description: 'a description', label: 'a label' };
+    if (dir !== 'flows') Object.assign(tags, { inlineHelpText: 'help text', masterLabel: 'a label', pluralLabel: 'a label' });
+    if (dir === 'duplicateRules') tags.alertText = 'an alert text';
+    if (dir === 'objects') { const sec = secAt(); if (sec && sec.tag === 'validationRules') tags.errorMessage = 'an error message'; }
+    const from = Number(hit.offset) || 0;
+    let to = s.indexOf('\n', from); if (to < 0) to = s.length;
+    const re = new RegExp(`(?<![A-Za-z0-9_])${String(forms.field).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'gi');
+    const line = s.slice(from, to);
+    let phrase = null;
+    for (let m; (m = re.exec(line));) {
+      const at = from + m.index;
+      const lt = s.lastIndexOf('<', at);
+      const open = lt < 0 ? null : /^<([A-Za-z][A-Za-z0-9_]*)>/.exec(s.slice(lt, at + 1));   // a plain opening tag, closed before the mention
+      // inside a tag, after a closing tag, in a comment or CDATA, or in an element that is not documentation:
+      // one real mention on the line keeps the line's kind
+      if (!open || !Object.prototype.hasOwnProperty.call(tags, open[1])) return null;
+      phrase = phrase || tags[open[1]];
+    }
+    return phrase ? `named only in ${phrase}` : null;
+  };
+  const raw = () => {
   switch (dir) {
     case 'classes': return K('ApexClass', base);
     case 'triggers': return K('ApexTrigger', base);
@@ -396,6 +437,13 @@ function sftkSweepKind(path, text, hit, forms) {
     case 'labels': return K('CustomLabel', base);
     default: return K('Other', `${dir} › ${base}`);
   }
+  };
+  const k = raw();
+  if (!k) return k;   // the field's own definition is no use of it, whatever the line
+  const doc = docOnly();
+  if (!doc) return k;
+  const D = T.DocText;
+  return { ...k, type: 'DocText', label: D.label, sev: D.sev, why: D.why, section: doc };
 }
 
 // Every hit of every file, classified and grouped. `files`: Map(path → text).
@@ -459,8 +507,41 @@ function sftkSweepRun(files, forms) {
     // "Contact.X" in Contact's own file; $Source (a lookup filter's own record) and $Record are the file's object
     // too (2026-11-15 second review: a Contact lookup filter's $Source.Status__c joined as Account's blocker)
     if (/^(?:\$source|\$record)$/i.test(x.path) || x.path.toLowerCase() === String(owner).toLowerCase()) return false;
-    return true;                                                               // a relationship path: not resolvable here, kept
+    // 2026-11-15 (close-out review): "any other path is kept" also kept the paths the shared resolver CAN tell —
+    // $User.X is User's, $Profile.X Profile's, $Setup.Conf__c.X the setting's, Owner.X User's — so a Contact rule
+    // reading $User.Region__c joined the list as a blocker of Account.Region__c, which it is not. The path is walked
+    // by sftk-relmap.js (as fieldUpdateMayBeOurs does): demoted only when it ENDS on a known other object; a hop
+    // that cannot be told (Lookup__r, What / Who, a $ global that names no object) is kept, the safe direction.
+    if (typeof sftkRelHop !== 'function' || typeof sftkRelGlobal !== 'function') return true;
+    const segs = x.path.split('.').filter(Boolean);
+    let from = String(owner).toLowerCase(), hops = segs;
+    if (segs[0] && segs[0][0] === '$') {
+      const g = sftkRelGlobal(segs);
+      if (!g || !g.obj) return true;
+      from = g.obj; hops = segs.slice(g.from);
+    }
+    // 2026-11-15 (close-out review round 2): the walk answers every unlisted standard hop as "a lookup named for
+    // its object" — safe for a remover, the UNSAFE direction here: CampaignMember's LeadOrContactOwner is User,
+    // Case's Product was Product2, and a rule that really read the picked field was demoted with an untrue reason.
+    // Demoted only when the hop the path ENDS on is positively known (sftkRelHopKnown); anything else is kept.
+    let cur = from, known = true;
+    for (const hop of hops) {
+      const r = sftkRelHop(cur, hop);
+      if (r.kind || !r.obj) return true;
+      known = typeof sftkRelHopKnown === 'function' && sftkRelHopKnown(cur, hop, known);
+      cur = r.obj;
+    }
+    return known ? isOwn(cur) : true;
   });
+  // The TRUE reason of a demotion in another object's file: the file's own field when the line names it bare (or
+  // by $Source / $Record / the file's object); a field reached through a path that ends on a third object
+  // ($User.X, Owner.X) is not "Contact's own" (2026-11-15 close-out review).
+  const otherNote = (line, owner) => {
+    const ms = mentions(line);
+    const own = x => !x.path || /^(?:\$source|\$record)$/i.test(x.path) || x.path.toLowerCase() === String(owner).toLowerCase()
+      || (/^\$ObjectType\.([A-Za-z0-9_]+)\.Fields$/i.exec(x.path) || [])[1]?.toLowerCase() === String(owner).toLowerCase();
+    return !ms.length || ms.some(own) ? `${owner}’s own field of this name` : `a field of this name on another object, not ${objName}’s (the path leads elsewhere)`;
+  };
   // In code that never names the object: a dynamic 'Field__c' / "Field__c", or a path that goes through a
   // RELATIONSHIP. 2026-11-15 (second review): "two or more hops" also kept this.con.Status__c and the LWC wire shape
   // this.rec.fields.Status__c.value — a variable, `this` and `.fields.` / `.data.` are no relationship. A hop counts
@@ -471,7 +552,30 @@ function sftkSweepRun(files, forms) {
     if (segs[0] && segs[0].toLowerCase() === 'this') segs.shift();
     return segs.some((g, i) => /__r$/i.test(g) || (i > 0 && /^[A-Z]/.test(g) && !/^(fields|data)$/i.test(g)));
   });
-  const noComments = t => String(t || '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/<!--[\s\S]*?-->/g, ' ').replace(/(^|[^:'"])\/\/[^\n]*/g, '$1');
+  // 2026-11-15 (close-out review): three blind regexes cut from a "/*" INSIDE a string literal — the Accept header
+  // '*/*' — to the next "*/" anywhere later in the file, and with it the code that names the object: a real Apex
+  // blocker was demoted as "the code never names Account". One walk, left to right: a '…' / "…" literal that
+  // closes on its own line is copied whole (its text may name the object: dynamic SOQL), and only outside one do
+  // /* … */, <!-- … --> and // start a comment. A quote with no partner on its line (an apostrophe in markup text)
+  // is plain text. "://" is a URL, as before.
+  const noComments = t => {
+    const s = String(t || '');
+    let out = '', i = 0;
+    while (i < s.length) {
+      const ch = s[i];
+      if (ch === "'" || ch === '"') {
+        let j = i + 1;
+        while (j < s.length && s[j] !== ch && s[j] !== '\n') j += s[j] === '\\' ? 2 : 1;
+        if (j < s.length && s[j] === ch) { out += s.slice(i, j + 1); i = j + 1; continue; }
+        out += ch; i++; continue;
+      }
+      if (ch === '/' && s[i + 1] === '*') { const e = s.indexOf('*/', i + 2); out += ' '; i = e < 0 ? s.length : e + 2; continue; }
+      if (ch === '<' && s.startsWith('<!--', i)) { const e = s.indexOf('-->', i + 4); out += ' '; i = e < 0 ? s.length : e + 3; continue; }
+      if (ch === '/' && s[i + 1] === '/' && s[i - 1] !== ':') { const e = s.indexOf('\n', i); i = e < 0 ? s.length : e; continue; }
+      out += ch; i++;
+    }
+    return out;
+  };
   const ownerOf = (p, text) => {   // the object an object-shaped file belongs to, or null when its path does not say
     const seg = String(p || '').replace(/^unpackaged\//, '').split('/');
     const base = (seg[seg.length - 1] || '').replace(/\.[^.]+$/, '');
@@ -516,9 +620,12 @@ function sftkSweepRun(files, forms) {
       let k = sftkSweepKind(path, text, h, forms);
       if (!k) continue;
       const qualified = !!(forms && forms.qualified && forms.qualified.test(h.text));
-      if (objLc && owner && !isOwn(owner) && !qualified && !pathMayBeOurs(h.text, owner)
-        && !(k.type === 'WorkflowFieldUpdate' && fieldUpdateMayBeOurs(text, h, owner))) k = other(k, `${owner}’s own field of this name`);
-      else if (objLc && !owner && CODE.has(k.type) && !codeNamesObj && !codeMayBeOurs(h.text)) k = other(k, `the code never names ${objName}`);
+      if (k.type === 'DocText') { /* 2026-11-15: plain text — already 👀 with its own true reason, not "another object's field" */ }
+      else if (objLc && owner && !isOwn(owner) && !qualified && !pathMayBeOurs(h.text, owner)
+        && !(k.type === 'WorkflowFieldUpdate' && fieldUpdateMayBeOurs(text, h, owner))) k = other(k, otherNote(h.text, owner));
+      else if (objLc && !owner && CODE.has(k.type) && !codeNamesObj && !codeMayBeOurs(h.text)
+        // the hit line itself naming the object ("for (Account a : …) a.Region__c") is never "the code never names it"
+        && !objWord.test(noComments(h.text))) k = other(k, `the code never names ${objName}`);
       any = true;
       hits.push({ path: k.path, file: k.file || null, line: h.line, text: h.text, type: k.type, label: k.label, sev: k.sev, why: k.why, component: k.component, section: k.section });
     }
@@ -569,7 +676,7 @@ function sftkSweepCsv(result, objApi, fieldApi) {
   const rows = [['field', 'kind', 'severity', 'component', 'section', 'path', 'line', 'text', 'in the scan list', 'joined the list']];
   for (const [type, t] of Object.entries((result && result.byType) || {})) {
     for (const it of t.items) {
-      for (const l of it.lines) rows.push([`${objApi}.${fieldApi}`, `${t.label} (${type})`, t.sev === 'blocker' ? 'must fix before the delete' : 'breaks after the delete', it.component, it.section || '', l.file ? `${it.path} › ${l.file}` : it.path, l.line, String(l.text || '').trim(), it.inScan ? 'yes' : 'no', it.joined ? 'yes' : 'no']);
+      for (const l of it.lines) rows.push([`${objApi}.${fieldApi}`, `${t.label} (${type})`, t.sev === 'blocker' ? 'must fix before the delete' : (type === 'DocText' ? 'plain text only - nothing breaks' : 'breaks after the delete'), it.component, it.section || '', l.file ? `${it.path} › ${l.file}` : it.path, l.line, String(l.text || '').trim(), it.inScan ? 'yes' : 'no', it.joined ? 'yes' : 'no']);
     }
   }
   return rows.map(r => r.map(cell).join(',')).join('\r\n') + '\r\n';

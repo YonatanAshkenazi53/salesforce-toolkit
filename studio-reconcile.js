@@ -2224,6 +2224,32 @@ function sftkProbeLine(obj, a, expected) {
   if (n('unreached') || n('cascade') || n('earlier') || n('wouldWrite') < n('probed')) return { icon: '⚠', cls: 'ds-prog-warn', text };
   return { icon: '✅', cls: '', text };
 }
+// 2026-11-15 (live re-check, a dry run stopped midway): the headline read "0 of 13 would be written — 13 not
+// reached" with 35 records selected — it counted only the records BUILT when the stop came, so the same stop a
+// moment earlier or later gave another number, and 22 selected records were not mentioned at all. PURE.
+//   byObj: obj → the engine's verdict counts   expected: obj → how many of it were selected for insert
+//   incomplete: the run stopped or broke
+// → { selected, unbuilt: { obj: n }, unbuiltTotal, lines: [{ obj, n, expected, text }] } — unbuilt = selected
+// records the dry run never put in a transaction (their object was not built, or not wholly). A finished run has
+// none: what it left out (a sample's rest, a pick outside the parents' scope) has its own line already.
+function sftkProbeReach(byObj, expected, incomplete) {
+  const f = v => Number(v).toLocaleString('en-US');
+  const out = { selected: 0, unbuilt: {}, unbuiltTotal: 0, lines: [] };
+  for (const [obj, raw] of Object.entries(expected || {})) {
+    const exp = Math.max(0, Number(raw) || 0);
+    out.selected += exp;
+    if (!incomplete || !exp) continue;
+    const a = (byObj && byObj[obj]) || {};
+    const accounted = Math.max(Number(a.probed) || 0, Number(a.sampledOf) || 0);   // a sample's rest is not "never checked"
+    const n = Math.max(0, exp - accounted);
+    if (!n) continue;
+    out.unbuilt[obj] = n; out.unbuiltTotal += n;
+    out.lines.push({ obj, n, expected: exp, text: n === exp
+      ? `${obj}: none of the ${f(exp)} selected record(s) was checked — the dry run stopped before them`
+      : `${obj}: ${f(n)} of the ${f(exp)} selected record(s) were never checked — the dry run stopped before them` });
+  }
+  return out;
+}
 // The verdict of a whole dry run, in words. pt = the summed counts; o.incomplete = the run stopped or broke
 // before every selected record got an answer; o.net = because the connection dropped.
 function sftkProbeVerdict(pt, o) {
@@ -2232,7 +2258,13 @@ function sftkProbeVerdict(pt, o) {
   const incomplete = !!o.incomplete || n('unreached') > 0;
   // o.selected (2026-11-15, second review): how many inserts were ticked — "no insert is selected" is only said
   // when none was (or the caller did not say); with inserts ticked and none checked the truth is the other line
-  const verdict = !n('probed')
+  // 2026-11-15: a run that stopped with selected records it never built names the SELECTED total and how many
+  // were never checked (in the transaction but not reached + never built) — the same sentence wherever the stop
+  // fell. pt.unbuilt comes from sftkProbeReach.
+  const never = n('unreached') + n('unbuilt'), sel = Number(o.selected) || 0;
+  const verdict = (incomplete && n('unbuilt') > 0 && sel > 0)
+    ? `${f(n('would'))} of ${f(sel)} selected record(s) would be written — ${[n('refused') ? `${f(n('refused'))} refused` : '', n('cascade') ? `${f(n('cascade'))} not checked (their parent would be refused)` : '', `${f(never)} never checked`].filter(Boolean).join(', ')}`
+    : !n('probed')
     ? ((incomplete || Number(o.selected) > 0) ? 'no record was checked' : 'nothing was checked — no insert is selected')
     : (n('refused') || n('cascade') || n('unreached'))
       ? `${f(n('would'))} of ${f(n('probed'))} would be written — ${[n('refused') ? `${f(n('refused'))} refused` : '', n('cascade') ? `${f(n('cascade'))} not checked (their parent would be refused)` : '', n('unreached') ? `${f(n('unreached'))} not reached` : ''].filter(Boolean).join(', ')}`
@@ -2253,6 +2285,89 @@ function sftkRecLegAnswer(res) {
   if (res && res.busy === true) return 'busy';
   if (!res || (res.error && !res.summary)) return 'none';
   return 'ok';
+}
+// PURE (2026-11-15, close-out review). Why a page run must not start its next write step: the engine's own word
+// for an earlier leg ('pause' | 'cancel' | 'closed'), else 'pause' when ⏸ was pressed on the page (the worker
+// drops a pause sent while no engine leg is running, so the page keeps its own flag), else ''.
+// Every engine call clears the engine's stop flag, so only the page can make a stop hold for the whole run: after
+// ⏸ on the root insert, the inserts under existing parents, the relinks and the drift overwrites still ran in
+// full and the run ended "Paused".
+function sftkRecStopGate(stoppedWhy, pausePressed) {
+  return stoppedWhy ? String(stoppedWhy) : (pausePressed ? 'pause' : '');
+}
+// PURE. The one line that names the steps a stopped run never started. steps: [{ what, insert }] — only inserts
+// are kept for ▶ Continue (History's `selected`), and the line says so rather than promise the rest.
+// canContinue (2026-11-15, close-out review round 2): false when History will show NO ▶ Continue for this run —
+// counts-only mode keeps no ticked ids, an Org Compare deployment is not a saved one. The line then says what
+// does work (scan again, tick again) instead of promising a button that is not there. Omitted = it will.
+function sftkRecNotStartedLine(why, steps, canContinue) {
+  const list = (steps || []).filter(s => s && s.what);
+  if (!list.length) return '';
+  const how = why === 'pause' ? 'paused' : why === 'closed' ? 'stopped (the page was closed)' : 'cancelled';
+  const others = list.some(s => !s.insert);
+  return `Not started — the run was ${how} before: ${list.map(s => s.what).join(' · ')}. Nothing of these steps was written.`
+    + (why === 'cancel' ? '' : canContinue === false
+      ? ' Scan again and tick them again on the Deploy page — History has no ▶ Continue for this run.'
+      : others
+      ? ' ▶ Continue from History re-ticks the inserts only — tick the other steps again on the Deploy page.'
+      : ' ▶ Continue from History re-ticks them.');
+}
+// PURE. Will History show ▶ Continue for a stopped run of this deployment? Its button needs the run's `selected`
+// (counts-only mode stores none) and a saved deployment (an ephemeral Org Compare one is not in the list).
+function sftkRecCanContinue(profile, profiles, settings) {
+  if (!profile || profile.ephemeral || (settings && settings.countsOnly)) return false;
+  return (profiles || []).some(x => x && x.id === profile.id);
+}
+// PURE. The profile of the PULL leg (target-only records inserted into the SOURCE org): a copy with the mappings
+// inverted, the orgs swapped, only the root, and NO duplicate-rule bypass. 2026-11-15 (close-out review round 3):
+// the copy kept duplicateRules:'bypass' with no per-object list, so the engine sent allowSave=true for every object
+// into the source — an org whose rules the pause panel never listed, on objects the user may have un-ticked. The
+// bypass is confirmed for the target only (as reconcileOverwrite says for its reverse write): rules in the
+// source are respected, and a record one of them refuses is reported as failed.
+function sftkRecPullProfile(profile, pullIds) {
+  const p = JSON.parse(JSON.stringify(profile));
+  delete p.duplicateRules;
+  delete p.dupBypassObjects;
+  const fm = p.tree?.fieldMappings || {};
+  const inverseFm = {};
+  // Keep null EXCLUSIONS when inverting — `if (t)` alone dropped them,
+  // and an absent mapping means identity passthrough in the executor,
+  // so deliberately-excluded fields were copied into the source on Pull.
+  for (const [s, t] of Object.entries(fm)) {
+    if (t === null) inverseFm[s] = null;
+    else if (t) inverseFm[t] = s;
+  }
+  p.tree.fieldMappings = inverseFm;
+  p.tree.recordIds = pullIds;
+  p.tree.children  = [];
+  // Swap the profile's orgs so anything downstream that inspects them
+  // (logging, lookup-bridge resolution, error messages) sees the
+  // reverse direction consistently.
+  p.sourceOrg = profile.targetOrg;
+  p.targetOrg = profile.sourceOrg;
+  return p;
+}
+// PURE. What a run ticked, per tree path, for History's `selected` (▶ Continue re-ticks it; the next scan drops
+// what the run did write). 2026-11-15 (close-out review round 3): the inserts under EXISTING parents (groupB) were
+// left out, so a run of only those — the common Deploy shape — that was paused or cut mid-leg stored { '': [] }:
+// History showed ▶ Continue and the click answered "kept no record of what was ticked".
+function sftkRecRunSelected(treePushIds, childActs) {
+  const out = { '': [...(treePushIds || [])] };
+  for (const a of childActs || []) {
+    const ids = [...new Set([...((a && a.groupA) || []), ...((a && a.groupB) || [])])];
+    if (ids.length) out[a.pathKey] = ids;
+  }
+  return out;
+}
+// PURE. History's `selected` (what ▶ Continue re-ticks, per tree path) plus the inserts a stopped run never
+// started: more: { pathKey: [ids] }. Ids are added once.
+function sftkRecMergeSelected(selected, more) {
+  const out = selected || {};
+  for (const [k, ids] of Object.entries(more || {})) {
+    if (!Array.isArray(ids) || !ids.length) continue;
+    out[k] = [...new Set([...(Array.isArray(out[k]) ? out[k] : []), ...ids])];
+  }
+  return out;
 }
 // PURE. Did this run do — or try — anything before a leg was refused 'busy'? A written / failed count, or a hard
 // error line of an earlier step (a delete that threw may have deleted). Nothing = the run never started: no
@@ -2291,8 +2406,11 @@ function sftkProbeCallBroke(res) {
 function sftkRunEndLine(o) {
   o = o || {};
   const f = v => Number(v || 0).toLocaleString('en-US');
-  if (o.stoppedWhy === 'pause') return { icon: '⏸', cls: '', text: 'Paused — the records not reached are still to deploy; ▶ Continue from History.' };
-  if (o.stoppedWhy === 'closed') return { icon: '⏸', cls: '', text: 'Stopped — the page was closed mid-run; ▶ Continue from History.' };
+  // canContinue === false (2026-11-15, close-out review round 2): History shows no ▶ Continue (counts-only mode, an
+  // Org Compare deployment) — the line names what does work, as the network line below already did
+  const cont = o.canContinue === false ? 'scan again and tick them again on the Deploy page.' : '▶ Continue from History.';
+  if (o.stoppedWhy === 'pause') return { icon: '⏸', cls: '', text: `Paused — the records not reached are still to deploy; ${cont}` };
+  if (o.stoppedWhy === 'closed') return { icon: '⏸', cls: '', text: `Stopped — the page was closed mid-run; ${o.canContinue === false ? 'the records not reached are still to deploy: ' : ''}${cont}` };
   if (o.stoppedWhy && o.stoppedWhy !== 'network') return { icon: '⏸', cls: '', text: 'Cancelled — refreshing state…' };
   if (o.status === 'success' && !o.net) return { icon: '✅', cls: '', text: 'Transfer complete — refreshing state…' };
   const wrote = o.ok ? `${f(o.ok)} record(s) written` : 'nothing was confirmed written';
@@ -2940,12 +3058,25 @@ async function runReconcile(profile, objType, buckets, opts) {
   // run's History entry says so and offers ▶ Continue. Closing the page does the
   // same — said here before anyone tries the tab's ✕ (user 2026-10-09).
   let stoppedWhy = '';
+  // 2026-11-15 (close-out review): a stop is a stop for the WHOLE page run. halted(step) is asked before every
+  // write step that has work: once a leg answered stopped, or ⏸ was pressed here, the step does not start and is
+  // named in one line at the end (sftkRecStopGate, sftkRecNotStartedLine).
+  let pausePressed = false;
+  const notStarted = [], skippedSel = {};
+  const fmtN = v => Number(v || 0).toLocaleString('en-US');
+  const halted = (what, insert) => {
+    const w = sftkRecStopGate(stoppedWhy, pausePressed);
+    if (!w) return false;
+    stoppedWhy = w; notStarted.push({ what, insert: !!insert });
+    return true;
+  };
   if (prog && prog.parentElement && !eid('dsRunPauseBar')) {
     prog.insertAdjacentHTML('beforebegin', `<div class="ds-run-pausebar" id="dsRunPauseBar">
       <button class="ds-btn ds-btn-sm" id="dsRunPauseBtn" title="Stops after the batch being written right now — nothing is half-written. ▶ Continue from History picks up the records that were not reached.">⏸ Pause</button>
       <span class="ds-run-pausenote">Keep this tab open: closing it pauses the run after the batch in flight. Paused runs continue from History.</span>
     </div>`);
     eid('dsRunPauseBtn')?.addEventListener('click', () => {
+      pausePressed = true;   // holds between engine legs and during the page's own write steps
       try { recPort?.postMessage({ cmd: 'pause' }); } catch (_) {}
       const btn = eid('dsRunPauseBtn'); if (btn) { btn.disabled = true; btn.textContent = '⏸ Pausing — finishing the batch in flight…'; }
     });
@@ -3006,6 +3137,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   for (const a of (PROBE ? [] : childActs)) {
     if (!a.delIds.length) continue;
     const obj = a.node.objectType || a.node.childSObject;
+    if (halted(`the delete of ${fmtN(a.delIds.length)} ${obj} from the target`)) continue;
     try {
       if (isHard) {
         log('🔥', `Hard-deleting ${a.delIds.length} ${obj} from target…`);
@@ -3060,7 +3192,8 @@ async function runReconcile(profile, objType, buckets, opts) {
   }
 
   // ── 1. Delete extras (regular → Recycle Bin, or hard → purge) ────────
-  if (!PROBE && delIds.length) {
+  stepDel: if (!PROBE && delIds.length) {
+    if (halted(`the delete of ${fmtN(delIds.length)} ${objType} from the target`)) break stepDel;
     if (isHard) {
       log('🔥', `Hard-deleting ${delIds.length} record(s) from target…`);
       try {
@@ -3119,27 +3252,11 @@ async function runReconcile(profile, objType, buckets, opts) {
   // Same transfer engine, but src/tgt swapped. Field mappings are inverted
   // so { srcFld → tgtFld } applied during push becomes { tgtFld → srcFld }
   // during pull. Only the root object — children stay in their own org.
-  if (!PROBE && pullIds.length) {
+  stepPull: if (!PROBE && pullIds.length) {
+    if (halted(`the pull of ${fmtN(pullIds.length)} ${objType} into the source`)) break stepPull;
     log('←', `Pulling ${pullIds.length} record(s) from target into source…`);
     try {
-      const pullProfile = JSON.parse(JSON.stringify(profile));
-      const fm = pullProfile.tree?.fieldMappings || {};
-      const inverseFm = {};
-      // Keep null EXCLUSIONS when inverting — `if (t)` alone dropped them,
-      // and an absent mapping means identity passthrough in the executor,
-      // so deliberately-excluded fields were copied into the source on Pull.
-      for (const [s, t] of Object.entries(fm)) {
-        if (t === null) inverseFm[s] = null;
-        else if (t) inverseFm[t] = s;
-      }
-      pullProfile.tree.fieldMappings = inverseFm;
-      pullProfile.tree.recordIds = pullIds;
-      pullProfile.tree.children  = [];
-      // Swap the profile's orgs so anything downstream that inspects them
-      // (logging, lookup-bridge resolution, error messages) sees the
-      // reverse direction consistently.
-      pullProfile.sourceOrg = profile.targetOrg;
-      pullProfile.targetOrg = profile.sourceOrg;
+      const pullProfile = sftkRecPullProfile(profile, pullIds);   // inverted, swapped, no duplicate-rule bypass in the source
       // 2026-11-15: this copy writes INTO the source org; the fallback user is a User Id of the target.
       if (typeof sftkOwnerFallbackForTarget === 'function') sftkOwnerFallbackForTarget(pullProfile, profile.targetOrg);
       const res = await sendBg({
@@ -3184,7 +3301,8 @@ async function runReconcile(profile, objType, buckets, opts) {
   };
   const treePushIds = [...onePass.ins['']];
   const groupATotal = childActs.reduce((s, a) => s + a.groupA.length, 0);
-  if (!busyLine && (treePushIds.length || groupATotal)) {
+  stepPush: if (!busyLine && (treePushIds.length || groupATotal)) {
+    if (halted(`the ${PROBE ? 'check' : 'insert'} of ${fmtN(treePushIds.length)} ${objType}${groupATotal ? ` and ${fmtN(groupATotal)} child record(s)` : ''}`, true)) break stepPush;
     const autoN = treePushIds.length - pushIds.length;
     if (PROBE) log('🧪', `Checking ${treePushIds.length} ${objType}${autoN > 0 ? ` (${autoN} parent(s) auto-included)` : ''}${groupATotal ? ` + ${groupATotal} child record(s)` : ''} against ${orgLabel(profile.targetOrg)} — one transaction Salesforce rolls back…`);
     else log('⬆', `Pushing ${treePushIds.length} ${objType}${autoN > 0 ? ` (${autoN} parent(s) auto-included)` : ''}${groupATotal ? ` + ${groupATotal} child record(s)` : ''} to target…`);
@@ -3286,9 +3404,14 @@ async function runReconcile(profile, objType, buckets, opts) {
   // Child-rooted transfer with the link field seeded as a match bridge, so
   // each record attaches to its pre-existing parent at insert time.
   for (const a of childActs) {
+    // 2026-11-15: a dry run that was stopped checks nothing more — every engine call clears the stop flag, so the
+    // next leg used to run on after ⏸. Its records are counted as never checked (sftkProbeReach).
+    if (PROBE && stoppedWhy) break;
     if (busyLine) break;   // another tab's run is on: nothing more of this run starts
     if (!a.groupB.length) continue;
     const obj = a.node.objectType || a.node.childSObject;
+    // a real run that was stopped starts no further leg either (close-out review) — its ticks stay for ▶ Continue
+    if (halted(`the ${PROBE ? 'check' : 'insert'} of ${fmtN(a.groupB.length)} ${obj} under existing parents`, true)) { skippedSel[a.pathKey] = [...a.groupB]; continue; }
     // R5 — the match bridge points at the node's ACTUAL parent: the root for
     // direct children (v1, identical values), the parent CHILD node + its
     // scan's match field for grandchildren.
@@ -3399,6 +3522,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     if (!a.sel.relink.size) continue;
     if (busyLine) break;   // see legCheck: nothing more of this run starts
     const obj       = a.node.objectType || a.node.childSObject;
+    if (halted(`the relink of ${fmtN(a.sel.relink.size)} ${obj}`)) continue;
     const linkField = a.node.field;
     // R2 — master-detail links that aren't reparentable can't be PATCHed:
     // Salesforce rejects the update. Skip defensively with a warning (the UI
@@ -3585,6 +3709,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     if (!a.ovwIds.length) continue;
     if (busyLine) break;   // see legCheck
     const obj = a.node.objectType || a.node.childSObject;
+    if (halted(`the update of ${fmtN(a.ovwIds.length)} drifted ${obj} in the target`)) continue;
     log('✏', `Updating ${a.ovwIds.length} drifted ${obj} in target…`);
     try {
       const cProfile = JSON.parse(JSON.stringify(profile));
@@ -3608,8 +3733,8 @@ async function runReconcile(profile, objType, buckets, opts) {
   }
 
   // ── 4. Overwrite drift (update target with source values) ────────────
-  if (!PROBE && ovwIds.length) {
-    // busyLine: another tab's run is on — this step does not start (see legCheck)
+  stepOvw: if (!PROBE && ovwIds.length) {
+    if (!busyLine && halted(`the update of ${fmtN(ovwIds.length)} drifted ${objType} in the target`)) break stepOvw;   // busyLine: another tab's run is on — this step does not start (see legCheck)
     if (!busyLine) log('✏', `Updating ${ovwIds.length} drifted record(s) in target…`);
     if (!busyLine) try {
       const result = await reconcileOverwrite(profile, objType, ovwIds, buckets.drift, srcSess, tgtSess, _dupFields);
@@ -3628,8 +3753,8 @@ async function runReconcile(profile, objType, buckets, opts) {
   // sourceId/targetId per row, and the sessions swap roles — so
   // reconcileOverwrite "reads from source, patches target" becomes
   // "reads from target, patches source" without touching its internals.
-  if (!PROBE && updSrcIds.length) {
-    // busyLine: another tab's run is on — this step does not start (see legCheck)
+  stepSrc: if (!PROBE && updSrcIds.length) {
+    if (!busyLine && halted(`the update of ${fmtN(updSrcIds.length)} drifted ${objType} in the source`)) break stepSrc;   // busyLine: another tab's run is on — this step does not start (see legCheck)
     if (!busyLine) log('←', `Updating ${updSrcIds.length} drifted record(s) in source with target values…`);
     if (!busyLine) try {
       const invProfile = JSON.parse(JSON.stringify(profile));
@@ -3697,6 +3822,16 @@ async function runReconcile(profile, objType, buckets, opts) {
     allErrors.push(notStarted); log('⏳', notStarted, 'ds-prog-warn');
   }
 
+  // Will History show ▶ Continue for this run? (studio-history.js: run.selected && the deployment is a saved one.)
+  // Counts-only mode strips `selected` before the entry is stored (_historyStripCountsOnly), and an Org Compare
+  // deployment is not in _profiles — both end lines below say so rather than promise the button (2026-11-15 round 2).
+  const _canContinue = sftkRecCanContinue(profile, _profiles, typeof _settings !== 'undefined' ? _settings : null);
+  // a stopped run names the steps it never started (close-out review 2026-11-15); an ℹ line is a note, not an error
+  if (notStarted.length && !PROBE) {   // a stopped dry run says its own "not checked" per object
+    const nsLine = sftkRecNotStartedLine(stoppedWhy, notStarted, _canContinue);
+    allErrors.push(`ℹ ${nsLine}`); log('⏸', nsLine, 'ds-prog-warn');
+  }
+
   // ── 5. Save to History so the run is visible later ───────────────────
   const childOk   = Object.values(childCounts).reduce((s, c) => s + c.created + c.relinked + (c.overwritten || 0) + (c.deleted || 0), 0);
   const childFail = Object.values(childCounts).reduce((s, c) => s + c.failed + c.connectFailed + c.relinkFailed + (c.overwriteFailed || 0) + (c.deleteFailed || 0), 0);
@@ -3720,6 +3855,21 @@ async function runReconcile(profile, objType, buckets, opts) {
   const netStop = allErrors.some(e => sftkRunLineIsError(e) && typeof sftkIsNetworkError === 'function' && sftkIsNetworkError(e));
   // …and a dry run that stopped or broke before every selected record got its answer is never 'success'
   const probeIncomplete = PROBE && (probeBroke || netStop || !!stoppedWhy || probeTotals.unreached > 0);
+  // 2026-11-15: what a stopped dry run never built, per object — into the counts History keeps, the run cards,
+  // the log and the headline (sftkProbeReach)
+  const probeExpected = {};
+  if (PROBE) {
+    probeExpected[objType] = treePushIds.length;
+    for (const a of childActs) { const o = a.node.objectType || a.node.childSObject; probeExpected[o] = (probeExpected[o] || 0) + a.groupA.length + a.groupB.length; }
+  }
+  const probeReach = sftkProbeReach(probeAgg, probeExpected, probeIncomplete);
+  probeTotals.unbuilt = probeReach.unbuiltTotal; probeTotals.selected = probeReach.selected;
+  for (const l of probeReach.lines) {
+    (probeAgg[l.obj] = probeAgg[l.obj] || { probed: 0, wouldWrite: 0, refused: 0, cascade: 0, unreached: 0, earlier: 0, sampledOf: 0 }).unbuilt = l.n;
+    if (l.obj !== objType) bumpChild(l.obj, 'created', 0);   // the object has its chip in History even when none of it was built
+    try { if (prog && typeof prog._sftkRunView === 'function') prog._sftkRunView({ phase: 'probeUnbuilt', obj: l.obj, n: l.n }); } catch (_) { /* the log is gone */ }
+    log('⚠', `🧪 ${l.text}`, 'ds-prog-warn');   // the per-object line that adds up to the headline
+  }
   const probeStatus = !probeStatuses.length ? 'success' : probeStatuses.every(x => x === 'success') ? 'success' : (probeTotals.would > 0 ? 'partial' : 'failed');
   const runStatus = PROBE
     ? (probeIncomplete && probeStatus === 'success' ? (probeTotals.would > 0 ? 'partial' : 'failed') : probeStatus)
@@ -3750,7 +3900,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     completedAt:  new Date().toISOString(),
     // what was ticked, per tree path — ▶ Continue re-ticks what a paused or
     // interrupted run did not reach (the next scan says which those are)
-    selected:     { '': treePushIds, ...Object.fromEntries(childActs.filter(a => a.groupA.length).map(a => [a.pathKey, [...a.groupA]])) },
+    selected:     sftkRecRunSelected(treePushIds, childActs),
     ...(stoppedWhy ? { stopped: stoppedWhy } : {}),
     status: runStatus,
     ...(PROBE ? {} : { undo: { ...undoStub, ...runEnd, runEndByOrg } }),
@@ -3787,6 +3937,9 @@ async function runReconcile(profile, objType, buckets, opts) {
     },
     errors: allErrors.slice(0, 50)
   });
+  // the inserts under existing parents a stopped run never started are ticked again by ▶ Continue too (close-out
+  // review 2026-11-15) — merged here (sftkRecRunSelected above already holds every ticked insert; this keeps the never-started ones even if that rule changes)
+  if (!PROBE) { const _he = _history[_history.length - 1]; _he.selected = sftkRecMergeSelected(_he.selected, skippedSel); }
   // the before/after of EVERY updated record of this run, under its own key (never loaded at boot)
   if (!PROBE) {
     const fc = window._sftkRunFieldChanges || [];
@@ -3826,7 +3979,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   const _endEntry = _history[_history.length - 1];
   const _undoSt = (_endEntry && _endEntry.id === runId && typeof sftkUndoCardState === 'function') ? sftkUndoCardState(_endEntry) : { show: false };
   const endLine = sftkRunEndLine({ status: runStatus, stoppedWhy, net: netStopRun && runStatus !== 'success', netLegs: netStopRun ? [] : netLegs.legs, ok: totalOk, fail: totalFail, unconfirmed: unconfirmedN,
-    canUndo: !!(_undoSt.show && !_undoSt.disabled), canContinue: !profile.ephemeral && _profiles.some(x => x.id === profile.id) });
+    canUndo: !!(_undoSt.show && !_undoSt.disabled), canContinue: _canContinue });
   log(endLine.icon, endLine.text, endLine.cls);
   _recRunVerdictTop(prog, runStatus, (runStatus !== 'success' && (!stoppedWhy || stoppedWhy === 'network')) ? `${endLine.icon} ${endLine.text}` : null);
   window._sftkRunActive = false;

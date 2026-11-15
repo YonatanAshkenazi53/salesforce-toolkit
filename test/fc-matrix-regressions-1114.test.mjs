@@ -1341,11 +1341,22 @@ return { removeFieldRefs, _flowLeftWhy };`)(FR8.sftkFlowResourceObjects);
     expect(LY8.removeFieldFromLayout({}, 'Region__c', probe)).toBe(0);
     expect(probe.refused).toBeUndefined();
   });
-  it('one way only: cleaning Task.Region__c still refuses an Event layout, and Activity is not Task’s', () => {
+  // 2026-11-15 (close-out review): this test pinned "Task.Region__c is not Event's" for a CUSTOM field. That is the
+  // defect the review confirmed — a custom field picked on Task is the one Activity field Event holds too, and the
+  // sweep lists the Event component as its blocker. One way only still holds for a STANDARD field (Subject).
+  it('one way only for a standard field: cleaning Task.Subject still refuses an Event layout; the custom Task.Region__c is Event’s too', () => {
     const md = lay(), opts = { objApi: 'Task', fullName: 'Event-Event Layout' };
-    expect(LY8.removeFieldFromLayout(md, 'Region__c', opts)).toBe(0);
+    expect(LY8.removeFieldFromLayout(md, 'Subject', opts)).toBe(0);
     expect(md).toEqual(lay());
-    expect(opts.refused).toBe("this is a page layout of Event, so its Region__c is Event's field, not Task's — nothing was changed");
+    expect(opts.refused).toBe("this is a page layout of Event, so its Subject is Event's field, not Task's — nothing was changed");
+    const md2 = lay(), opts2 = { objApi: 'Task', fullName: 'Event-Event Layout' };
+    expect(LY8.removeFieldFromLayout(md2, 'Region__c', opts2)).toBe(1);
+    expect(opts2.refused).toBeUndefined();
+    expect(JSON.stringify(md2)).not.toContain('Region__c');
+    // …and never another object's layout
+    const md3 = lay(), opts3 = { objApi: 'Task', fullName: 'Contact-Contact Layout' };
+    expect(LY8.removeFieldFromLayout(md3, 'Region__c', opts3)).toBe(0);
+    expect(md3).toEqual(lay());
   });
 
   // 2 — Lightning pages
@@ -1361,11 +1372,22 @@ return { removeFieldRefs, _flowLeftWhy };`)(FR8.sftkFlowResourceObjects);
     expect(FP8.replaceFieldInFlexiPage(md, 'Activity', 'Region__c', 'Region2__c')).toMatchObject({ swapped: 1, left: 0 });
     expect(md.flexiPageRegions[0].itemInstances[0].fieldInstance.fieldItem).toBe('Record.Region2__c');
   });
-  it('an Event record page is still not Task’s: cleaning Task.Region__c leaves it as otherPage', () => {
-    const md = taskPage(); md.sobjectType = 'Event';
+  // 2026-11-15 (close-out review): this test pinned "Task.Region__c is not Event's" for a CUSTOM field. That is the
+  // defect the review confirmed — a custom field picked on Task is the one Activity field Event holds too, and the
+  // sweep lists the Event component as its blocker. One way only still holds for a STANDARD field (Subject).
+  it('an Event record page is not Task’s for a standard field (otherPage); the custom Task.Region__c is taken out of it', () => {
+    const std = taskPage(); std.sobjectType = 'Event'; std.flexiPageRegions[0].itemInstances[0].fieldInstance.fieldItem = 'Record.Subject';
     const out = {};
-    expect(FP8.removeFieldFromFlexiPage(md, 'Task', 'Region__c', out)).toBe(0);
+    expect(FP8.removeFieldFromFlexiPage(std, 'Task', 'Subject', out)).toBe(0);
     expect(out.otherPage).toBe(1);
+    const md = taskPage(); md.sobjectType = 'Event';
+    const out2 = {};
+    expect(FP8.removeFieldFromFlexiPage(md, 'Task', 'Region__c', out2)).toBe(1);
+    expect(out2.otherPage).toBeUndefined();
+    const con = taskPage(); con.sobjectType = 'Contact';
+    const out3 = {};
+    expect(FP8.removeFieldFromFlexiPage(con, 'Task', 'Region__c', out3)).toBe(0);
+    expect(out3.otherPage).toBe(1);
   });
 
   // 3 / 5 — flows on Task
@@ -1379,9 +1401,18 @@ return { removeFieldRefs, _flowLeftWhy };`)(FR8.sftkFlowResourceObjects);
     expect(md.assignments[0].assignmentItems.map(i => i.assignToReference)).toEqual(['x']);
     expect(FL8.removeFieldRefs.lastLeft.other).toEqual([]);
   });
-  it('one way only: ✂ Task.Region__c leaves an Event flow’s $Record.Region__c, named as another object’s', () => {
-    const md = { start: { object: 'Event' }, assignments: [{ name: 'A', assignmentItems: [{ assignToReference: '$Record.Region__c', operator: 'Assign' }] }] };
-    expect(FL8.removeFieldRefs(md, 'Task', 'Region__c')).toBe(0);
+  // 2026-11-15 (close-out review): this test pinned "Task.Region__c is not Event's" for a CUSTOM field. That is the
+  // defect the review confirmed — a custom field picked on Task is the one Activity field Event holds too, and the
+  // sweep lists the Event component as its blocker. One way only still holds for a STANDARD field (Subject).
+  it('one way only for a standard field: ✂ Task.Subject leaves an Event flow’s $Record.Subject; the custom Task.Region__c goes', () => {
+    const std = { start: { object: 'Event' }, assignments: [{ name: 'A', assignmentItems: [{ assignToReference: '$Record.Subject', operator: 'Assign' }] }] };
+    expect(FL8.removeFieldRefs(std, 'Task', 'Subject')).toBe(0);
+    expect(FL8.removeFieldRefs.lastLeft.other).toEqual(['$Record.Subject']);
+    const md = { start: { object: 'Event' }, assignments: [{ name: 'A', assignmentItems: [{ assignToReference: '$Record.Region__c', operator: 'Assign' }, { assignToReference: 'x', operator: 'Assign' }] }] };
+    expect(FL8.removeFieldRefs(md, 'Task', 'Region__c')).toBe(1);
+    expect(FL8.removeFieldRefs.lastLeft.other).toEqual([]);
+    const con = { start: { object: 'Contact' }, assignments: [{ name: 'A', assignmentItems: [{ assignToReference: '$Record.Region__c', operator: 'Assign' }] }] };
+    expect(FL8.removeFieldRefs(con, 'Task', 'Region__c')).toBe(0);
     expect(FL8.removeFieldRefs.lastLeft.other).toEqual(['$Record.Region__c']);
   });
 
@@ -1682,8 +1713,14 @@ describe('review 7 (2026-11-14)', () => {
     expect(rp.refused).toBeNull();
     expect(rp.xml).toContain('<offsetFromField>Event.Area__c</offsetFromField>');
   });
-  it('one way only: Event.Region__c is not Task’s, Task.Region__c is not Account’s', () => {
-    expect(M.sftkMdEditField('WorkflowRule', wf('Event'), 'Task', 'Region__c', 'Area__c').refused).toBeTruthy();
+  // 2026-11-15 (close-out review): this test pinned "Task.Region__c is not Event's" for a CUSTOM field. That is the
+  // defect the review confirmed — a custom field picked on Task is the one Activity field Event holds too, and the
+  // sweep lists the Event component as its blocker. One way only still holds for a STANDARD field (Subject).
+  it('Task.Region__c is not Account’s; one way only for a standard field (Event.Subject is not Task’s); the custom Event.Region__c is Task’s too', () => {
+    expect(M.sftkMdEditField('WorkflowRule', wf('Event'), 'Task', 'Subject', 'Area__c').refused).toBeTruthy();
+    const fam = M.sftkMdEditField('WorkflowRule', wf('Event'), 'Task', 'Region__c', 'Area__c');
+    expect(fam.refused).toBeNull();
+    expect(fam.xml).toContain('<field>Event.Area__c</field>');
     expect(M.sftkMdEditField('WorkflowRule', wf('Task'), 'Account', 'Region__c', 'Area__c').refused).toBeTruthy();
   });
 });

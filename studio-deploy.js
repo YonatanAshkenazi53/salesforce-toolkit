@@ -2526,7 +2526,10 @@ function sftkProbeHint(last) {
   const t = last.totals || {};
   const n = k => Number(t[k]) || 0, f = v => Number(v).toLocaleString('en-US');
   if (last.incomplete || n('unreached')) {
-    const rest = n('unreached') ? `${f(n('unreached'))} record${n('unreached') === 1 ? '' : 's'} not reached` : !n('probed') ? 'no record was checked' : 'not every record was checked';
+    // 2026-11-15: with selected records the stopped run never built, the chip names the selected total too
+    const never = n('unreached') + n('unbuilt');
+    const rest = n('unbuilt') && n('selected') ? `${f(never)} of ${f(n('selected'))} selected record${n('selected') === 1 ? '' : 's'} never checked`
+      : n('unreached') ? `${f(n('unreached'))} record${n('unreached') === 1 ? '' : 's'} not reached` : !n('probed') ? 'no record was checked' : 'not every record was checked';
     return { cls: 'ds-rec-tag-fail',
       title: `${last.net ? 'The connection to Salesforce dropped during the dry run. ' : ''}The dry run of these inserts did not finish, so it says nothing about the records it did not reach. Nothing was written. Run 🧪 Dry run again.`,
       text: `🧪 dry run stopped before it finished — ${rest}${n('refused') ? `, ${f(n('refused'))} would be refused` : ''}` };

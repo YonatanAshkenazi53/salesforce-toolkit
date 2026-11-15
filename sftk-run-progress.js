@@ -79,11 +79,13 @@ function sftkRunProgressReduce(state, evt, now) {
       c.mode = 'read'; c.state = 'reading';
       // the same object in a later engine call of this run: the card is open again
       c.finished = false; c.endedOpen = false; c.error = ''; c.afterDone = false;
+      c.unconfirmed = 0; c.writeRefused = false;
       return { card: c };
     }
     case 'fetched': {
       const c = _sftkRunCard(state, evt.obj, now);
       c.mode = 'write'; c.state = 'writing'; c.total = Number(evt.count) || 0; c.done = 0;
+      c.unconfirmed = 0; c.writeRefused = false;
       c.writeStartedAt = now;
       c.finished = false; c.endedOpen = false; c.error = ''; c.afterDone = false;
       // 🧪 a dry run: the records are built now and sent later, in one transaction
@@ -100,6 +102,9 @@ function sftkRunProgressReduce(state, evt, now) {
       if (c.batchSize == null && done > 0) c.batchSize = done;   // the first batch sizes the rest
       c.done = done; c.total = Number(evt.total) || c.total || 0;
       c.created = Number(evt.created) || 0; c.failed = Number(evt.failed) || 0;
+      // 2026-11-15 (close-out review): records sent in a write call that threw (background.js) — not written, or
+      // not confirmed written; never part of "written"
+      c.unconfirmed = Number(evt.unconfirmed) || 0; c.writeRefused = !!evt.refused;
       // what the accepted records became: a rollback deletes and restores, it creates nothing
       if (evt.okWord) c.okWord = String(evt.okWord);
       // a dry run's card closes on its verdict (probeDone), not when the records are built
@@ -116,6 +121,16 @@ function sftkRunProgressReduce(state, evt, now) {
         cards.push(c);
       }
       return cards.length ? { cards } : null;
+    }
+    // 🧪 2026-11-15: the page's word, once a stopped dry run is over, that n selected records of this object were
+    // never built — the headline counts them, so the object has a card that says so (it may have had none).
+    case 'probeUnbuilt': {
+      const c = _sftkRunCard(state, evt.obj, now);
+      c.probe = true; c.mode = 'write';
+      c.unbuilt = Number(evt.n) || 0;
+      if (!c.verdict && !c.finished) c.endedOpen = true;
+      c.finished = true;
+      return { card: c };
     }
     // 🧪 the verdict for one object
     case 'probeDone': {
@@ -192,20 +207,28 @@ function sftkRunProgressCardText(c, now) {
   if (c.probe) {
     out.timeText = sftkRunFmtDur(elapsedMs);
     const v = c.verdict;
+    const ub = Number(c.unbuilt) || 0;   // selected, never built: the stop came first (2026-11-15)
     if (v) {
-      const bad = v.refused + v.cascade + v.unreached;
+      const bad = v.refused + v.cascade + v.unreached + ub;
       out.icon = bad ? '⚠' : '✅'; out.pct = 100;
       out.failPct = v.probed ? Math.min(100, Math.round(bad / v.probed * 100)) : 0;
       // 2026-11-15: records Salesforce never got to are named, with their count — "5 checked · 5 not reached"
       // said both at once. The count that leads is "in the dry run" then, not "checked".
       out.stateText = v.refused ? `dry run: ${sftkRunFmtN(v.refused)} would be refused${v.unreached ? `, ${sftkRunFmtN(v.unreached)} not reached` : ''}`
         : v.unreached ? `dry run stopped — ${sftkRunFmtN(v.unreached)} not reached`
+        : ub ? `dry run stopped — ${sftkRunFmtN(ub)} never checked`
         : bad ? 'dry run: not every record was checked' : 'dry run: every record would be written';
-      out.numsText = `${sftkRunFmtN(v.probed)} ${v.unreached ? 'in the dry run' : 'checked'} · ${sftkRunFmtN(v.wouldWrite)} would be written${v.refused ? ` · ${sftkRunFmtN(v.refused)} refused` : ''}${v.cascade ? ` · ${sftkRunFmtN(v.cascade)} not checked (parent refused)` : ''}${v.unreached ? ` · ${sftkRunFmtN(v.unreached)} not reached` : ''}${v.sampledOf ? ` · a sample of ${sftkRunFmtN(v.sampledOf)}` : ''}`;
+      out.numsText = `${sftkRunFmtN(v.probed)} ${v.unreached ? 'in the dry run' : 'checked'} · ${sftkRunFmtN(v.wouldWrite)} would be written${v.refused ? ` · ${sftkRunFmtN(v.refused)} refused` : ''}${v.cascade ? ` · ${sftkRunFmtN(v.cascade)} not checked (parent refused)` : ''}${v.unreached ? ` · ${sftkRunFmtN(v.unreached)} not reached` : ''}${v.sampledOf ? ` · a sample of ${sftkRunFmtN(v.sampledOf)}` : ''}${ub ? ` · ${sftkRunFmtN(ub)} more selected, never checked` : ''}`;
       out.alive = false;
       return out;
     }
     out.icon = '🧪';
+    if (ub) {   // no verdict at all: none of the object's selected records was checked
+      out.icon = c.error ? '❌' : '⚠'; out.alive = false; out.pct = 0;
+      out.stateText = c.error ? `dry run stopped: ${words(c.error)}` : 'dry run stopped — not checked';
+      out.numsText = `${sftkRunFmtN(Math.max(ub, total))} selected record(s) never checked`;
+      return out;
+    }
     if (!total) { out.icon = '✅'; out.stateText = 'nothing to check'; out.alive = false; return out; }
     // the run is over and this object never got its verdict (2026-11-15)
     if (c.error || c.endedOpen) {
@@ -223,7 +246,11 @@ function sftkRunProgressCardText(c, now) {
     out.numsText = `${sftkRunFmtN(done)} / ${sftkRunFmtN(total)} built${c.sampledOf ? ` · a sample of ${sftkRunFmtN(c.sampledOf)}` : ''}`;
     return out;
   }
-  out.failPct = total ? Math.min(pct, Math.round((c.failed || 0) / total * 100)) : 0;
+  // 2026-11-15 (close-out review): unc = records whose write call threw. They are not "written": the bar is not
+  // solid green for them and no branch below says "written" / ✅ over them.
+  const unc = c.unconfirmed > 0 ? Number(c.unconfirmed) : 0;
+  const uncText = !unc ? '' : c.writeRefused ? `${sftkRunFmtN(unc)} not written (the write call was refused)` : `${sftkRunFmtN(unc)} not confirmed written`;
+  out.failPct = total ? Math.min(pct, Math.round(((c.failed || 0) + unc) / total * 100)) : 0;
   // No rate before two seconds have passed — the first batch landing at 0:00
   // read "207100/s" in the harness.
   const rate = elapsedMs >= 2000 && done > 0 ? done / (elapsedMs / 1000) : 0;
@@ -250,6 +277,9 @@ function sftkRunProgressCardText(c, now) {
     // the run ended with this object part-way: never "written"
     out.icon = '⚠';
     out.stateText = done ? 'stopped before every record was written' : 'stopped — nothing was written';
+  } else if (c.finished && unc) {
+    out.icon = '⚠';
+    out.stateText = `${uncText}${c.failed ? `, ${sftkRunFmtN(c.failed)} failed` : ''}`;
   } else if (c.finished) {
     out.icon = c.failed ? '⚠' : '✅';
     // an object with no records to write is not "written" (2026-11-15)
@@ -264,8 +294,10 @@ function sftkRunProgressCardText(c, now) {
   }
   out.timeText = [sftkRunFmtDur(elapsedMs), rateText, !c.finished && left != null ? `~${sftkRunFmtDur(left * 1000)} left` : '']
     .filter(Boolean).join(' · ');
-  const tail = c.mode === 'bulkRead' ? '' : ` · ${sftkRunFmtN(c.created)} ${c.okWord || 'created'}${c.failed ? ` · ${sftkRunFmtN(c.failed)} failed` : ''}`;
-  out.numsText = total ? `${sftkRunFmtN(done)} / ${sftkRunFmtN(total)} ${verb}${done ? tail : ''}` : (done ? `${sftkRunFmtN(done)} ${verb}` : '');
+  const tail = c.mode === 'bulkRead' ? '' : ` · ${sftkRunFmtN(c.created)} ${c.okWord || 'created'}${c.failed ? ` · ${sftkRunFmtN(c.failed)} failed` : ''}${unc ? ` · ${uncText}` : ''}`;
+  // "150 / 150 written" over a call that threw is untrue: those records were SENT
+  const verbN = unc ? 'sent' : verb;
+  out.numsText = total ? `${sftkRunFmtN(done)} / ${sftkRunFmtN(total)} ${verbN}${done ? tail : ''}` : (done ? `${sftkRunFmtN(done)} ${verbN}` : '');
   if (c.finished) out.alive = false;
   return out;
 }
@@ -301,7 +333,7 @@ function sftkRunProgressHandler(logEl) {
     row.querySelector('.ds-prog-bar-fill').style.width = `${t.pct}%`;
     row.querySelector('.ds-prog-bar-fail').style.width = `${t.failPct}%`;
     row.classList.toggle('ds-prog-card-done', !!c.finished);
-    row.classList.toggle('ds-prog-card-failed', !!c.failed || !!c.error);
+    row.classList.toggle('ds-prog-card-failed', !!c.failed || !!c.error || c.unconfirmed > 0);
     logEl.scrollTop = logEl.scrollHeight;
   }
 

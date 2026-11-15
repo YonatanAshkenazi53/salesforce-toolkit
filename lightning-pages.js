@@ -728,9 +728,10 @@ const LightningPages = (() => {
           if (o && String(o.type || '').toLowerCase() === 'flexipage' && o.content) viaApp.add(String(o.content).toLowerCase());
         }
       }
-      const named = dev => { const d = String(dev || '').toLowerCase(); return [...viaApp].some(c => c === d || c.endsWith('__' + d)); };
+      // 2026-11-15 (close-out review): the match was "the name, or anything ending in __name" on the DeveloperName
+      // alone — the rule the Org Health card was fixed for the same day. See lpAppNamesPage.
       for (const pg of statusTargets) {
-        if (named(pg.DeveloperName)) syncPageStatus(pg.Id, 'Active');
+        if (lpAppNamesPage(viaApp, pg, allPages)) syncPageStatus(pg.Id, 'Active');
         // "Not assigned" needs BOTH reads to have answered: its object's describe
         // (not the org default) and every app (not assigned there either).
         else if (!_appIndexErr && pg.EntityDefinitionId && _odObjDone.has(pg.EntityDefinitionId)) syncPageStatus(pg.Id, 'Unassigned');
@@ -4634,6 +4635,24 @@ function lpSessionRetryOk(origOrgUrl, failedSid, fresh) {
 // org's own — refusing a free name is the safe mistake, overwriting is not.
 function lpPageIsPackaged(p) {
   return !!(p && p.NamespacePrefix && /^installed/i.test(String(p.ManageableState || '')));
+}
+
+// PURE. 2026-11-15 (close-out review): does a Lightning app's override name THIS page? names: the lower-case
+// <content> of every app's Flexipage override. A page is named by its full name only — X for the org's own page,
+// ns__X for a namespaced one. The loose "X, or anything ending in __X" marked the org's own unassigned X Active
+// whenever an app named an installed package's pkg__X (and pkg's X borrowed the assignment of the org's own X),
+// while the Org Health card called the same page unassigned and sent the user here. A bare X is taken for a
+// namespaced page only when no OTHER own page (lpPageIsPackaged false) has that DeveloperName — a namespaced dev
+// org may write its own pages without the prefix. The same rule as studio-orghealth.js sftkOhAppCount.
+function lpAppNamesPage(names, page, pages) {
+  const d = String((page && page.DeveloperName) || '').toLowerCase();
+  if (!d || !names) return false;
+  const has = c => (typeof names.has === 'function' ? names.has(c) : Array.from(names).includes(c));
+  const ns = String((page && page.NamespacePrefix) || '').toLowerCase();
+  if (!ns) return has(d);
+  if (has(`${ns}__${d}`)) return true;
+  const localSameName = (pages || []).some(q => q && q !== page && !lpPageIsPackaged(q) && String(q.DeveloperName || '').toLowerCase() === d);
+  return has(d) && !localSameName;
 }
 
 // 2026-11-14: is this API name already used by a loaded page? Salesforce

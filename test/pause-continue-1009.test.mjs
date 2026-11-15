@@ -25,7 +25,9 @@ describe('a deployment can be paused and continued; a closed page stops it and s
     expect(REC).toContain('id="dsRunPauseBtn"');
     expect(REC).toContain("recPort?.postMessage({ cmd: 'pause' });");
     expect(REC).toContain('Keep this tab open: closing it pauses the run after the batch in flight. Paused runs continue from History.');
-    expect(REC).toContain("selected:     { '': treePushIds, ...Object.fromEntries(childActs.filter(a => a.groupA.length).map(a => [a.pathKey, [...a.groupA]])) },");
+    // 2026-11-15 (close-out review round 3): the selection is built by sftkRecRunSelected — it now holds the inserts under
+    // existing parents too (behaviour test: regress-1115-close-r3.test.mjs); the old line pinned the list without them
+    expect(REC).toContain("selected:     sftkRecRunSelected(treePushIds, childActs),");
     expect(REC).toContain("...(stoppedWhy ? { stopped: stoppedWhy } : {}),");
     expect((REC.match(/if \(res && res\.stopped\) stoppedWhy = res\.stopped;/g) || []).length).toBe(4);
   });

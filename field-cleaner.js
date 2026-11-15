@@ -762,6 +762,7 @@ const FieldCleaner = (() => {
         <div id="fcApiCost" style="display:none;font-size:11px;color:var(--subtext);margin-top:4px;line-height:1.4"></div>
 
         <!-- Results area -->
+        <div id="fcUndoAll"></div>
         <div id="fcResults"></div>
         <div id="fcToolHist"></div>
         <div id="fcSnapLog"></div>
@@ -1905,7 +1906,7 @@ const FieldCleaner = (() => {
         fullNames: slice.map(t => t.fullName), _suppressError: true });
       if (!read || read.error) throw new Error(read?.error || 'the report types could not be read');
       for (const rec of sftkMdExtractRecords(read.text).records) {
-        const n = sftkRtMentions(rec.innerXml, _selObj.api, _selField.api);
+        const n = sftkRtMentions(rec.innerXml, sftkMdFamObj(_selObj.api, _selField.api), _selField.api);   // Task / Event custom field = Activity's (2026-11-15)
         if (!n) continue;
         const label = sftkMdChildText(rec.innerXml, 'label') || rec.fullName;
         if (known.has(label.toLowerCase()) || known.has(rec.fullName.toLowerCase())) continue;
@@ -2344,7 +2345,11 @@ const FieldCleaner = (() => {
       const id15 = x => String(x || '').substring(0, 15);
       const indexed = (existingDeps || []).filter(d => d.MetadataComponentType === 'EmailTemplate');
       const indexedIds = new Set(indexed.map(d => id15(d.MetadataComponentId)));
-      const found = all.filter(t => indexedIds.has(id15(t.Id)) || sftkTplNamesField(t, obj, _selField.api));
+      // 2026-11-15 (close-out review round 3): a custom field picked on Task / Event is Activity's, so {!Event.X__c} is
+      // this field too (sftkMdFamObj, as ✂ / ⇄ already read it). The picked object is still asked first: a bare name
+      // counts by the template's own RelatedEntityType, which is Task or Event, never Activity.
+      const tplFam = sftkMdFamObj(obj, _selField.api);
+      const found = all.filter(t => indexedIds.has(id15(t.Id)) || sftkTplNamesField(t, obj, _selField.api) || (tplFam !== obj && sftkTplNamesField(t, tplFam, _selField.api)));
       // which email alerts send them — one Tooling query, only when a template was found
       const sentBy = {};
       let alertRows = [];
@@ -3361,7 +3366,7 @@ const FieldCleaner = (() => {
     const item = (type, it) => {
       const hl = t => esc(t).replace(new RegExp(`(${_selField.api.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\  // ── 📊 The report sweep (opt-in) ─────────────────────────────────────────')})`, 'gi'), '<mark>$1</mark>');
       const lines = it.lines.slice(0, 6).map(l => `<span class="ln">${l.file ? esc(l.file) + ':' : ''}${l.line}</span>${hl(l.text)}`).join('\n') + (it.lines.length > 6 ? `\n<span class="ln"></span>… ${it.lines.length - 6} more line${it.lines.length - 6 === 1 ? '' : 's'}` : '');
-      return `<div class="fc-sweep-item"><div class="fc-sweep-item-hd"><code>${esc(it.component)}</code>${it.section ? `<span class="ds-subtext">${esc(it.section)}</span>` : ''}<span class="fc-sweep-inscan" title="No kind in the list above fixes this one — change it in Setup or in your project, then scan again">by hand</span><span class="fc-sweep-path">${esc(it.path)}</span></div><pre class="fc-sweep-lines">${lines}</pre></div>`;
+      return `<div class="fc-sweep-item"><div class="fc-sweep-item-hd"><code>${esc(it.component)}</code>${it.section ? `<span class="ds-subtext">${esc(it.section)}</span>` : ''}${type === 'DocText' ? `<span class="fc-sweep-inscan" title="Plain text only — Salesforce does not read it as a reference; the delete goes through with it in place">nothing to do</span>` : `<span class="fc-sweep-inscan" title="No kind in the list above fixes this one — change it in Setup or in your project, then scan again">by hand</span>`}<span class="fc-sweep-path">${esc(it.path)}</span></div><pre class="fc-sweep-lines">${lines}</pre></div>`;
     };
     const compact = new Set(['Profile', 'PermissionSet']);
     const group = (type, t) => shown(t).length ? `<div class="fc-sweep-grp"><div class="fc-sweep-grp-hd"><span>${t.sev === 'blocker' ? '🔒' : '👀'} ${esc(t.label)}</span><span class="fc-sweep-grp-n">${N(shown(t).length)}</span></div>
@@ -4560,7 +4565,8 @@ const FieldCleaner = (() => {
       }
       if (type === 'EmailTemplate') {
         const rec = await _tplRead(componentId);
-        const r = swap ? sftkTplReplace(rec, field, nf, obj) : sftkTplRemove(rec, field, obj);   // another object's same-named field stays (2026-11-14)
+        const famObj = sftkMdFamObj(obj, field);   // Task / Event custom field = Activity's (2026-11-15), as the fix itself
+        const r = swap ? sftkTplReplace(rec, field, nf, famObj) : sftkTplRemove(rec, field, famObj);   // another object's same-named field stays (2026-11-14)
         if (!r.n) return '';
         return r.fields.map(k => hd(`<code>${esc(k)}</code>`) + _textDiffHtml(rec[k], r.rec[k])).join('');
       }
@@ -4580,7 +4586,8 @@ const FieldCleaner = (() => {
         const fullName = (row && row._fullName) || (/^070/.test(String(componentId)) ? null : componentId);
         if (!fullName || (row && row._managed)) return '';
         const before = await readReportType(fullName);
-        const res = swap ? sftkRtReplaceField(before, obj, field, nf) : sftkRtRemoveField(before, obj, field);
+        const rtObj = sftkMdFamObj(obj, field);   // Task / Event custom field = Activity's (2026-11-15), as the scan and the fix
+        const res = swap ? sftkRtReplaceField(before, rtObj, field, nf) : sftkRtRemoveField(before, rtObj, field);
         if (!res.changed || (res.viaLookup && res.viaLookup.length)) return '';   // refused by the fix (2026-11-14)
         return hd('The XML') + _xmlDiffHtml(before, res.xml);
       }
@@ -4906,14 +4913,22 @@ const FieldCleaner = (() => {
   // rendered after the done-label (e.g. "↗ Check access" after a flow fix).
   // detailHtml — optional pre-built block under the label (a flow's result,
   // one line per fact).
+  // did marking this row done change the org? (a row that was only settled — "nothing uses the field here" — did not)
+  function _fixedRowChanged(label) { return !/^✅ (Nothing uses the field here|No version of this flow references)/.test(String(label || '')); }
   function markFixed(componentId, label = '✅ Done', extraLinksHtml = '', detailHtml = '') {
     const item = eid(`fcItem_${componentId}`);
     if (!item) return;
     const name = item.querySelector('.fc-item-name')?.textContent || '';
     item.classList.add('fc-item-fixed');
+    // ↩ Undo on the row itself (owner 2026-11-15: "we dont have undo for anything there" — the undo was only in the
+    // History button of the top bar and in a folded list under the results). It opens this tool's History, where the
+    // change just made is the first entry with its ↩ Undo (or the true reason it has none). Not on a row that was
+    // only settled — nothing was changed there.
+    const changed = _fixedRowChanged(label);
     item.innerHTML = `
       <span class="fc-item-name">${esc(name)}</span>
-      <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>${detailHtml}`;
+      <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>${changed ? '<button type="button" class="btn btn-secondary btn-sm fc-item-undo" title="Opens Field Cleaner’s History — this change is the first entry, with ↩ Undo">↩ Undo</button>' : ''}${detailHtml}`;
+    item.querySelector('.fc-item-undo')?.addEventListener('click', () => { if (typeof window.sftkToolHistoryOpen === 'function') window.sftkToolHistoryOpen('fields'); });
     // Close any open XML inspector for this item
     const xmlPanel = eid(`fcXml_${componentId}`);
     if (xmlPanel) {
@@ -5261,7 +5276,7 @@ const FieldCleaner = (() => {
       <div class="fc-prev-sec"><b>Prefer to fix it yourself in Flow Builder?</b> ${open}
         <ol class="fc-prev-steps"><li>Open <i>Toolbox → Manager</i> and search for each API name shown above (<code>like_this</code>).</li><li>Change or remove the reference, and reconnect anything you delete.</li><li>Save as a new version and activate it.</li><li>Run ✂ Remove here again: it finds the active version clean and only removes the old versions.</li></ol></div>
       </details>
-      ${preset === 'replace' ? `<div class="fc-prev-sec">${pv.emptied.length ? ` <em>Salesforce is likely to refuse it: ${pv.emptied.length} element(s) would be left empty. If it does, nothing is deleted.</em>` : ''}${pv.remaining.length ? ` <em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : ''} To switch the flow off instead, cancel and press <b>🗑 Delete versions · flow off</b> on its card.</div>` : `<div class="fc-prev-hd">The active v${act.num} — choose what happens to it</div>
+      ${preset === 'replace' ? `<div class="fc-prev-sec">${pv.emptied.length ? ` <em>Salesforce is likely to refuse it: ${pv.emptied.length} element(s) would be left empty. If it does, nothing is deleted.</em>` : ''}${pv.remaining.length ? ` <em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : ''} To switch the flow off instead, cancel and press <b>🗑 Delete versions · flow off</b> on its card.</div>` : `<div class="fc-prev-hd">The active v${act.num} — ${!canReplace && (!fp.previewOutcomes || fp.previewOutcomes.empty) ? 'the one way to clear it' : 'choose what happens to it'}</div>
       ${(() => {
         // Every scenario answers the same three questions in the same order (owner 2026-11-11: "kind of hard to
         // understand each scenario here"): what happens · what the flow does afterwards · what it means for the field.
@@ -5270,9 +5285,13 @@ const FieldCleaner = (() => {
         const free = 'No longer used by this flow.';
         const locked = n => `<b>Still locked</b> — ${n} place${n === 1 ? '' : 's'} in the new version still use${n === 1 ? 's' : ''} it and must be changed by hand (see “Inside the active version” above).`;
         const nOut = pv.removed.length, nEmpty = pv.emptied.length, nLeft = pv.remaining.length;
-        const a = `<label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? (pv.emptied.length ? '' : 'checked') : 'disabled'}>
-        <span class="fc-opt"><span class="fc-opt-hd"><b>Keep the flow running — only the field comes out</b>${!canReplace ? tag('not available', 'off') : nEmpty ? tag('⚠ likely refused', 'warn') : nLeft ? tag('🔒 field stays locked', 'warn') : tag('✓ recommended', 'ok')}</span>
-        ${plainOff ? row('Why not', `Taking the field out leaves ${nEmpty} element${nEmpty === 1 ? '' : 's'} with nothing in ${nEmpty === 1 ? 'it' : 'them'}, and Salesforce refuses a version like that.`) : !canReplace ? row('Why not', 'There is nothing the automatic fix can take out of this version.') : `
+        // A way that cannot be taken is not drawn as a greyed-out card (owner 2026-11-15: no point showing an option
+        // that is not available). Its reason is kept, in one folded line under the ways that can be taken.
+        const whyNot = [];
+        if (!canReplace) whyNot.push(['Only the field comes out', plainOff ? `Taking the field out leaves ${nEmpty} element${nEmpty === 1 ? '' : 's'} with nothing in ${nEmpty === 1 ? 'it' : 'them'}, and Salesforce refuses a version like that.` : 'There is nothing the automatic fix can take out of this version.']);
+        const a = !canReplace ? '' : `<label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="replace" ${pv.emptied.length ? '' : 'checked'}>
+        <span class="fc-opt"><span class="fc-opt-hd"><b>Keep the flow running — only the field comes out</b>${nEmpty ? tag('⚠ likely refused', 'warn') : nLeft ? tag('🔒 field stays locked', 'warn') : tag('✓ recommended', 'ok')}</span>
+        ${`
         ${row('What happens', `A new v${fp.plan.expectNew} is deployed without the ${nOut} reference${nOut === 1 ? '' : 's'} to the field, checked to be active, and then v${act.num} is deleted.`)}
         ${row('The flow', 'Keeps running, with the same logic minus the field.')}
         ${nEmpty ? row('Risk', `Salesforce will probably refuse: ${nEmpty} element${nEmpty === 1 ? '' : 's'} would be left with nothing in ${nEmpty === 1 ? 'it' : 'them'}. If it refuses, nothing is changed. Pick this only if you will fix ${nEmpty === 1 ? 'it' : 'them'} in Flow Builder.`, 'fc-opt-row-warn') : ''}
@@ -5282,9 +5301,7 @@ const FieldCleaner = (() => {
           const po = fp.previewOutcomes, one = po.outcomes.length === 1;
           const outs = po.outcomes.map(o => `“${esc(o.outcomeLabel)}” of the decision “${esc(o.decisionLabel)}”${o.decisionGone ? ' (its last outcome, so the decision goes too)' : ''}`).join('; ');
           const title = `Keep the flow running — the whole outcome${one ? '' : 's'} that rest${one ? 's' : ''} on the field come${one ? 's' : ''} out`;
-          if (po.empty) b = `<label class="fc-prev-opt fc-prev-opt-off"><input type="radio" name="fcActiveMode" value="replace" data-outcomes="1" disabled>
-        <span class="fc-opt"><span class="fc-opt-hd"><b>${title}</b>${tag('not available', 'off')}</span>
-        ${row('Why not', `${outs}: that decision is all this flow does. Without it nothing is connected to Start, and Salesforce refuses a flow like that. Switch the flow off below, or change it in Flow Builder.`)}</span></label>`;
+          if (po.empty) whyNot.push([`The whole outcome${one ? '' : 's'} come${one ? 's' : ''} out`, `${outs}: that decision is all this flow does. Without it nothing is connected to Start, and Salesforce refuses a flow like that. Change it in Flow Builder to keep the flow running.`]);
           else b = `<label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="replace" data-outcomes="1">
         <span class="fc-opt"><span class="fc-opt-hd"><b>${title}</b>${po.remaining.length ? tag('🔒 field stays locked', 'warn') : tag('changes what the flow does', 'info')}</span>
         ${row('What happens', `${outs} ${one ? 'is' : 'are'} removed. A record that took ${one ? 'that outcome' : 'one of them'} takes the default outcome instead. A new v${fp.plan.expectNew} is deployed and checked, then v${act.num} is deleted.`)}
@@ -5296,7 +5313,8 @@ const FieldCleaner = (() => {
         ${row('What happens', `The flow is switched off, the org is read again to confirm nothing is active, and v${act.num} is deleted with every other version that mentions the field.`)}
         ${row('The flow', '<b>Stops running.</b>')}
         ${row('The field', free)}</span></label>`;
-        return a + b + c;
+        const why = whyNot.length ? `<details class="fc-prev-more fc-opt-whynot"><summary>Why can’t the flow keep running?</summary>${whyNot.map(([k, v]) => `<div class="fc-prev-sec"><b>${k}</b> — ${v}</div>`).join('')}</details>` : '';
+        return a + b + c + why;
       })()}`}
     </div>`;
   }
@@ -5344,7 +5362,9 @@ const FieldCleaner = (() => {
     return cur;
   }
   async function _flowSwap(metadata) {
-    const obj = _selObj.api, from = _selField.api, to = _replField.api;
+    // 2026-11-15 (close-out review round 2): the same family rule as removeFieldRefs — with Task.Region__c picked an
+    // Event flow's mentions were all skipped as another object's field (sftkMdFamObj: Activity owns Task and Event)
+    const obj = sftkMdFamObj(_selObj.api, _selField.api), from = _selField.api, to = _replField.api;
     const probe = sftkFlowReplaceField(JSON.parse(JSON.stringify(metadata)), obj, from, to);
     const owners = new Map();
     for (const need of probe.needs) owners.set(_chainKey(need.rootObj, need.rels), await _chainOwner(need.rootObj, need.rels));
@@ -5612,7 +5632,10 @@ const FieldCleaner = (() => {
   async function _flowNamesThisField(metadata) {
     if (!flowReferencesField(metadata)) return false;
     try {
-      const obj = _selObj.api, from = _selField.api, to = 'SFTK_Owner_Probe__c';
+      // 2026-11-15 (close-out review round 2): Task / Event custom field = Activity's (sftkMdFamObj). Without it the
+      // probe put an Event flow's Task.Region__c on "another object", the plan found no referencing version and the
+      // row was marked fixed with the flow still holding the field.
+      const obj = sftkMdFamObj(_selObj.api, _selField.api), from = _selField.api, to = 'SFTK_Owner_Probe__c';
       let r = sftkFlowReplaceField(JSON.parse(JSON.stringify(metadata)), obj, from, to);
       if (r.needs && r.needs.length) {
         const owners = new Map();
@@ -5748,7 +5771,9 @@ const FieldCleaner = (() => {
     // Contact.Region__c from a Get Records on Contact — a deploy that succeeds and quietly widens another query.
     // The resolver is the one ⇄ Replace uses (sftk-fieldreplace.js, loaded before this file); when it is missing,
     // or a root cannot be resolved, the reference is matched as before.
-    const objL   = String(objApi).toLowerCase();
+    // 2026-11-15 (close-out review): a custom field picked on Task / Event is Activity's, and the sibling's too —
+    // objL is only ever asked "is this object ours" (sftkMdIsOwnObj), and Activity owns both.
+    const objL   = sftkMdFamObj(objApi, fieldApi).toLowerCase();
     const resObj = typeof sftkFlowResourceObjects === 'function' ? sftkFlowResourceObjects(metadata) : null;
     // A Record Update / Create that works on a record variable (inputReference) carries no <object>: its object is
     // the variable's (2026-11-14 review: { inputReference: 'con' } on a Contact variable passed the check and ✂
@@ -6042,6 +6067,9 @@ const FieldCleaner = (() => {
     // back, the refusal claimed a merge field "is read elsewhere", and ✂ could never clean the version. Only what
     // the flow reads counts: the keys the scan and the ⇄ engine skip (sftk-flowsurgery's SFTK_FLOW_TEXT_KEYS) are
     // skipped here too.
+    // 2026-11-15 (close-out review round 2): an interview label is not only documentation — it takes merge fields
+    // (the default is "<Flow> {!$Flow.CurrentDateTime}"), so {!Get_Account.Region__c} in it READS the field through
+    // the lookup and the queried field must stay. Its plain text still does not count: only its {! … } are read.
     const DOC_KEYS = new Set(['description', 'label', 'interviewLabel', 'defaultConnectorLabel', 'fullName', 'processType', 'status']);
     const restText = skipEl => {
       const out = [];
@@ -6051,6 +6079,7 @@ const FieldCleaner = (() => {
         if (Array.isArray(v)) { v.forEach(walk); return; }
         if (typeof v === 'object') for (const k of Object.keys(v)) { if (!DOC_KEYS.has(k)) walk(v[k]); }
       })(metadata);
+      if (typeof metadata.interviewLabel === 'string') for (const m of metadata.interviewLabel.matchAll(/{!\s*([$A-Za-z0-9_.]+)\s*}/g)) out.push(m[1]);
       return out.join('\n');
     };
     for (const q of qDropped) {
@@ -6519,7 +6548,12 @@ const FieldCleaner = (() => {
     const obj = _selObj.api, field = _selField.api;
     const swap = _swapOn();
     const swapTo = swap ? _replField.api : '';
-    const res = swap ? sftkRtReplaceField(before, obj, field, swapTo) : sftkRtRemoveField(before, obj, field);
+    // 2026-11-15 (close-out review round 3): the scan lists a type by the FAMILY object (sftkMdFamObj: a custom field
+    // picked on Task / Event is Activity's, and an Activities report type keeps it under <table>Activity</table>).
+    // The remover, the verify and the undo's pattern were left on the picked object, so the row the scan listed was
+    // refused as "another table's field, which is not this field" — untrue. famObj edits and verifies; obj is for the texts.
+    const famObj = sftkMdFamObj(obj, field);
+    const res = swap ? sftkRtReplaceField(before, famObj, field, swapTo) : sftkRtRemoveField(before, famObj, field);
     // A column reaching the field through a lookup (Parent.Field) is never edited here — which
     // object it reaches cannot be told from the XML — and it keeps the type naming the field, so
     // the deploy would only half-do the job: refused whole, with the column named (2026-11-14).
@@ -6548,8 +6582,8 @@ const FieldCleaner = (() => {
         verify: async () => {
           let after;
           try { after = await readReportType(fullName); } catch (_) { return { ok: false, text: null }; }
-          const gone = sftkRtMentions(after, obj, field) === 0;
-          const hasNew = !swap || res.newAlreadyThere || sftkRtMentions(after, obj, swapTo) > 0;
+          const gone = sftkRtMentions(after, famObj, field) === 0;
+          const hasNew = !swap || res.newAlreadyThere || sftkRtMentions(after, famObj, swapTo) > 0;
           return { ok: gone && hasNew, text: null };
         },
       });
@@ -6576,7 +6610,7 @@ const FieldCleaner = (() => {
             // SOAP re-read below — the column of this object's field must be back
             msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBefore },
             verify: { msg: { type: 'SF_MD_READ', mdType: 'ReportType', fullNames: [fullName] },
-              pattern: `<field>${_rxEsc(field)}</field>\\s*<table>${_rxEsc(obj)}</table>`, flags: 'i', retries: 3,
+              pattern: `<field>${_rxEsc(field)}</field>\\s*<table>${famObj === 'Activity' ? '(?:Activity|Task|Event)' : _rxEsc(obj)}</table>`, flags: 'i', retries: 3,
               text: { ok: `"${componentName}": the column of ${obj}.${field} is back — verified by re-reading the org`,
                       bad: `"${componentName}": the deploy was accepted, but on re-read the column is not there yet` } },
           }] }
@@ -6736,7 +6770,10 @@ const FieldCleaner = (() => {
       title: `${verb} ${spec.what} — ${cfg.label || type}`,
       icon: verb === 'Remove' ? '✂' : '🗑',
       items: [{ label: componentName, sub: spec.what }],
-      revOverride: { html: special, needsCheckbox: true },
+      // no "I understand this is permanent" tick (owner 2026-11-15): it is not permanent — the definition is kept as a
+      // restore point and ↩ Undo deploys it back, as the text above says. The org-name gate of a production org stays.
+      revOverride: { html: special, needsCheckbox: false, cls: 'sftk-rev-newver' },
+      undoHint: 'Undo in History',
       confirmLabel: `${verb === 'Remove' ? '✂' : '🗑'} ${verb} the ${spec.what}`,
       production: gate.production ? { label: gate.label } : null,
       // asked by a ✂ walk that could not take the field out of this one: the reason first, and the three ways on
@@ -7054,18 +7091,32 @@ const FieldCleaner = (() => {
       const n = Math.max(0, (Number(b?.textContent) || 1) - 1);
       if (n === 0) row.remove(); else if (b) b.textContent = String(n);
     }
+    // The count the Delete button and Salesforce's answer box read follows too (owner 2026-11-15: "salesforce would
+    // accept the delete but i cant click the delete button" — the chips said every blocker was cleared, while the
+    // button's lock and the answer box still counted the 14 of the scan).
+    _manualBlockers = _afterDeleteCount(_manualBlockers, type);
     const box = document.querySelector('.fc-delete-zone .fc-blockers');
     const left = box ? [...box.querySelectorAll('.fc-blocker-row strong')].reduce((n, b) => n + (Number(b.textContent) || 0), 0) : 0;
     const hdr = box ? box.querySelector('.fc-blockers-hdr') : null;
     if (box && !box.querySelector('.fc-blocker-row')) {
-      if (hdr) hdr.textContent = '✅ Every blocker listed here was fixed or deleted — press Re-scan, then delete the field.';
+      if (hdr) hdr.textContent = '✅ Every blocker listed here was fixed or deleted.';
       box.querySelector('.fc-blockers-foot')?.remove();
     } else if (hdr) hdr.textContent = `🔒 ${left} blocker${left === 1 ? ' stops' : 's stop'} the delete`;   // the header counts down with the chips (live 2026-11-08: it said 24 after a fix)
     // the note under the gate said "N manual blocker(s) remain" from the scan — it follows the deletes (live 2026-11-07)
     const note = eid('fcDeleteNote');
     if (note && box) note.textContent = left > 0
       ? `🔒 ${left} blocker${left === 1 ? '' : 's'} remain — clear ${left === 1 ? 'it' : 'them'} below (✂ ⇄ ✎ 🗑) or in Setup, then re-scan.`
-      : '✅ Every blocker listed was deleted — press Re-scan to confirm, then 🗑 Delete Field.';
+      : '✅ Every blocker listed was cleared.';
+    // Nothing listed is left: Salesforce itself is asked (a check-only delete) and its answer unlocks Delete Field —
+    // the same path as a list that was clear from the start, so no Re-scan has to be pressed first.
+    if (left === 0 && !_manualBlockers.length) {
+      if (_lastScan && _lastScan.ask) _paintAsk(_lastScan.ask);   // the box drops "the list still marks N items"
+      checkEnableDelete();
+    }
+  }
+  // one blocker of this kind is cleared: the kind counts one less, and leaves the list at zero (pure)
+  function _afterDeleteCount(list, type) {
+    return (list || []).map(b => b.type === type ? { ...b, count: Math.max(0, (Number(b.count) || 0) - 1) } : b).filter(b => b.count > 0);
   }
 
   async function fixLayout(componentId, componentName) {
@@ -7265,7 +7316,12 @@ const FieldCleaner = (() => {
     // Own-object test through sftkMdIsOwnObj (sftk-mdapi.js, a page global): a custom field on Activity IS a field of
     // every Task and Event, so a Task-… / Event-… layout holds Activity.Region__c by its bare name. A plain string
     // compare refused every Task / Event layout for ✂ and ⇄ with a false "Task's field" (2026-11-14 review 5, round 3).
-    if (prefix && opts.objApi && !(lo && sftkMdIsOwnObj(lo, opts.objApi))) {
+    // 2026-11-15 (close-out review): a CUSTOM field picked on Task or Event is the one Activity field both hold —
+    // with Task.Region__c picked an Event-… layout was refused as "Event's field, not Task's", which is untrue
+    // (the same family rule as sftkMdEditField's ownApi and the sweep's actFam). Only __c: Subject is two fields.
+    const _actFam = v => /^(task|event|activity)$/i.test(String(v || '').trim());
+    const ownApi = (opts && /__c$/i.test(fieldApiName) && _actFam(opts.objApi)) ? 'Activity' : (opts && opts.objApi);
+    if (prefix && opts.objApi && !(lo && sftkMdIsOwnObj(lo, ownApi))) {
       // review 6 (2026-11-14): the refusal names another object only when the prefix IS one — mapped above to an
       // object, or found by opts.isObject (the caller's loaded object list). A prefix that is neither (Global, or a
       // built-in page prefix not in the map) used to be called an object ("LiveChatTranscriptActive's field"): now
@@ -7549,7 +7605,8 @@ const FieldCleaner = (() => {
   function removeFieldFromFlexiPage(metadata, objApi, fieldApiName, out, pageHint) {
     let changes = 0;
     const fl  = fieldApiName.toLowerCase();
-    const obj = objApi.toLowerCase();
+    // 2026-11-15 (close-out review): Task / Event custom field = Activity's (see removeFieldFromFlow's objL)
+    const obj = sftkMdFamObj(objApi, fieldApiName).toLowerCase();
     const tally = out && typeof out === 'object' ? out : {};
     tally.other = tally.other || 0; tally.unknown = tally.unknown || 0;
     // why each untellable mention could not be told, counted by kind in tally.unknownKinds: 'custom' | 'poly' | 'root' | 'page'
@@ -8379,6 +8436,36 @@ const FieldCleaner = (() => {
   // is kept, a refusal is shown in Salesforce's own words under the box, ↩ Undo in History deploys the original.
   // the extension pages enforce Trusted Types (DOMParser refuses a plain string): a pure tag-balance check
   function _xmlWellFormed(text) { return sftkMdWellFormed(text); }
+  // ✓ Validate in the editors (owner 2026-11-15: after an edit, validate and then deploy): the edited text is sent as
+  // a CHECK-ONLY deploy — Salesforce answers exactly as it would to the deploy and writes nothing. The verdict is
+  // about the text that was sent; a later keystroke clears it.
+  //   → { cls, html } for the editor's status line
+  function _edValidateVerdict(r) {
+    if (r && r.checkOnly === true && r.success) return { cls: 'fc-xml-ed-ok', html: '✓ Salesforce would accept this — checked against the org, nothing was written. ⬆ Deploy sends the same text.' };
+    if (r && r.checkOnly === true) {
+      const why = (r.failures || []).map(f => `${f.name ? `${f.name}: ` : ''}${f.problem}`).filter(Boolean);
+      const words = why.length ? why.join(' · ') : (r.errorMessage || 'Salesforce gave no reason');
+      return { cls: 'fc-xml-ed-err', html: `❌ Salesforce would refuse this — nothing was written. Its words: <span class="fc-xml-ed-raw">${esc(words)}</span>` };
+    }
+    return { cls: 'fc-xml-ed-err', html: `⚠ The check could not be run — nothing was written, and this is not a refusal of your text: <span class="fc-xml-ed-raw">${esc(String((r && (r.error || r.errorMessage)) || 'no answer from Salesforce'))}</span>` };
+  }
+  async function _edValidate(deployFiles, out) {
+    const say = v => { out.innerHTML = `<div class="${v.cls}">${v.html}</div>`; };
+    say({ cls: 'fc-xml-ed-note', html: '⏳ Asking Salesforce to check it — nothing is written…' });
+    let r;
+    try { r = await bg({ type: 'SF_METADATA_VALIDATE', orgUrl: _orgUrl, sid: _sid, zipBase64: _zipOf(deployFiles), _suppressError: true }); }
+    catch (e) { r = { error: e.message }; }
+    say(_edValidateVerdict(r));
+    return !!(r && r.checkOnly === true && r.success);
+  }
+  // what the XML editor refuses before anything is sent: malformed XML, a changed <fullName>
+  function _xmlEdPrecheck(ctx, text) {
+    const bad = _xmlWellFormed(text);
+    if (bad) return `the XML is not well-formed: ${esc(bad)}`;
+    const wantName = _RULE_CONTAINERS[ctx.type] ? ctx.fullName.slice(ctx.fullName.indexOf('.') + 1) : ctx.fullName;
+    if (sftkMdChildText(text, 'fullName') !== wantName) return `the <code>&lt;fullName&gt;</code> must stay “${esc(wantName)}” (it names the ${esc(ctx.spec.what)}; renaming is not done here)`;
+    return '';
+  }
   function _xmlEditorOpen(panel, ctx) {
     const box = panel.querySelector('.fc-xml-body');
     if (!box) return;
@@ -8391,12 +8478,14 @@ const FieldCleaner = (() => {
           <span class="fc-xml-ed-state">No change yet</span>
           <button class="btn btn-secondary btn-sm fc-xml-ed-reset" disabled>↺ Start over</button>
           <button class="btn btn-secondary btn-sm fc-xml-ed-cancel">Cancel</button>
+          <button class="btn btn-secondary btn-sm fc-xml-ed-validate" disabled title="Salesforce checks your text exactly as a deploy would — and writes nothing">✓ Validate</button>
           <button class="btn btn-primary btn-sm fc-xml-ed-deploy" disabled>⬆ Deploy to the org</button>
         </div>
         <div class="fc-xml-ed-out" role="status"></div>
       </div>`;
     const ta = box.querySelector('.fc-xml-ta'), state = box.querySelector('.fc-xml-ed-state');
     const go = box.querySelector('.fc-xml-ed-deploy'), reset = box.querySelector('.fc-xml-ed-reset'), out = box.querySelector('.fc-xml-ed-out');
+    const val = box.querySelector('.fc-xml-ed-validate');
     ta.value = orig;
     ta.rows = Math.min(28, Math.max(8, orig.split('\n').length + 1));
     const sync = () => {
@@ -8405,8 +8494,17 @@ const FieldCleaner = (() => {
       state.textContent = ta.value === orig ? 'No change yet' : bad ? `⚠ Not well-formed XML — ${bad.slice(0, 160)}` : `${d} line${d === 1 ? '' : 's'} changed`;
       state.classList.toggle('fc-xml-ed-bad', !!bad);
       go.disabled = ta.value === orig || !!bad;
+      val.disabled = go.disabled;
       reset.disabled = ta.value === orig;
     };
+    val.addEventListener('click', async () => {
+      const text = ta.value, pre = _xmlEdPrecheck(ctx, text);
+      if (pre) { out.innerHTML = `<div class="fc-xml-ed-err">❌ Not checked — ${pre}.</div>`; return; }
+      val.disabled = go.disabled = true;
+      await _edValidate(sftkMdPackageFiles(ctx.type === 'LookupFilter' ? 'CustomField' : ctx.type, ctx.fullName, text), out);
+      if (ta.value !== text) out.innerHTML = '';   // edited while Salesforce was checking: the verdict is of an older text
+      sync();
+    });
     // a new edit clears the last deploy's verdict (it spoke of the text before)
     ta.addEventListener('input', () => { out.innerHTML = ''; sync(); });
     // Tab indents like an editor instead of leaving the box
@@ -8755,6 +8853,7 @@ const FieldCleaner = (() => {
           <span class="fc-xml-ed-state">No change yet</span>
           <button class="btn btn-secondary btn-sm fc-xml-ed-reset" disabled>↺ Start over</button>
           <button class="btn btn-secondary btn-sm fc-xml-ed-cancel">Cancel</button>
+          <button class="btn btn-secondary btn-sm fc-xml-ed-validate" disabled title="Salesforce checks your text exactly as a deploy would — and writes nothing">✓ Validate</button>
           <button class="btn btn-primary btn-sm fc-xml-ed-deploy" disabled>⬆ Deploy to the org</button>
         </div>
         <div class="fc-xml-ed-out" role="status"></div>
@@ -8772,8 +8871,16 @@ const FieldCleaner = (() => {
         if (d) { lines += d; files++; }
       });
       state.textContent = files ? `${lines} line${lines === 1 ? '' : 's'} changed in ${files} file${files === 1 ? '' : 's'}` : 'No change yet';
-      go.disabled = !files; reset.disabled = !files;
+      go.disabled = !files; reset.disabled = !files; val.disabled = !files;
     };
+    const val = box.querySelector('.fc-xml-ed-validate');
+    val.addEventListener('click', async () => {
+      const sent = tas.map(ta => ta.value);
+      val.disabled = go.disabled = true;
+      await _edValidate(code.build(code.sources.map((s, i) => ({ ...s, source: sent[i] }))), out);
+      if (tas.some((ta, i) => ta.value !== sent[i])) out.innerHTML = '';   // edited meanwhile: the verdict is of an older text
+      sync();
+    });
     tas.forEach(ta => {
       ta.addEventListener('input', () => { out.innerHTML = ''; sync(); });
       ta.addEventListener('keydown', ev => {
@@ -8894,7 +9001,9 @@ const FieldCleaner = (() => {
     const nf = swap && _replOn() ? _replField.api : null;
     const rec = await _tplRead(componentId);
     // objApi: a merge field of another object's same-named field is left as it is (2026-11-14)
-    const r = nf ? sftkTplReplace(rec, field, nf, _selObj.api) : sftkTplRemove(rec, field, _selObj.api);
+    // 2026-11-15 (close-out review round 2): a custom field picked on Task / Event is Activity's — sftkMdFamObj
+    const famObj = sftkMdFamObj(_selObj.api, field);
+    const r = nf ? sftkTplReplace(rec, field, nf, famObj) : sftkTplRemove(rec, field, famObj);
     // a Visualforce component bound to the field that ✂ cannot take out: refused with the reason, nothing written (2026-11-14)
     if (r.refused) {
       const e = new Error(`"${componentName}": ${r.refused}.`);
@@ -8920,8 +9029,11 @@ const FieldCleaner = (() => {
     const hits = sftkTplHits(rec, field);
     const shown = sftkTplTextFields().filter(k => typeof rec[k] === 'string' && rec[k]);
     const body = shown.map(k => { const n = hits.filter(x => x.field === k).length; const h = _xiHighlightApex(rec[k]); return `<div class="fc-code-file"><div class="fc-code-file-hd"><code>${esc(k)}</code><span class="fc-code-file-n">${n ? `${n} line${n === 1 ? ' names' : 's name'} the field` : 'no line names the field'}</span></div><pre class="fc-xml-pre fc-xml-pre--code"><code>${h.html}</code></pre></div>`; }).join('');
-    const rp = _replOn() ? sftkTplReplace(rec, field, _replField.api, _selObj.api) : null;
-    const rm = sftkTplRemove(rec, field, _selObj.api);
+    // 2026-11-15 (close-out review round 3): the hint counts with the object ✂ / ⇄ use (fixEmailTemplate's famObj) —
+    // it said "none here" for {!Event.Region__c} that the fix does take out
+    const famObj = sftkMdFamObj(_selObj.api, field);
+    const rp = _replOn() ? sftkTplReplace(rec, field, _replField.api, famObj) : null;
+    const rm = sftkTplRemove(rec, field, famObj);
     const hint = `<div class="fc-xml-hint">✂ Remove takes every merge field that names <code>${esc(field)}</code> out of the texts${rm.refused ? ` — not here: ${esc(rm.refused)}` : rm.n ? ` — here ${rm.n} in ${rm.fields.join(', ')}` : ' — none here'}. ⇄ Replace renames it inside them${rp ? (rp.n ? ` — here ${rp.n} place${rp.n === 1 ? '' : 's'} would name <code>${esc(_replField.api)}</code>` : ' — nothing here writes it as a word') : ' — pick a replacement field above to see what it would change'}. ✎ edits the texts as they are.</div>`;
     panel.innerHTML = `
       <div class="fc-xml-hdr">
@@ -9387,7 +9499,90 @@ const FieldCleaner = (() => {
     if (s.type === 'MdEdit') return `${s.metadata && s.metadata.swapTo ? '⇄' : '✂'} ${what || 'component'}`;
     return s.type;
   }
+  // ── ↩ Undo all for this field (owner 2026-11-15: "we need an undo all. without going over all the components one
+  // by one. and dont forget to show the progess of the undo all" · "undo all for field cleaner per a field") ──
+  // A bar above the results: how many of this tool's changes for the picked field can still be undone, and one button
+  // that takes them all back — one confirmation, newest first, each step re-read, the progress shown as it goes.
+  function _fcSubject() { return _selObj && _selField ? `${_selObj.api}.${_selField.api}` : ''; }
+  // every History entry this tool begins is stamped with the picked field (sftkHistoryBegin asks; no call site names it)
+  if (typeof sftkHistorySubjectFor === 'function') sftkHistorySubjectFor('Field Cleaner', _fcSubject);
+  let _undoAllBusy = false;
+  function _undoAllSummary(res) {
+    const bad = res.failed.length, left = res.total - res.ran;
+    return (bad || res.stopped ? '⚠ ' : '✅ ') + `${res.ok} of ${res.total} change${res.total === 1 ? '' : 's'} undone and verified by re-reading the org`
+      + (bad ? ` · ${bad} not undone` : '') + (res.stopped ? ` · ${left} not tried — ${res.stopped}` : '') + '.';
+  }
+  async function renderUndoAll(doneHtml) {
+    const host = eid('fcUndoAll');
+    if (!host || _undoAllBusy) return;
+    const subj = _fcSubject();
+    const list = subj && _orgUrl && typeof sftkHistoryUndoableFor === 'function'
+      ? sftkHistoryUndoableFor(await sftkHistoryAll(), { tool: 'Field Cleaner', orgUrl: _orgUrl, subject: subj }) : [];
+    if (subj !== _fcSubject() || _undoAllBusy) return;   // another field was picked while History was read
+    if (!list.length && !doneHtml) { host.innerHTML = ''; return; }
+    host.innerHTML = `<div class="fc-undoall">${list.length ? `<span class="fc-undoall-txt">↩ <b>${list.length}</b> change${list.length === 1 ? '' : 's'} made here for <code>${esc(subj)}</code> can be undone.</span>
+      <button type="button" class="btn btn-secondary btn-sm" id="fcUndoAllBtn" title="Takes every one of them back, newest first — one confirmation; each step is re-read from the org">↩ Undo all ${list.length}</button>` : ''}
+      ${doneHtml || ''}</div>`;
+    eid('fcUndoAllBtn')?.addEventListener('click', () => undoAllForField(list, subj));
+  }
+  async function undoAllForField(list, subj) {
+    if (_undoAllBusy || !list.length) return;
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const stepsOf = e => ((e.toolUndo && e.toolUndo.steps) || []).length;
+    const sure = await sftkConfirmDestructive({
+      title: `↩ Undo all — ${list.length} change${list.length === 1 ? '' : 's'} for ${subj}`,
+      icon: '↩',
+      items: list.map(e => ({ label: e.profileName, sub: `${stepsOf(e)} step${stepsOf(e) === 1 ? '' : 's'}` })),
+      revOverride: {
+        html: 'Writes the previous state of each of these back, <strong>newest first</strong>. An undo has no undo — to redo a change, use the tool again.'
+          + '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">'
+          + '<li><b>Steps</b><span>One change at a time; each step is re-read from the org to confirm it</span></li>'
+          + '<li><b>A failure</b><span>Does not stop the rest — it is listed at the end with Salesforce’s reason</span></li>'
+          + '<li><b>Recorded</b><span>Every undo is its own entry in History</span></li>'
+          + '<li><b>Not included</b><span>A change History says cannot be undone (deleted flow versions, a deleted field) stays as it is</span></li></ol></div>',
+        needsCheckbox: true,
+        ack: 'I understand this writes the earlier state back over whatever is there now',
+      },
+      confirmLabel: `↩ Undo all ${list.length}`,
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return;
+    const host = eid('fcUndoAll');
+    _undoAllBusy = true;
+    host.innerHTML = '<div class="fc-undoall fc-undoall-run"><div class="fc-undoall-prog"></div><details class="fc-undoall-log" open><summary>What is being undone</summary><ol></ol></details></div>';
+    const ol = host.querySelector('ol');
+    const prog = typeof sftkProgress === 'function'
+      ? sftkProgress(host.querySelector('.fc-undoall-prog'), { what: `Undoing ${list.length} change${list.length === 1 ? '' : 's'} for ${subj}…`, key: 'fc-undo-all', orgUrl: _orgUrl, total: list.length, unit: 'changes' }) : null;
+    let li = null, res;
+    try {
+      res = await sftkHistoryUndoMany(list, {
+        onStart: (i, n, e) => {
+          li = document.createElement('li'); li.className = 'fc-undoall-li fc-undoall-now';
+          li.textContent = `⏳ ${e.profileName}`; ol.appendChild(li); li.scrollIntoView({ block: 'nearest' });
+          if (prog) prog.say(`Undoing ${i + 1} of ${n} — ${e.profileName}`);
+        },
+        onEnd: (i, n, e, r) => {
+          if (li) { li.className = `fc-undoall-li ${r && r.ok ? 'fc-undoall-ok' : 'fc-undoall-bad'}`; li.textContent = `${r && r.ok ? '✅' : '❌'} ${e.profileName} — ${(r && r.text) || 'no answer'}`; }
+          if (prog) prog.count(i + 1, n);
+        },
+      });
+    } catch (e) {
+      res = { total: list.length, ran: 0, ok: 0, failed: [], stopped: String((e && e.message) || e) };
+    } finally {
+      if (prog) prog.done();
+      _undoAllBusy = false;
+    }
+    const log = host.querySelector('.fc-undoall-log');
+    if (log) { log.open = !!(res.failed.length || res.stopped); log.querySelector('summary').textContent = 'What was undone'; }
+    const logHtml = log ? log.outerHTML : '';
+    await renderUndoAll(`<div class="fc-undoall-done ${res.failed.length || res.stopped ? 'fc-undoall-warn' : ''}">${esc(_undoAllSummary(res))} The list below is read again from the org.</div>${logHtml}`);
+    // what the page lists is from before the undo: scan again, so nothing shown is assumed
+    const scan = eid('fcScanBtn');
+    if (scan && !scan.disabled && subj === _fcSubject()) scan.click();
+  }
+
   async function renderSnapshotLog() {
+    renderUndoAll();
     // 🧾 what Field Cleaner changed, with ↩ Undo — listed here, in the tool
     // (user 2026-10-05: "it should show under the field cleaner")
     if (typeof sftkToolHistoryInline === 'function') sftkToolHistoryInline(eid('fcToolHist'), 'fields');
@@ -9544,7 +9739,7 @@ const FieldCleaner = (() => {
               return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
             },
             verify: async () => {
-              try { const after = await readReportType(snap.fullName); return { ok: sftkRtMentions(after, snap.obj, snap.field) > 0, text: null }; }
+              try { const after = await readReportType(snap.fullName); return { ok: sftkRtMentions(after, sftkMdFamObj(snap.obj, snap.field), snap.field) > 0, text: null }; }   // the family object, as the fix that took the snapshot (2026-11-15)
               catch (_) { return { ok: false, text: null }; }
             },
           });

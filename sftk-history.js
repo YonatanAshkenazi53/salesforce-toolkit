@@ -50,6 +50,15 @@ function _sftkHistOrgKey(u) {
   return String(u || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/\.lightning\.force\.com$/, '.my.salesforce.com');
 }
 
+// What a tool's change is about. A tool registers ONE function that names its current subject (Field Cleaner: the
+// picked field), so every entry it begins carries it without each call site saying so; an explicit opts.subject wins.
+const _sftkHistSubjects = {};
+function sftkHistorySubjectFor(tool, fn) { if (tool && typeof fn === 'function') _sftkHistSubjects[String(tool)] = fn; }
+function _sftkHistSubject(o) {
+  if (o.subject) return String(o.subject);
+  const fn = _sftkHistSubjects[String(o.tool || '')];
+  try { return fn ? String(fn() || '') : ''; } catch (_) { return ''; }
+}
 function sftkHistoryBegin(opts) {
   const o = opts || {};
   return {
@@ -57,6 +66,7 @@ function sftkHistoryBegin(opts) {
     kind: 'tool',
     tool: String(o.tool || 'tool'),
     profileName: String(o.title || o.tool || 'change'),
+    subject: _sftkHistSubject(o),       // what the change is about (Field Cleaner: "Account.Field__c") — "undo all for this field" reads it (2026-11-15)
     startedAt: new Date().toISOString(),
     completedAt: null,
     sourceOrg: String(o.sourceOrg || o.orgUrl || ''),
@@ -248,6 +258,22 @@ function _sftkHistSend(msg) {
   });
 }
 
+// 2026-11-15 (live re-check): a tool whose page is open kept showing what the undo had just taken back — Flow
+// Access still listed the removed grants until a reload. Nothing told the tools an undo had run (History redraws
+// itself from storage; a tool's own lists come from the org). The smallest hook: one DOM event once the undo's
+// steps have run, whatever their outcome — a partly-run undo changed the org too. Not sent for an undo that was
+// cancelled or never started. → the detail that was sent, or null where there is no page to tell.
+function sftkHistoryUndoAnnounce(entry, result, doc) {
+  const d = doc || (typeof document !== 'undefined' ? document : null);
+  if (!d || typeof d.dispatchEvent !== 'function' || !entry) return null;
+  const detail = { tool: String(entry.tool || ''), tab: sftkHistoryToolTab(entry), orgUrl: String(entry.targetOrg || ''), ok: !!(result && result.ok), entryId: entry.id };
+  try {
+    const ev = typeof CustomEvent === 'function' ? new CustomEvent('sftk:history-undone', { detail }) : Object.assign(new Event('sftk:history-undone'), { detail });
+    d.dispatchEvent(ev);
+  } catch (_) { return null; }   // a listener that throws must not turn a finished undo into a failed one
+  return detail;
+}
+
 // Undo one tool entry: confirm (the shared dialog, the acknowledgement, the typed org
 // name when the target is treated as production), then run the steps
 // through the write discipline, record the undo as its own entry, mark the
@@ -348,7 +374,48 @@ async function sftkHistoryUndo(entryId, opts) {
   await sftkHistoryAppend(entry);
   const okN = stepsRun.filter(x => x.ok).length;
   const tail = note ? ` · not restored: ${note}` : '';
+  sftkHistoryUndoAnnounce(entry, { ok: okAll });   // the open tool re-reads the org (2026-11-15)
   return { ok: okAll, text: (okAll ? `Undone — ${okN} step${okN === 1 ? '' : 's'} verified by re-reading the org` : `Undo ran: ${okN} of ${stepsRun.length} step${stepsRun.length === 1 ? '' : 's'} verified — see the undo's entry in History`) + tail, entry, undoEntry };
+}
+
+// ── Undo all the changes a tool made about one subject (owner 2026-11-15: "we need an undo all. without going over
+// all the components one by one … undo all for field cleaner per a field") ─────────────────────────────────────
+// The entries that can still be undone, NEWEST FIRST — a component changed twice gets its later change taken back
+// before its earlier one. An entry belongs to the subject by its own `subject`; one written before entries carried
+// a subject belongs when its title names the subject as a whole word. PURE.
+//   o: { tool, orgUrl, subject }
+function sftkHistoryUndoableFor(all, o) {
+  const q = o || {}, subj = String(q.subject || '');
+  if (!subj) return [];
+  const org = _sftkHistOrgKey(q.orgUrl);
+  const word = new RegExp('(^|[^A-Za-z0-9_.])' + subj.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^A-Za-z0-9_])');
+  return (Array.isArray(all) ? all : []).filter(e => e && e.kind === 'tool' && e.tool === q.tool
+      && _sftkHistOrgKey(e.targetOrg) === org
+      && (e.subject ? e.subject === subj : word.test(String(e.profileName || '')))
+      && !e.undoOf && !sftkToolUndoState(e).disabled)
+    .sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
+}
+// Run them one after the other, with no dialog of their own — the caller asked once for the whole list.
+//   opts: { send?, onStart(i, n, entry), onLog(line), onEnd(i, n, entry, result), undo? (for tests) }
+//   → { total, ran, ok, failed: [{ entry, text }], stopped: '' | why the rest was not tried }
+// A step that fails does not stop the rest (each entry is its own component); no session for the org does — every
+// entry after it would fail the same way.
+async function sftkHistoryUndoMany(entries, opts) {
+  const o = opts || {}, list = Array.isArray(entries) ? entries : [];
+  const undo = typeof o.undo === 'function' ? o.undo : sftkHistoryUndo;
+  const out = { total: list.length, ran: 0, ok: 0, failed: [], stopped: '' };
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    if (typeof o.onStart === 'function') o.onStart(i, list.length, e);
+    let r;
+    try { r = await undo(e.id, { confirm: false, send: o.send, onLog: o.onLog }); }
+    catch (err) { r = { ok: false, text: String((err && err.message) || err) }; }
+    if (typeof o.onEnd === 'function') o.onEnd(i, list.length, e, r);
+    if (r && !r.ok && !r.entry && /^Log in to /.test(String(r.text || ''))) { out.stopped = r.text; break; }
+    out.ran++;
+    if (r && r.ok) out.ok++; else out.failed.push({ entry: e, text: String((r && r.text) || 'no answer') });
+  }
+  return out;
 }
 
 // ── Whose history an entry belongs to (user 2026-10-05: "seeing field cleaner
@@ -439,4 +506,5 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkUndoVerifyEval    = sftkUndoVerifyEval;
   globalThis.sftkHistorySessionFor = sftkHistorySessionFor;
   globalThis.sftkHistoryUndo       = sftkHistoryUndo;
+  globalThis.sftkHistoryUndoAnnounce = sftkHistoryUndoAnnounce;
 }

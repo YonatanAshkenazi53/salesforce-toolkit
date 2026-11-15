@@ -814,6 +814,15 @@ function sftkMdIsOwnObj(compObj, objApi) {
   if (!c || !o) return false;
   return c === o || (o === 'activity' && (c === 'task' || c === 'event')) || (o === 'account' && c === 'personaccount');
 }
+// The object to ask sftkMdIsOwnObj about for a PICKED field (2026-11-15, close-out review round 2): a custom field
+// picked on Task or Event is the one Activity field both hold, so its own-object question is asked of Activity
+// (which owns Task and Event). Only __c: Subject on Task and on Event are two fields. One helper, because the rule
+// lived inline in the removers and the flow probe / ⇄ swap were left without it — an Event flow holding
+// Task.Region__c was marked "no version references the field any more".
+function sftkMdFamObj(objApi, fieldApi) {
+  const o = String(objApi == null ? '' : objApi).trim();
+  return (/__c$/i.test(String(fieldApi == null ? '' : fieldApi).trim()) && /^(task|event)$/i.test(o)) ? 'Activity' : o;
+}
 // "Account.Old__c" → "Account.New__c", "Old__c" → "New__c": the spelling is kept.
 function _sftkMdRenameVal(v, newField) {
   const s = String(v == null ? '' : v).trim();
@@ -1052,6 +1061,14 @@ function _sftkMdHasLogic(xml) {
 function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   const before = String(innerXml || '');
   const nf = newField ? String(newField) : null;
+  // 2026-11-15 (close-out review): a CUSTOM field picked on Task or Event is ONE field, defined on Activity and
+  // held by both. The list types knew it (listOwn); the rules, formulas, approvals, field updates and actions still
+  // read the picked object one way — so with Task.Region__c picked the sweep listed an Event rule as a blocker
+  // (true) and the remover refused it as "Event's same-named field, not this one" (untrue). Every own-object test
+  // in this function asks for Activity instead, which owns Task and Event (sftkMdIsOwnObj). Only for __c:
+  // Task.Subject and Event.Subject are two fields. objApi itself stays for the texts and the plain compares.
+  const _act = v => /^(task|event|activity)$/i.test(String(v || '').trim());
+  const ownApi = (/__c$/i.test(String(fieldApi || '')) && _act(objApi)) ? 'Activity' : objApi;
   const how = [];
   let xml = before, refused = null, off = false, suggested = false, unsure = false;
   const refuse = why => { if (!refused) refused = why; };
@@ -1072,7 +1089,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const el = sftkMdFindElement(body, child, 0);
       if (!el) return 'keep';
       const v = sftkMdUnescape(body.slice(el.bodyStart, el.bodyEnd));
-      if (!(is ? is(v) : _sftkMdFieldIs(v, objApi, fieldApi))) return 'keep';
+      if (!(is ? is(v) : _sftkMdFieldIs(v, ownApi, fieldApi))) return 'keep';
       n++;
       return nf ? { body: body.slice(0, el.bodyStart) + sftkMdEscape(_sftkMdRenameVal(v, nf)) + body.slice(el.bodyEnd) } : 'drop';
     });
@@ -1082,7 +1099,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   const texts = (src, tag) => {
     let n = 0;
     const r = _sftkMdWalk(src, tag, body => {
-      if (/</.test(body) || !_sftkMdFieldIs(sftkMdUnescape(body), objApi, fieldApi)) return 'keep';
+      if (/</.test(body) || !_sftkMdFieldIs(sftkMdUnescape(body), ownApi, fieldApi)) return 'keep';
       n++;
       return nf ? { body: sftkMdEscape(_sftkMdRenameVal(sftkMdUnescape(body), nf)) } : 'drop';
     });
@@ -1100,7 +1117,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
         let out = mb, hit = false;
         for (const [side, objOf] of [['inputField', io], ['outputField', oo]]) {
           const e = sftkMdFindElement(out, side, 0);
-          if (!e || objOf !== o || !_sftkMdFieldIs(sftkMdUnescape(out.slice(e.bodyStart, e.bodyEnd)), objApi, fieldApi)) continue;
+          if (!e || objOf !== o || !_sftkMdFieldIs(sftkMdUnescape(out.slice(e.bodyStart, e.bodyEnd)), ownApi, fieldApi)) continue;
           n++;
           if (nf) { out = out.slice(0, e.bodyStart) + sftkMdEscape(nf) + out.slice(e.bodyEnd); hit = true; }
         }
@@ -1117,11 +1134,11 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   // review 4: ⇄ Account.Region__c renamed a Case rule's Parent.Region__c). No dot (a global action) = not known.
   const fullName = String(sftkMdChildText(before, 'fullName') || '');
   const host = fullName.indexOf('.') > 0 ? fullName.slice(0, fullName.indexOf('.')) : null;
-  const sameObj = sftkMdIsOwnObj(host, objApi);   // Task / Event are Activity's own (review 5, 2026-11-14)
+  const sameObj = sftkMdIsOwnObj(host, ownApi);   // Task / Event are Activity's own (review 5, 2026-11-14)
   const formulas = (src, tag, ctx) => {
     let n = 0, rel = 0, kind = null;
     const r = _sftkMdWalk(src, tag, body => {
-      const s = _sftkMdSwapToken(body, objApi, fieldApi, nf, ctx || host);
+      const s = _sftkMdSwapToken(body, ownApi, fieldApi, nf, ctx || host);
       n += s.n; rel += s.rel; kind = kind || s.kind;
       return (nf && s.n) ? { body: s.text } : 'keep';
     });
@@ -1139,10 +1156,9 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   const reEsc = t => String(t || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // A CUSTOM field picked on Task or Event is Activity's field, and the sibling's too (Salesforce defines it once, on
   // Activity): with Task picked, an Event view's bare Region__c was refused as "Event's same-named field", which is
-  // untrue (2026-11-15). Only for these list types — a rule's formula still reads its object one way — and only for
-  // __c: Task.Subject and Event.Subject are two fields.
-  const _act = v => /^(task|event|activity)$/i.test(String(v || '').trim());
-  const listOwn = sameObj || (/__c$/i.test(String(fieldApi || '')) && _act(host) && _act(objApi));
+  // untrue (2026-11-15). Only for __c: Task.Subject and Event.Subject are two fields. Since the close-out review
+  // the same holds for every own-object test here (ownApi above), so sameObj already says it.
+  const listOwn = sameObj;
   const notOwn = (n, what) => {
     if (!host || listOwn || !n) return false;
     if (new RegExp(`>\\s*${reEsc(objApi)}\\.${reEsc(fieldApi)}\\s*<`, 'i').test(before)) {
@@ -1183,7 +1199,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       if (!act || xml.slice(act.bodyStart, act.bodyEnd).trim() !== 'true') { refuse('the rule is already inactive — an inactive rule does not block the delete; re-scan'); break; }
       // ✂ suggests the formula without the conditions that use the field; the rule stays on (user 2026-11-10)
       const fe = sftkMdFindElement(xml, 'errorConditionFormula', 0);
-      const d = fe ? sftkFormulaDropField(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), objApi, fieldApi, null, host) : { mode: 'none' };
+      const d = fe ? sftkFormulaDropField(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), ownApi, fieldApi, null, host) : { mode: 'none' };
       // the token sits only in a comment or quoted text: no condition uses it, so switching the rule off would be
       // done for a reason that is not true (2026-11-14). The text points to ✎ Edit, not ⇄: _sftkMdSwapToken renames
       // the token inside string literals and comments as well, so ⇄ would change the value the rule compares
@@ -1227,11 +1243,11 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       // objApi (a self-lookup, or a filter on the lookup's own object), such a condition names the field too: it is
       // dropped (✂) or renamed (⇄) like one whose <field> names it, never left behind (2026-11-14).
       const own = String(sftkMdChildText(xml, 'fullName') || '').split('.')[0].toLowerCase();
-      const isSrc = v => sftkMdIsOwnObj(own, objApi) && v.trim().toLowerCase() === `$source.${String(fieldApi || '').toLowerCase()}`;
+      const isSrc = v => sftkMdIsOwnObj(own, ownApi) && v.trim().toLowerCase() === `$source.${String(fieldApi || '').toLowerCase()}`;
       let hits = 0;
       const w = _sftkMdWalk(body, 'filterItems', it => {
         let out = it, hit = false;
-        for (const [child, test] of [['field', v => _sftkMdFieldIs(v, objApi, fieldApi)], ['valueField', isSrc]]) {
+        for (const [child, test] of [['field', v => _sftkMdFieldIs(v, ownApi, fieldApi)], ['valueField', isSrc]]) {
           const el = sftkMdFindElement(out, child, 0);
           if (!el) continue;
           const v = sftkMdUnescape(out.slice(el.bodyStart, el.bodyEnd));
@@ -1289,8 +1305,8 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const whyNot = wr.kind === 'host' ? 'the update’s own object is not known here'
         : wr.kind === 'poly' ? `its <targetObject> ${lk} can point at any object`
         : `its <targetObject> ${lk} is a custom lookup, which does not tell its object`;
-      const tgtNames = !!fe && _sftkMdFieldIs(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), objApi, fieldApi);
-      const target = tgtNames && sftkMdIsOwnObj(writes, objApi);   // a Task update writes Activity.X (review 5)
+      const tgtNames = !!fe && _sftkMdFieldIs(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), ownApi, fieldApi);
+      const target = tgtNames && sftkMdIsOwnObj(writes, ownApi);   // a Task update writes Activity.X (review 5)
       const f = formulas(xml, 'formula');
       if (!nf && target) { refuse('the field update WRITES to this field — ⇄ Replace points it at another field, or 🗑 delete the field update'); break; }
       if (!nf && f.n) { refuse('its formula cannot lose a reference — ⇄ Replace it, or 🗑 delete the field update'); break; }
@@ -1364,7 +1380,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
         if (!segs.length) { if (!other) return true; bare++; return false; }
         const r = sftkRelWalk(host, segs);
         if (r.kind) { dim = dim || r.kind; return false; }
-        return sftkMdIsOwnObj(r.obj, objApi);
+        return sftkMdIsOwnObj(r.obj, ownApi);
       };
       for (const tag of ['displayedFields', 'availableFields']) { const r = items(fx, tag, 'field', null, is); fx = r.xml; n += r.n; }
       if (dim) { cannotTell(`the ${host} field set names a field of this name through ${dim === 'custom' ? 'a custom lookup (Lookup__r.Field__c), and which object that lookup reaches' : 'a lookup that can reach any object, and whose field that is'} cannot be told here — edit it in Setup`); break; }
@@ -1483,7 +1499,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       // Only when that object is objApi are they this field — ✂ of Account.Region__c stripped Contact.Region__c from
       // Account.NewContact and reported it done (2026-11-14 review 4). Not known (no target, no host) = left alone.
       const tgt = String(sftkMdChildText(xml, 'targetObject') || host || '').trim();
-      const own = sftkMdIsOwnObj(tgt, objApi);   // a Log a Call action (Task) holds Activity's fields (review 5)
+      const own = sftkMdIsOwnObj(tgt, ownApi);   // a Log a Call action (Task) holds Activity's fields (review 5)
       const li = own ? items(xml, 'quickActionLayoutItems', 'field') : { xml, n: 0 };
       const fo = own ? items(li.xml, 'fieldOverrides', 'field') : { xml: li.xml, n: 0 };
       // a predefined value of ANOTHER field may compute from this one (<fieldOverrides><formula>): Salesforce counts it
@@ -1520,7 +1536,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
         const ve = sftkMdFindElement(body, 'value', 0);
         if (!ve) return 'keep';
         const v = sftkMdUnescape(body.slice(ve.bodyStart, ve.bodyEnd));
-        if (!_sftkMdFieldIs(v, objApi, fieldApi) || !hold.has((sftkMdChildText(body, 'field') || '?').toLowerCase())) return 'keep';
+        if (!_sftkMdFieldIs(v, ownApi, fieldApi) || !hold.has((sftkMdChildText(body, 'field') || '?').toLowerCase())) return 'keep';
         n++;
         const open = body.slice(ve.start, ve.bodyStart);
         return { body: body.slice(0, ve.start) + (nf ? `${open}${sftkMdEscape(_sftkMdRenameVal(v, nf))}</value>` : '<value xsi:nil="true"/>') + body.slice(ve.end) };

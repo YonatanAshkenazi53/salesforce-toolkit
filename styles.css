@@ -7167,6 +7167,22 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .fc-prev-opt input { margin-top: 3px; }
 .fc-prev-opt em { display: block; font-style: normal; opacity: .85; font-size: 11.5px; margin-top: 2px; }
 .fc-prev-opt-off { opacity: .6; cursor: not-allowed; }
+.fc-item-undo { margin-left: 8px; padding: 1px 8px; font-size: 11.5px; }
+/* ↩ Undo all for the picked field (2026-11-15) */
+.fc-undoall { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 10px 0; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2, #f6f7f9); font-size: 12.5px; color: var(--text); }
+.fc-undoall-txt { flex: 1 1 260px; }
+.fc-undoall-run { display: block; }
+.fc-undoall-prog { margin-bottom: 6px; }
+.fc-undoall-log { flex: 1 1 100%; font-size: 12px; }
+.fc-undoall-log > summary { cursor: pointer; color: var(--subtext, #5c6670); }
+.fc-undoall-log ol { margin: 6px 0 0; padding-left: 22px; max-height: 220px; overflow: auto; }
+.fc-undoall-li { margin: 2px 0; }
+.fc-undoall-now { font-weight: 600; }
+.fc-undoall-bad { color: var(--danger); }
+.fc-undoall-done { flex: 1 1 100%; font-weight: 600; }
+.fc-undoall-warn { color: var(--c-warn-fg, #A85400); }
+.fc-opt-whynot { margin-top: 8px; }
+.fc-opt-whynot > summary { color: var(--subtext, #5c6670); font-weight: 500; }
 .fc-unread-note { border: 1px solid var(--c-warn-border, #F5C08A); border-left-width: 3px; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 12.5px; line-height: 1.5; }
 .fc-unread-note ul { margin: 4px 0 0; padding-left: 20px; }
 .fc-prev-steps { margin: 4px 0 0; padding-left: 20px; }

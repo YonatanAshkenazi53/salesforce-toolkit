@@ -414,7 +414,11 @@ function _histSentence(run) {
   if (run.kind === 'dryrun') {
     const p = run.probe || {};
     const bad = (p.refused || 0) + (p.cascade || 0) + (p.unreached || 0);
-    const did = !p.probed ? 'nothing was checked — no insert was selected'
+    // 2026-11-15: a stopped run names the selected total and what was never checked (sftkProbeReach / sftkProbeVerdict)
+    const never = (p.unreached || 0) + (p.unbuilt || 0);
+    const did = (p.unbuilt > 0 && p.selected > 0)
+      ? `${(p.would || 0).toLocaleString('en-US')} of ${p.selected.toLocaleString('en-US')} selected record${p.selected === 1 ? '' : 's'} would be written${p.refused ? `, ${p.refused.toLocaleString('en-US')} refused` : ''}${p.cascade ? `, ${p.cascade.toLocaleString('en-US')} not checked` : ''}, ${never.toLocaleString('en-US')} never checked — the dry run stopped`
+      : !p.probed ? 'nothing was checked — no insert was selected'
       : bad ? `${(p.would || 0).toLocaleString('en-US')} of ${p.probed.toLocaleString('en-US')} would be written${p.refused ? `, ${p.refused} refused` : ''}${p.cascade ? `, ${p.cascade} not checked` : ''}${p.unreached ? `, ${p.unreached} not reached` : ''}`
       : `every one of the ${p.probed.toLocaleString('en-US')} record${p.probed === 1 ? '' : 's'} would be written`;
     return `Dry run into ${tgt}: ${did}. Nothing was written.`;
@@ -580,6 +584,7 @@ function renderHistory() {
                 if (a.cascade)   parts.push(`<span class="ds-rec-tag" title="Their parent would be refused, so they were never sent — a real run would not insert them either.">${a.cascade} not checked</span>`);
                 if (a.earlier)   parts.push(`<span class="ds-rec-tag" title="They point at a record an earlier step of this run creates — its id does not exist inside one rolled-back transaction, so they were set aside.">${a.earlier} not checked (earlier step)</span>`);
                 if (a.unreached) parts.push(`<span class="ds-rec-tag ds-rec-tag-fail" title="The rounds ran out before Salesforce got to these.">${a.unreached} not reached</span>`);
+                if (a.unbuilt)   parts.push(`<span class="ds-rec-tag ds-rec-tag-fail" title="Selected, but the dry run stopped before these records were put in a transaction — they were never checked.">${a.unbuilt.toLocaleString('en-US')} never checked</span>`);
                 if (a.sampledOf) parts.push(`<span class="ds-rec-tag" title="A dry run sends the first 200 records of each object.">a sample of ${a.sampledOf.toLocaleString('en-US')}</span>`);
                 return `<span class="ds-summary-chip"><strong>${esc(obj)}</strong> · ${parts.join(' ')}</span>`;
               }

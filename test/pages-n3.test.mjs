@@ -285,7 +285,9 @@ describe('page-list dots resolve or say n/a — never pulse forever', () => {
     // types are not read at all (test/lp-assignments-1004).
     expect(LP).toMatch(/!p\.PublishStatus && p\.Type === 'RecordPage' && !_odStatusDone\.has\(p\.Id\)/);
     expect(LP).not.toMatch(/r\.Metadata\.pageAssignments/);
-    expect(LP).toContain("if (named(pg.DeveloperName)) syncPageStatus(pg.Id, 'Active');");
+    // 2026-11-15 (close-out review): the pinned line matched by DeveloperName alone ("X, or anything ending in __X");
+    // the page's namespace and the other pages now decide (lpAppNamesPage, run in regress-1115-close-r1)
+    expect(LP).toContain("if (lpAppNamesPage(viaApp, pg, allPages)) syncPageStatus(pg.Id, 'Active');");
     expect(LP).toContain("else if (!_appIndexErr && pg.EntityDefinitionId && _odObjDone.has(pg.EntityDefinitionId)) syncPageStatus(pg.Id, 'Unassigned');");
     expect(LP).toContain('p1.complete && p2.complete && p3.complete');
     // …and the strip's quoted cost includes those retrieves

@@ -495,7 +495,7 @@ describe('EmailTemplate — classic text', () => {
     expect(M.sftkMdCodeWays('EmailTemplate')).toBeNull();
     expect(cfgRow('EmailTemplate')).toEqual({ fixable: true, sev: 'silent' });
     expect(FC).toContain("if (type === 'EmailTemplate') label = (await fixEmailTemplate(componentId, componentName, swap)) || label;");
-    expect(FC).toContain('const r = nf ? sftkTplReplace(rec, field, nf, _selObj.api) : sftkTplRemove(rec, field, _selObj.api);');
+    expect(FC).toContain('const r = nf ? sftkTplReplace(rec, field, nf, famObj) : sftkTplRemove(rec, field, famObj);');   // 2026-11-15 round 2: the object is sftkMdFamObj(_selObj.api, field) — Task / Event custom field = Activity
     expect(FC).toContain('if (r.refused) {');
     expect(T.sftkTplKind(TXT_ONE)).toBe('classic text email template');
     // the whole-org sweep lists the file; it joins no list (the fix needs the record's id)

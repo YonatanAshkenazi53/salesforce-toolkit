@@ -144,9 +144,16 @@ describe('3. a custom Activity field picked on Task or Event', () => {
     const x = lv('Contact');
     untouched(rm('ListView', x, 'Task'), x, /a Contact list view holds Contact’s fields/);
   });
-  it('only the list types: an Event validation rule is not rewritten for a Task pick', () => {
-    const vr = `<fullName>Event.VR</fullName><active>true</active><errorConditionFormula>ISBLANK(${F})</errorConditionFormula><errorDisplayField>${F}</errorDisplayField><errorMessage>m</errorMessage>`;
-    for (const r of [rm('ValidationRule', vr, 'Task'), rp('ValidationRule', vr, 'Task')]) { expect(r.changed).toBe(false); expect(r.xml).toBe(vr); expect(r.refused).toBeTruthy(); }
+  // 2026-11-15 (close-out review): this test pinned "only the list types — an Event validation rule is refused for a
+  // Task pick". The review confirmed that as a defect: the sweep lists the Event rule as a blocker of the one
+  // Activity field, so the remover must edit it. A Contact rule is still Contact's.
+  it('not only the list types: an Event validation rule is rewritten for a Task pick; a Contact rule is not', () => {
+    const vr = h => `<fullName>${h}.VR</fullName><active>true</active><errorConditionFormula>ISBLANK(${F})</errorConditionFormula><errorDisplayField>${F}</errorDisplayField><errorMessage>m</errorMessage>`;
+    const r = rp('ValidationRule', vr('Event'), 'Task');
+    expect(r.refused).toBeNull(); expect(r.changed).toBe(true);
+    expect(r.xml).not.toContain(F);
+    const c = rp('ValidationRule', vr('Contact'), 'Task');
+    expect(c.changed).toBe(false); expect(c.xml).toBe(vr('Contact')); expect(c.refused).toBeTruthy();
   });
 });
 

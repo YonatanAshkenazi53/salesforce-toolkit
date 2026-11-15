@@ -212,7 +212,9 @@ describe('the undo re-reads the type through SOAP (a third kind of re-read for t
     expect(FC).toContain("verify: { msg: { type: 'SF_MD_READ', mdType: 'ReportType', fullNames: [fullName] },");
     expect(FC).toContain("flags: 'i', retries: 3,");
     expect(FC).toContain('<field>${_rxEsc(field)}</field>');
-    expect(FC).toContain('<table>${_rxEsc(obj)}</table>`');
+    // 2026-11-15 (close-out review round 3): a Task / Event custom field sits under the Activity family's tables, so the
+    // pattern names them (behaviour: regress-1115-close-r3.test.mjs); any other object still names its own table only
+    expect(FC).toContain("<table>${famObj === 'Activity' ? '(?:Activity|Task|Event)' : _rxEsc(obj)}</table>`");
     expect(FC).not.toContain("msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBefore },\n            verify: null,");
   });
 });

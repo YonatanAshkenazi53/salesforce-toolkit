@@ -110,7 +110,8 @@ describe('the wiring', () => {
     // the gate sits ABOVE the lists (user 2026-11-08: "maybe it should be on top?")
     expect(FC).toContain("html += '<!--FC_GATE-->';");
     expect(FC).toContain("html = html.replace('<!--FC_GATE-->', () => gateHtml);");
-    expect(FC).toContain("hdr.textContent = '✅ Every blocker listed here was fixed or deleted — press Re-scan, then delete the field.';");
+    // 2026-11-15: no Re-scan first — with the last listed blocker cleared, Salesforce is asked and its answer unlocks Delete
+    expect(FC).toContain("hdr.textContent = '✅ Every blocker listed here was fixed or deleted.';");
   });
   it('the restore point of a delete deploys the saved files back', () => {
     expect(FC).toContain("} else if (snap.type === 'MdDelete' || snap.type === 'MdEdit') {");

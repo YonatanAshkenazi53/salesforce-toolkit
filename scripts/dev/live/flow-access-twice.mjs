@@ -46,6 +46,13 @@ async function grant(h, round) {
   await h.eval(`document.querySelector('#modalCancel')?.click()`);
   return said;
 }
+// WHY (2026-11-15): the row of the fixture set as the open page paints it — its "⚡ N flows" badge, or none when it grants nothing.
+// The search box is cleared first so the row is on screen whatever the last tick() typed.
+async function badge(h) {
+  await h.eval(`(() => { const i = document.querySelector('#fpPsSearch'); if (i && i.value) { i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
+  await h.sleep(500);
+  return h.eval(`(() => { const row = [...document.querySelectorAll('.fp-ps-wrap')].find(w => (w.querySelector('.fp-item-api')?.textContent || '') === 'SFTK_FC_Test_Access'); if (!row) return 'row not on screen'; const b = row.querySelector('.fp-flowcount-badge'); return b ? b.textContent.replace(/\s+/g, ' ').trim() : 'no badge = 0 flows'; })()`);
+}
 export default async function (h) {
   const PS = 'SFTK_FC_Test_Access';
   const before = readSet(PS);
@@ -64,14 +71,16 @@ export default async function (h) {
     step(g.flowRows.length === before.flowRows.length + 1, `grant ${round}: one more flow row in the org`);
     step(kept(before, g), `grant ${round}: description, label, field and object permissions unchanged`);
     step(!/nothing to do|Nothing was written/i.test(said), `grant ${round}: the result does not say nothing was written`);
+    step(/1 flow/.test(await badge(h)), `grant ${round}: the set's row on the open page shows the grant (${await badge(h)})`);
     const undoSaid = await undoNewest(h);   // ends on popup.html?tab=flow-access with the History list open — the page's access map predates the Undo
     const u = readSet(PS);
     h.log(`CLI AFTER UNDO ${round}:`, JSON.stringify(u));
     step(JSON.stringify(u) === JSON.stringify(before), `undo ${round}: the set is exactly as before (${undoSaid.slice(0, 120)})`);
+    // 2026-11-15: the lists on the OPEN page (loaded before the Undo, never reloaded) must show the set with no grant
+    await h.eval(`(() => { if (typeof closeModal === 'function') closeModal(); return true; })()`);
+    await h.sleep(1500);
+    step(/no badge/.test(await badge(h)), `undo ${round}: the set's row on the open page shows 0 grants without a reload (${await badge(h)})`);
     if (round === 1) {
-      // stay on THIS page: close the History list and wait for the tool's own lists
-      await h.eval(`(() => { if (typeof closeModal === 'function') closeModal(); return true; })()`);
-      await h.sleep(600);
       h.log('modal still open:', await h.eval(`!!(document.querySelector('#modalBox') && document.querySelector('#modalBox').offsetParent)`), '| lists:', await h.eval(`document.querySelectorAll('.fp-flow-cb').length + ' flows / ' + document.querySelectorAll('.fp-ps-cb').length + ' sets'`));
       await h.waitFor("document.querySelectorAll('.fp-flow-cb').length > 0 && document.querySelectorAll('.fp-ps-cb').length > 0", 240000, 1000);
     }

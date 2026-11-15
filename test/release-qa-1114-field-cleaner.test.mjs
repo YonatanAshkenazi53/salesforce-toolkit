@@ -1,3 +1,4 @@
+import vm from 'node:vm';
 // Release QA 2026-11-14 — Field Cleaner: the twelve confirmed findings, one regression test (or more) each.
 // Every fix goes the SAFE direction: say a failure instead of guessing, never report done when it is not.
 import { describe, it, expect } from 'vitest';
@@ -268,8 +269,150 @@ describe('12. flow ✂ keep on a flow with outcomes: the likely-refused plain wa
       preview: { removed: [{ kind: 'Assignment', name: 'A1', where: 'x', what: 'y' }], remaining: [], emptied: [{ kind: 'Assignment', name: 'A1', where: 'x' }] },
       previewOutcomes: { outcomes: [{ outcomeLabel: 'O', decisionLabel: 'D' }], remaining: [], disconnected: [], emptied: [] },
     });
-    expect(html).toContain('<input type="radio" name="fcActiveMode" value="replace" disabled>');
-    expect(html).toContain('Salesforce refuses a version like that');
+    // 2026-11-15 (owner): an unavailable way is not drawn greyed out — its reason sits in one folded line
+    expect(html).not.toContain('disabled');
+    expect(html).not.toContain('not available');
+    expect((html.match(/name="fcActiveMode"/g) || []).length).toBe(2);   // the outcomes way and switch-off
     expect(html).toContain('value="replace" data-outcomes="1">');   // the outcomes way stays offered
+    const why = html.slice(html.indexOf('fc-opt-whynot'));
+    expect(why).toContain('Why can’t the flow keep running?');
+    expect(why).toContain('Salesforce refuses a version like that');
+    expect(html).toContain('choose what happens to it');
+  });
+  it('when no way keeps the flow running: one card (switch off), both reasons folded, the heading says so', () => {
+    const html = new Function('fp', `const esc = s => String(s == null ? '' : s);
+      ${nested('_flowChoiceHtml')}\nreturn _flowChoiceHtml(fp, 'F', false, '');`)({
+      builderUrl: null, plan: { active: { num: 3 }, expectNew: 4 },
+      preview: { removed: [], remaining: [{ kind: 'Decision', name: 'D', where: 'x', value: 'v' }], emptied: [] },
+      previewOutcomes: { empty: true, outcomes: [{ outcomeLabel: 'Is fixture', decisionLabel: 'Check Email', decisionGone: true }], remaining: [], disconnected: [], emptied: [] },
+    });
+    expect((html.match(/name="fcActiveMode"/g) || []).length).toBe(1);
+    expect(html).toContain('name="fcActiveMode" value="delete"');
+    expect(html).not.toContain('disabled');
+    expect(html).toContain('the one way to clear it');
+    const why = html.slice(html.indexOf('fc-opt-whynot'));
+    expect(why).toContain('There is nothing the automatic fix can take out of this version.');
+    expect(why).toContain('“Is fixture” of the decision “Check Email”');
+  });
+});
+
+// 2026-11-15 (owner): after an edit in the ✎ editors — validate, then deploy. ✓ Validate is a check-only deploy.
+describe('✓ Validate in the ✎ editors: the verdict of a check-only deploy', () => {
+  const verdict = new Function('r', `const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    ${nested('_edValidateVerdict')}\nreturn _edValidateVerdict(r);`);
+  it('accepted: says nothing was written', () => {
+    const v = verdict({ success: true, checkOnly: true, failures: [] });
+    expect(v.cls).toBe('fc-xml-ed-ok');
+    expect(v.html).toContain('would accept');
+    expect(v.html).toContain('nothing was written');
+  });
+  it('refused: Salesforce\'s own words, escaped, with the component named', () => {
+    const v = verdict({ success: false, checkOnly: true, failures: [{ name: 'Account.R', type: 'ValidationRule', problem: 'Field <b>X__c</b> does not exist' }] });
+    expect(v.cls).toBe('fc-xml-ed-err');
+    expect(v.html).toContain('would refuse');
+    expect(v.html).toContain('Account.R: Field &lt;b>X__c&lt;/b> does not exist');
+  });
+  it('a check that could not run is NOT called a refusal of the text', () => {
+    for (const r of [{ error: 'Failed to fetch' }, null, { success: true }]) {
+      const v = verdict(r);
+      expect(v.cls).toBe('fc-xml-ed-err');
+      expect(v.html).toContain('could not be run');
+      expect(v.html).not.toContain('would accept');
+    }
+  });
+  it('both metadata editors carry the button; the template editor (a record save) does not', () => {
+    expect((FC.match(/class="btn btn-secondary btn-sm fc-xml-ed-validate"/g) || []).length).toBe(2);
+  });
+});
+
+// 2026-11-15 (owner): "salesforce would accept the delete but i cant click the delete button" — the chips counted
+// down to zero while the button's lock and Salesforce's answer box still counted the blockers of the scan.
+describe('a cleared blocker is counted off the list the Delete button reads', () => {
+  const count = new Function('list', 'type', `${nested('_afterDeleteCount')}\nreturn _afterDeleteCount(list, type);`);
+  it('one less of that kind; a kind at zero leaves the list; other kinds untouched', () => {
+    const l = [{ type: 'ValidationRule', label: 'VR', count: 2 }, { type: 'ApexClass', label: 'Apex', count: 1 }];
+    expect(count(l, 'ValidationRule')).toEqual([{ type: 'ValidationRule', label: 'VR', count: 1 }, { type: 'ApexClass', label: 'Apex', count: 1 }]);
+    expect(count(count(l, 'ValidationRule'), 'ValidationRule')).toEqual([{ type: 'ApexClass', label: 'Apex', count: 1 }]);
+    expect(count(l, 'Layout')).toEqual(l);
+    expect(count(null, 'X')).toEqual([]);
+    expect(l[0].count).toBe(2);   // the scan's own list is not mutated
+  });
+  it('_afterDelete feeds it, then lets Salesforce\'s check unlock Delete when nothing listed is left', () => {
+    const i = FC.indexOf('function _afterDelete(type) {'), body = FC.slice(i, FC.indexOf('function _afterDeleteCount', i));
+    expect(body).toContain('_manualBlockers = _afterDeleteCount(_manualBlockers, type);');
+    expect(body).toMatch(/if \(left === 0 && !_manualBlockers\.length\) \{[\s\S]*checkEnableDelete\(\);/);
+    expect(body).not.toContain('press Re-scan');
+  });
+});
+
+// 2026-11-15 (owner): "we dont have undo for anything there" — every fixed row carries ↩ Undo
+describe('a fixed row offers ↩ Undo; a row that was only settled does not', () => {
+  const changed = new Function('label', `${nested('_fixedRowChanged')}\nreturn _fixedRowChanged(label);`);
+  it('tells a change from a settle', () => {
+    expect(changed('✅ Done')).toBe(true);
+    expect(changed('✅ Removed — verified by re-reading the org')).toBe(true);
+    expect(changed('✅ Nothing uses the field here — Salesforce lists it because its description mentions the name')).toBe(false);
+    expect(changed('✅ No version of this flow references the field any more')).toBe(false);
+  });
+  it('markFixed draws the button and opens this tool\'s History', () => {
+    const i = FC.indexOf('  function markFixed('), body = FC.slice(i, i + 1800);
+    expect(body).toContain('fc-item-undo');
+    expect(body).toContain("window.sftkToolHistoryOpen('fields')");
+  });
+});
+
+// 2026-11-15 (owner): undo all for a field, with progress; and no "permanent" tick where an undo exists
+describe('↩ Undo all for one field', () => {
+  const H = read('sftk-history.js');
+  // the real file, whole, in its own context (it touches chrome / document only when a function runs)
+  const mk = () => { const ctx = vm.createContext({ console, setTimeout, Date, URL }); vm.runInContext(H + ';this.__x = { sftkHistoryUndoableFor, sftkHistoryUndoMany };', ctx); return ctx.__x; };
+  const E = (id, at, o = {}) => ({ id, kind: 'tool', tool: 'Field Cleaner', targetOrg: 'https://a.my.salesforce.com', profileName: `📋 Layout — "L${id}" (Account.Status__c removed)`, subject: 'Account.Status__c', startedAt: at, toolUndo: { steps: [{ describe: 'x' }] }, ...o });
+  it('lists what can still be undone for the field, newest first', () => {
+    const { sftkHistoryUndoableFor } = mk();
+    const all = [
+      E('1', '2026-11-15T10:00:00Z'), E('2', '2026-11-15T10:05:00Z'),
+      E('3', '2026-11-15T10:06:00Z', { subject: 'Account.Other__c' }),                       // another field
+      E('4', '2026-11-15T10:07:00Z', { toolUndo: { none: 'deleted flow versions' } }),       // no undo
+      E('5', '2026-11-15T10:08:00Z', { toolUndo: { steps: [{}], done: { ok: true } } }),     // already undone
+      E('6', '2026-11-15T10:09:00Z', { targetOrg: 'https://b.my.salesforce.com' }),          // another org
+      E('7', '2026-11-15T10:10:00Z', { tool: 'Flows' }),                                     // another tool
+      E('8', '2026-11-15T10:11:00Z', { undoOf: '1' }),                                       // itself an undo
+      E('9', '2026-11-15T09:00:00Z', { subject: '', profileName: '🧩 FlexiPage — "P" (Account.Status__c removed)' }),   // before entries carried a subject
+      E('10', '2026-11-15T09:01:00Z', { subject: '', profileName: '🧩 FlexiPage — "P" (Account.Status__c_Old removed)' }), // a longer name is not this field
+    ];
+    const got = sftkHistoryUndoableFor(all, { tool: 'Field Cleaner', orgUrl: 'https://A.my.salesforce.com/', subject: 'Account.Status__c' });
+    expect(got.map(e => e.id)).toEqual(['2', '1', '9']);
+    expect(sftkHistoryUndoableFor(all, { tool: 'Field Cleaner', orgUrl: 'https://a.my.salesforce.com', subject: '' })).toEqual([]);
+  });
+  it('runs them in order with no dialog of their own; a failure does not stop the rest; no session does', async () => {
+    const { sftkHistoryUndoMany } = mk();
+    const list = [E('a', '3'), E('b', '2'), E('c', '1')], calls = [], seen = [];
+    const res = await sftkHistoryUndoMany(list, {
+      undo: async (id, o) => { calls.push([id, o.confirm]); return id === 'b' ? { ok: false, text: 'Salesforce refused', entry: {} } : { ok: true, text: 'Undone', entry: {} }; },
+      onStart: (i, n, e) => seen.push(`start ${i + 1}/${n} ${e.id}`), onEnd: (i, n, e, r) => seen.push(`end ${e.id} ${r.ok}`),
+    });
+    expect(calls).toEqual([['a', false], ['b', false], ['c', false]]);
+    expect(res).toMatchObject({ total: 3, ran: 3, ok: 2, stopped: '' });
+    expect(res.failed.map(f => [f.entry.id, f.text])).toEqual([['b', 'Salesforce refused']]);
+    expect(seen).toEqual(['start 1/3 a', 'end a true', 'start 2/3 b', 'end b false', 'start 3/3 c', 'end c true']);
+    const stop = await sftkHistoryUndoMany(list, { undo: async id => id === 'b' ? { ok: false, text: 'Log in to a in a Salesforce tab first — the undo writes there.' } : { ok: true, entry: {} } });
+    expect(stop).toMatchObject({ total: 3, ran: 1, ok: 1 });
+    expect(stop.stopped).toContain('Log in to');
+    const thrown = await sftkHistoryUndoMany([E('z', '1')], { undo: async () => { throw new Error('boom'); } });
+    expect(thrown.failed[0].text).toBe('boom');
+  });
+  it('the summary says what was undone, what was not, and what was never tried', () => {
+    const sum = new Function('res', `${nested('_undoAllSummary')}\nreturn _undoAllSummary(res);`);
+    expect(sum({ total: 3, ran: 3, ok: 3, failed: [], stopped: '' })).toBe('✅ 3 of 3 changes undone and verified by re-reading the org.');
+    expect(sum({ total: 3, ran: 3, ok: 2, failed: [{}], stopped: '' })).toBe('⚠ 2 of 3 changes undone and verified by re-reading the org · 1 not undone.');
+    expect(sum({ total: 3, ran: 1, ok: 1, failed: [], stopped: 'Log in to a first' })).toContain('2 not tried — Log in to a first');
+  });
+  it('Field Cleaner stamps its entries with the picked field and draws the bar above the results', () => {
+    expect(FC).toContain("sftkHistorySubjectFor('Field Cleaner', _fcSubject);");
+    expect(FC.indexOf('<div id="fcUndoAll"></div>')).toBeLessThan(FC.indexOf('<div id="fcResults"></div>'));
+    expect(FC).toContain('sftkProgress(host.querySelector(\'.fc-undoall-prog\')');
+  });
+  it('deleting a blocker component asks for no "permanent" tick — it has a restore point and an undo', () => {
+    expect(FC).toContain("revOverride: { html: special, needsCheckbox: false, cls: 'sftk-rev-newver' },");
   });
 });

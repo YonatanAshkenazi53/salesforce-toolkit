@@ -24,7 +24,9 @@ const choice = (() => {
 
 describe('flow fix dialog — the active-version choice', () => {
   it('preselects replace only when nothing is left empty (the template checks pv.emptied)', () => {
-    expect(choice).toMatch(/value="replace" \$\{canReplace \? \(pv\.emptied\.length \? '' : 'checked'\) : 'disabled'\}/);
+    // 2026-11-15: a way that cannot be taken is no longer drawn (it was a greyed-out, disabled radio)
+    expect(choice).toContain("const a = !canReplace ? '' :");
+    expect(choice).toMatch(/value="replace" \$\{pv\.emptied\.length \? '' : 'checked'\}/);
   });
   it('with emptied elements: replace stays available but says why it is likely refused', () => {
     // 2026-11-11: the wording was redone ("kind of hard to understand each scenario here", "we need phrase it better")

@@ -68,9 +68,32 @@ if (typeof globalThis !== 'undefined') globalThis.sftkFlowAccessCheck = sftkFlow
 
    Compatible flow types: Screen Flows only (ProcessType = 'Flow').
    ============================================================ */
+// 2026-11-15 (live re-check): after ↩ Undo of a Flow Access run from the tool's History, the lists and the chips
+// kept the old grants until a reload. History now says when an undo has run ('sftk:history-undone', see
+// sftkHistoryUndoAnnounce); this decides what Flow Access does with it. PURE.
+//   detail: { tool, ok }   state: { ready (the tool was opened), loading (a read is under way) }
+//   → 'reload' | 'after-load' (re-read once the running read ends — it may have started before the undo wrote) | null
+function sftkFlowAccessOnUndo(detail, state) {
+  if (!detail || detail.tool !== 'Flow Access') return null;   // another tool's undo does not touch flow access
+  if (!state || !state.ready) return null;                     // never opened: the first open reads the org anyway
+  return state.loading ? 'after-load' : 'reload';              // ok or not — a partly-run undo changed the org too
+}
+// Listens on `doc` and acts on the verdict. api: { state(), reload(), later() }. → the listener (for the tests).
+function sftkFlowAccessWireUndo(doc, api) {
+  const on = ev => {
+    const v = sftkFlowAccessOnUndo(ev && ev.detail, api.state());
+    if (v === 'reload') api.reload(); else if (v === 'after-load') api.later();
+    return v;
+  };
+  doc.addEventListener('sftk:history-undone', on);
+  return on;
+}
+if (typeof globalThis !== 'undefined') { globalThis.sftkFlowAccessOnUndo = sftkFlowAccessOnUndo; globalThis.sftkFlowAccessWireUndo = sftkFlowAccessWireUndo; }
+
 const FlowPermissions = (() => {
   let _orgUrl, _sid;
   let _container;
+  let _undoWired = false, _loading = false, _reloadAfter = false, _loadRun = null;   // the refresh after a History undo (2026-11-15)
   let _flows     = [];   // FlowDefinitionView records
   let _permSets  = [];   // PermissionSet records
   let _accessMap = {};   // flowDefId  -> [{ permSetId, label, accessId }]
@@ -123,6 +146,10 @@ const FlowPermissions = (() => {
     _orgUrl    = orgUrl;
     _sid       = sid;
     renderShell();
+    if (!_undoWired) {   // once per page: init runs again on a new session
+      _undoWired = true;
+      sftkFlowAccessWireUndo(document, { state: () => ({ ready: !!_container, loading: _loading }), reload: loadData, later: () => { _reloadAfter = true; } });
+    }
     loadData();
   }
 
@@ -198,6 +225,14 @@ const FlowPermissions = (() => {
 
   // ── Data loading ────────────────────────────────────────────
   async function loadData() {
+    // one read at a time: asked again while one runs (an undo that ended meanwhile), the running read is followed
+    // by another, and every caller waits for the last of them
+    if (_loading) { _reloadAfter = true; return _loadRun; }
+    _loading = true;
+    _loadRun = (async () => { try { do { _reloadAfter = false; await _loadDataOnce(); } while (_reloadAfter); } finally { _loading = false; } })();
+    return _loadRun;
+  }
+  async function _loadDataOnce() {
     setLoading(true);
     hideError();
     // the cat, one segment per step and the time left (user 2026-11-08: "every loading that might take time")
