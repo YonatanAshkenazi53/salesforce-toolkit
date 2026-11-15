@@ -4,6 +4,7 @@
 // cleanup.apex + seed-target.apex (docs/fixtures/complex-deployment/README.md).
 //   STEPS="SFTK CX — Leads,SFTK CX — Campaigns"   profile names, in order
 //   SCAN_ONLY=1   stop at the confirmation (nothing written)
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 export default async function (h) {
   await h.login('npc'); await h.login('npc2');
@@ -19,7 +20,7 @@ export default async function (h) {
   h.log('run button:', await h.eval(`(() => { const b = document.querySelector('[data-seq-run="${made}"]'); return b.textContent.trim() + (b.disabled ? ' (off)' : ''); })()`));
   // GUARD=1: mark the target as 🛑 guarded-as-production first, so the typed-name step must appear
   if (process.env.GUARD === '1') {
-    h.log('guard:', await h.eval(`(async () => { const u = 'https://trailheads4.my.salesforce.com'; _orgs[u] = { ...(_orgs[u] || {}), guardAsProd: true }; await storageSaveOrgs(); return 'guarded ' + u; })()`));
+    h.log('guard:', await h.eval(`(async () => { const u = ${JSON.stringify(orgUrl('npc2'))}; _orgs[u] = { ...(_orgs[u] || {}), guardAsProd: true }; await storageSaveOrgs(); return 'guarded ' + u; })()`));
   }
   await h.eval(`document.querySelector('[data-seq-run="${made}"]').click()`);
   await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('#seqRunBody')", 60000, 500);

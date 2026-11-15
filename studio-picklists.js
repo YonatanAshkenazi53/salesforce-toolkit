@@ -285,7 +285,7 @@ function pkBulkScanCalls(scan) {
 // Copy mirrors sftkApiBudgetLine (studio-transfer.js) so cost lines read the
 // same app-wide, but this is self-contained: no cross-file dependency.
 function pkApiCostLine(est, budgets) {
-  const fmt = v => Number(v).toLocaleString();
+  const fmt = v => Number(v).toLocaleString('en-US');
   const total = (est && Number.isFinite(est.total)) ? Math.max(0, Math.floor(est.total)) : null;
   if (total === null) return { text: '', warn: false };
   const rough = est.known === false;
@@ -920,15 +920,15 @@ function _pkRenderInventory() {
           ${v.default ? '<span class="ds-pk-default">default</span>' : ''}
           ${active ? '' : '<span class="ds-pk-inactive-badge">inactive</span>'}
         </div>
-        <div class="ds-pk-usage" title="${count == null ? 'not counted' : count === -1 ? 'count failed' : count.toLocaleString() + ' record(s) hold this value'}">
+        <div class="ds-pk-usage" title="${count == null ? 'not counted' : count === -1 ? 'count failed' : count.toLocaleString('en-US') + ' record(s) hold this value'}">
           ${count == null ? '<span class="ds-pk-uncounted">—</span>'
             : count === -1 ? '<span class="ds-pk-uncounted">?</span>'
             : `<span class="ds-pk-bar"><span class="ds-pk-fill" style="width:${Math.max(2, Math.round(count / maxCount * 100))}%"></span></span>
-               <span class="ds-pk-count">${count.toLocaleString()}</span>`}
+               <span class="ds-pk-count">${count.toLocaleString('en-US')}</span>`}
         </div>
         <div class="ds-pk-rts">${rtChips || '<span class="ds-pk-uncounted">—</span>'}</div>
         <div class="ds-pk-actions">
-          ${(count > 0) ? `<button class="ds-btn ds-btn-sm" data-pk-fix="${i}" title="Move the ${count.toLocaleString()} record(s) holding this value to another value (or clear them)">🔧 Fix data…</button>` : ''}
+          ${(count > 0) ? `<button class="ds-btn ds-btn-sm" data-pk-fix="${i}" title="Move the ${count.toLocaleString('en-US')} record(s) holding this value to another value (or clear them)">🔧 Fix data…</button>` : ''}
           <button class="ds-btn ds-btn-sm" data-pk-toggle="${i}">${active ? '⏸ Deactivate' : '▶ Activate'}</button>
           <button class="ds-btn ds-btn-sm ds-btn-danger" data-pk-del="${i}" title="Remove the value from the value set entirely">🗑</button>
         </div>
@@ -943,8 +943,8 @@ function _pkRenderInventory() {
       <strong>${inv.rawValues.length}</strong> value${inv.rawValues.length !== 1 ? 's' : ''}
       (${activeN} active${inactiveN ? `, ${inactiveN} inactive` : ''})
       ${inv.isMulti ? ' · multi-select' : ''}
-      ${!inv.isMulti && inv.totalCount ? ` · ${inv.totalCount.toLocaleString()} records total` : ''}
-      ${inv.nullCount ? ` · ${inv.nullCount.toLocaleString()} blank` : ''}
+      ${!inv.isMulti && inv.totalCount ? ` · ${inv.totalCount.toLocaleString('en-US')} records total` : ''}
+      ${inv.nullCount ? ` · ${inv.nullCount.toLocaleString('en-US')} blank` : ''}
       ${prodBadge(inv.orgUrl)}
     </div>
     ${inv.usageNote ? `<div class="ds-pk-note">⚠ ${esc(inv.usageNote)}</div>` : ''}
@@ -1155,7 +1155,7 @@ function _pkImpactHtml(impact, recordCount, literal) {
     : '';
   return `
     <div class="ds-pk-impact">
-      <div class="ds-pk-imp-title">⚡ Updating ${recordCount.toLocaleString()} record(s) will run the object's automation:</div>
+      <div class="ds-pk-imp-title">⚡ Updating ${recordCount.toLocaleString('en-US')} record(s) will run the object's automation:</div>
       ${row('⚡', 'Active triggers', impact.triggers)}
       ${row('🌊', 'Record-triggered flows', impact.flows)}
       ${row('✅', 'Validation rules', impact.validationRules)}
@@ -1346,7 +1346,7 @@ async function _pkOpenWizard(idx, mode) {
   // production typed-name step replaces the old confirmTypedProd() call.
   const bodyHtml = `
     ${needsFix ? `
-      <p><strong>${count.toLocaleString()}</strong> record${count !== 1 ? 's' : ''} currently hold${count === 1 ? 's' : ''} this value.
+      <p><strong>${count.toLocaleString('en-US')}</strong> record${count !== 1 ? 's' : ''} currently hold${count === 1 ? 's' : ''} this value.
       ${mode === 'delete' ? 'Deleting without a fix leaves ORPHAN text — filters and reports silently stop matching it.'
         : mode === 'toggle' ? 'Deactivating keeps the stored value but users can no longer select it.' : ''}</p>
       <div class="ds-pk-fixchoice">
@@ -1372,7 +1372,7 @@ async function _pkOpenWizard(idx, mode) {
   const ok = await sftkConfirmDestructive({
     title,
     icon: mode === 'delete' ? '🗑' : mode === 'fix' ? '🔧' : '⏸',
-    items: [{ label: name, sub: needsFix ? `${count.toLocaleString()} record(s) currently hold this value` : 'no records hold this value' }],
+    items: [{ label: name, sub: needsFix ? `${count.toLocaleString('en-US')} record(s) currently hold this value` : 'no records hold this value' }],
     revOverride: mode === 'delete'
       ? { html: "⛔ Salesforce's API cannot delete a picklist value: this removes it from the value set and Salesforce keeps it as <strong>inactive</strong> — the tool re-reads the field afterwards and says which. Deleting it for good is a click in Setup (Object Manager → Fields &amp; Relationships → the field → Values → Del). Records already fixed above are unaffected. Prefer <strong>Deactivate</strong> unless you need it out of the list.", needsCheckbox: true }
       : mode === 'toggle'
@@ -1474,7 +1474,7 @@ async function _pkDataFixCore(ctx, value, fixMode, target, onProgress, journal) 
   // 200-record steps, each verified by re-reading exactly those Ids.
   let undo;
   if (updated > UNDO_CAP) {
-    undo = { none: `more than 5,000 records were changed — too many to keep an undo copy on this PC (${updated.toLocaleString()} changed)` };
+    undo = { none: `more than 5,000 records were changed — too many to keep an undo copy on this PC (${updated.toLocaleString('en-US')} changed)` };
   } else if (!undoRecords.length) {
     undo = { none: 'no records were changed' };
   } else {
@@ -1529,7 +1529,7 @@ async function _pkRunDataFix(value, fixMode, target, ctx = _pkInv) {
     });
     await storageSaveHistory();
     showToast(failed === 0
-      ? `✅ ${updated.toLocaleString()} record(s) moved off “${value}”`
+      ? `✅ ${updated.toLocaleString('en-US')} record(s) moved off “${value}”`
       : `⚠ ${updated} fixed, ${failed} failed — see History for the errors`, failed ? 'warning' : 'success', 6000);
     return failed === 0;
   } catch (e) {
@@ -1733,7 +1733,7 @@ function _pkRenderMatrix() {
       // aloud — title= is not exposed as a name by every AT.
       if (cell.missing) return `<div class="ds-pk-mx-cell ds-pk-mx-na" title="org skipped / not loaded"><span class="ds-pk-mx-state" aria-hidden="true">·</span><span class="ds-sr">not loaded</span></div>`;
       if (!cell.exists) return `<div class="ds-pk-mx-cell ds-pk-mx-absent" title="value not present in this org"><span class="ds-pk-mx-state" aria-hidden="true">—</span><span class="ds-sr">missing</span></div>`;
-      const cnt = cell.count == null ? '' : cell.count === -1 ? '?' : cell.count.toLocaleString();
+      const cnt = cell.count == null ? '' : cell.count === -1 ? '?' : cell.count.toLocaleString('en-US');
       const rti = cols[ci]?.rts?.length ? pkRtCellInfo(cols[ci].rts, row.name) : null;
       const rtBadge = rti ? `<span class="ds-pk-mx-rt ${rtDrift ? 'ds-pk-mx-rt-drift' : ''}"
         title="${rti.inCount ? `In record type(s): ${esc(rti.names.join(', '))}` : 'Not included in any active record type here'}${rtDrift ? ' · ⚠ this value’s record-type assignment DIFFERS across orgs (same-name record types disagree) — align via 🔄 Sync from source' : ''}">${rtDrift ? dsIcon('warn') : ''}${rti.inCount}/${rti.total} RT</span>` : '';
@@ -2052,7 +2052,7 @@ function _pkRenderValueSet(ctx, opts) {
     const count = ctx.usage.has(name) ? ctx.usage.get(name) : null;
     return `<div class="ds-pk-row${active ? '' : ' ds-pk-row-inactive'}" data-pk-val="${esc(name)}">
       <div class="ds-pk-val"><span class="ds-pk-name">${esc(v.label || name)}</span>${v.label && v.label !== name ? `<code class="ds-pk-api">${esc(name)}</code>` : ''}${v.default ? '<span class="ds-pk-default">default</span>' : ''}${active ? '' : '<span class="ds-pk-inactive-badge">inactive</span>'}</div>
-      <div class="ds-pk-usage">${count == null ? '<span class="ds-pk-uncounted">—</span>' : count === -1 ? '<span class="ds-pk-uncounted">?</span>' : `<span class="ds-pk-bar"><span class="ds-pk-fill" style="width:${Math.max(2, Math.round(count / maxCount * 100))}%"></span></span><span class="ds-pk-count">${count.toLocaleString()}</span>`}</div>
+      <div class="ds-pk-usage">${count == null ? '<span class="ds-pk-uncounted">—</span>' : count === -1 ? '<span class="ds-pk-uncounted">?</span>' : `<span class="ds-pk-bar"><span class="ds-pk-fill" style="width:${Math.max(2, Math.round(count / maxCount * 100))}%"></span></span><span class="ds-pk-count">${count.toLocaleString('en-US')}</span>`}</div>
       <div class="ds-pk-actions">
         ${(count > 0) ? `<button class="ds-btn ds-btn-sm" data-vs-fix="${i}">🔧 Fix data…</button>` : ''}
         ${opts.readOnlyMeta ? '' : `<button class="ds-btn ds-btn-sm" data-vs-toggle="${i}">${active ? '⏸ Deactivate' : '▶ Activate'}</button>`}
@@ -2133,7 +2133,7 @@ async function _pkValueSetWizard(ctx, idx, mode, applyFn, reloadFn) {
   // step replaces the old confirmTypedProd() call.
   const bodyHtml = `
     ${needsFix ? `
-      <p><strong>${count.toLocaleString()}</strong> record(s) currently hold this value.</p>
+      <p><strong>${count.toLocaleString('en-US')}</strong> record(s) currently hold this value.</p>
       <div class="ds-pk-fixchoice">
         <label><input type="radio" name="dsVsFix" value="remap" ${others.length ? 'checked' : 'disabled'}> Move them to:
           <select id="dsVsRemap" class="ds-select ds-select-sm">${others.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select></label>
@@ -2153,7 +2153,7 @@ async function _pkValueSetWizard(ctx, idx, mode, applyFn, reloadFn) {
   const ok = await sftkConfirmDestructive({
     title,
     icon: mode === 'delete' ? '🗑' : mode === 'fix' ? '🔧' : '⏸',
-    items: [{ label: name, sub: needsFix ? `${count.toLocaleString()} record(s) currently hold this value` : 'no records hold this value' }],
+    items: [{ label: name, sub: needsFix ? `${count.toLocaleString('en-US')} record(s) currently hold this value` : 'no records hold this value' }],
     revOverride: mode === 'delete'
       ? { html: "⛔ Salesforce's API may keep a removed value as <strong>inactive</strong> rather than delete it (it does for custom picklists) — check the value set in Setup afterwards; deleting for good is a Setup click. Prefer <strong>Deactivate</strong> unless you need it out of the list.", needsCheckbox: true }
       : mode === 'toggle'
@@ -2586,7 +2586,7 @@ async function _pkSyncAutomationPass(plans, guards, obj, field, token) {
         // to "the other 107 were NOT checked").
         const partial = (lit.notes || []).length > 0;
         if (s) s.innerHTML = `<span style="color:var(--success)">✓ ${partial ? 'nothing that was scanned in' : 'no flow or validation rule in'} ${esc(tgt.label)} names this value</span>`
-          + (g.usage ? `<span style="color:var(--warning)"> · still unticked: ${g.usage.toLocaleString()} record(s) hold it</span>` : '')
+          + (g.usage ? `<span style="color:var(--warning)"> · still unticked: ${g.usage.toLocaleString('en-US')} record(s) hold it</span>` : '')
           + ((lit.notes || []).length ? `<span style="color:var(--warning)"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
       }
     }
@@ -2668,7 +2668,7 @@ async function _pkOpenSyncPlan() {
       .map(v => pkValueName(v));
     const fixCtl = (k, n, u) => !u ? '' : `
       <div class="ds-sync-fix" style="font-size:12px;margin:-2px 0 6px 22px">
-        ↳ first, its ${u.toLocaleString()} record(s):
+        ↳ first, its ${u.toLocaleString('en-US')} record(s):
         <select class="ds-sync-fixsel ds-select ds-select-sm" data-g="${k}">
           <option value="">— keep holding “${esc(n)}” (pick a fix to enable the tick) —</option>
           ${remapTargets.filter(v => v !== n).map(v => `<option value="${esc(v)}">move to “${esc(v)}”</option>`).join('')}
@@ -2713,14 +2713,14 @@ async function _pkOpenSyncPlan() {
             // The automation note sits OUTSIDE the <label> on purpose — a link
             // inside a label would toggle the checkbox when clicked.
             return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="deactivate" data-g="${k}" data-val="${esc(n)}" disabled>
-              ⏸ Deactivate <strong>${esc(n)}</strong> (inactive in source)${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s) still hold it</span>` : ''}</label>
+              ⏸ Deactivate <strong>${esc(n)}</strong> (inactive in source)${u ? ` — <span class="ds-ring-m">${u.toLocaleString('en-US')} record(s) still hold it</span>` : ''}</label>
               <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
           }).join('')}
           ${d.extras.map(n => {
             const u = usageOf(pl.tgt, n);
             const k = gi(pi, 'extrasOff', n);
             return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="extrasOff" data-g="${k}" data-val="${esc(n)}" disabled>
-              🔵 Deactivate extra <strong>${esc(n)}</strong> (not in source${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s)</span>` : ''}) — never deleted automatically</label>
+              🔵 Deactivate extra <strong>${esc(n)}</strong> (not in source${u ? ` — <span class="ds-ring-m">${u.toLocaleString('en-US')} record(s)</span>` : ''}) — never deleted automatically</label>
               <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
           }).join('')}
           ${d.defaultChange ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="alignDefault" checked>
@@ -2762,7 +2762,7 @@ async function _pkOpenSyncPlan() {
                 const fix = box.querySelector(`.ds-sync-fixsel[data-g="${cb.dataset.g}"]`)?.value || '';
                 if (!fix) {
                   cb.checked = false;
-                  showToast(`${g.usage.toLocaleString()} record(s) still hold “${g.val}” — pick a data fix on that row first`, 'warning', 5000);
+                  showToast(`${g.usage.toLocaleString('en-US')} record(s) still hold “${g.val}” — pick a data fix on that row first`, 'warning', 5000);
                 }
               }
             }

@@ -15,8 +15,8 @@ describe('records list window', () => {
   });
   it('offers Show N more and Show all instead of telling the user to filter', () => {
     expect(DV).not.toContain('the count is the truth, the list is a window. Filter to find a record.');
-    expect(DV).toContain('data-dep-more="step">Show ${Math.min(SFTK_DEPLOY_WINDOW, rows.length - shown.length).toLocaleString()} more</button>');
-    expect(DV).toContain('data-dep-more="all">Show all ${rows.length.toLocaleString()}</button>');
+    expect(DV).toContain('data-dep-more="step">Show ${Math.min(SFTK_DEPLOY_WINDOW, rows.length - shown.length).toLocaleString(\'en-US\')} more</button>');
+    expect(DV).toContain('data-dep-more="all">Show all ${rows.length.toLocaleString(\'en-US\')}</button>');
   });
   it('the buttons grow the window and repaint in place, keeping the scroll position', () => {
     const i = DV.indexOf("host.querySelectorAll('[data-dep-more]')");
@@ -26,7 +26,7 @@ describe('records list window', () => {
     expect(block).toContain('again.scrollTop = top');
   });
   it('✓ All says it includes the rows not shown yet', () => {
-    expect(DV).toContain('including the ${(rows.length - shown.length).toLocaleString()} not shown yet (Show all lists them)');
+    expect(DV).toContain('including the ${(rows.length - shown.length).toLocaleString(\'en-US\')} not shown yet (Show all lists them)');
   });
   it('card icons say what the card is: 🏢 orgs, 📦 the deployment (user 2026-10-02)', () => {
     expect(DV).toContain('<span class="ds-rec-card-ico">🏢</span><span class="ds-rec-card-title">Between which orgs</span>');

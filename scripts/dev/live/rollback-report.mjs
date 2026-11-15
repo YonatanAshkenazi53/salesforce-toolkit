@@ -11,6 +11,7 @@
 //   ORG=npc2     another org (then the times below match nothing: "0 found")
 //   START / END  ISO times of the synthetic rollback
 //   NO_LOGIN=1   no session for the org: the page must say "open that org"
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 const NL = String.fromCharCode(10);
 const text = async (h, sel, n = 3000) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).split(NL).map(x => x.trim()).filter(Boolean).join(' | ').slice(0, n);
 export default async function (h) {
@@ -19,7 +20,7 @@ export default async function (h) {
   await h.studio('');
   await h.watchErrors();
   await h.sleep(2500);
-  const org = process.env.ORG_URL || (alias === 'npc2' ? 'https://trailheads4.my.salesforce.com' : 'https://trailheads5.my.salesforce.com');
+  const org = process.env.ORG_URL || orgUrl(alias === 'npc2' ? 'npc2' : 'npc');
   const entry = {
     id: 'run_live_synthetic_old_rollback', kind: 'rollback', profileName: '↩ Rollback of Account + Contacts',
     startedAt: process.env.START || '2026-10-02T14:04:30.000Z', completedAt: process.env.END || '2026-10-02T14:05:05.000Z',

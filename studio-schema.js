@@ -1033,7 +1033,7 @@ function svDeepScanCallEstimate(eligibleCount, cap, chunk) {
 // batched calls EXCEED the remaining budget (equal is not over) — this line
 // informs, it never blocks the scan.
 function svDeepScanBudgetLine(est, budgetInfo) {
-  const fmt = v => Number(v).toLocaleString();
+  const fmt = v => Number(v).toLocaleString('en-US');
   const e = est || {};
   const calls  = Number.isFinite(e.calls)  ? e.calls  : 0;
   const opened = Number.isFinite(e.opened) ? e.opened : 0;

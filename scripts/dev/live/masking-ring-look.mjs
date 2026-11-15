@@ -2,6 +2,7 @@
 // dialog (what masking does, unmask one or all) — a rule is put on the editing
 // copy only, nothing is saved; (2) All open orgs › Scan shows which deployment
 // is being scanned (user 2026-10-27). Screenshots, light and dark.
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 export default async function (h) {
   await h.login('npc'); await h.login('npc2'); await h.studio(''); await h.watchErrors();
   await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
@@ -23,7 +24,7 @@ export default async function (h) {
   // All open orgs: Scan all, caught mid-way
   await h.eval(`navigateToView('ring')`); await h.waitFor("!!document.querySelector('#dsRingSrc')", 60000, 500); await h.sleep(800);
   // the source: trailheads5, picked like a person would
-  await h.eval(`(() => { const s = document.querySelector('#dsRingSrc'); const o = [...s.options].find(x => /trailheads5/.test(x.textContent)); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.textContent; })()`);
+  await h.eval(`(() => { const s = document.querySelector('#dsRingSrc'); const o = [...s.options].find(x => (x.textContent + ' ' + x.value).includes(${JSON.stringify(orgKey('npc'))})); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.textContent; })()`);
   await h.waitFor("!!document.querySelector('[data-ring-scanall]')", 60000, 500); await h.sleep(800);
   await h.eval(`document.querySelector('[data-ring-scanall]')?.click()`); await h.sleep(4000);
   h.log('RING chip:', await h.eval(`document.querySelector('[data-ring-scanall]')?.textContent`), '| scanning cells:', await h.eval(`[...document.querySelectorAll('.ds-ring-cell')].filter(c => /scanning/.test(c.textContent)).length`));

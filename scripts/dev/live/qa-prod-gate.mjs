@@ -4,11 +4,16 @@
 //   1. Flows page › delete one obsolete version     2. Flows page › delete the failed interviews
 //   3. Deploy page › Deploy (the volume deployment) 4. Tool History › Undo of the newest flow change
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-const SRC = 'https://trailheads5.my.salesforce.com', TGT = 'https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com';
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
+const SRC = orgUrl('npc'), TGT = orgUrl('npc2');
 const LABEL = 'SFTK FC Test Flow';
+// WHY (2026-11-15): block 007 of the volume fixture was never seeded on the npc / npc2 orgs — the deployment read nothing,
+// Deploy stayed off and step 3 found no confirmation. npc holds block 000 (SFTK VOL Account 00000..00099); the run is
+// cancelled at the confirmation, so nothing is written whichever block it is. VOL_LIKE picks another.
+const VOL_LIKE = process.env.VOL_LIKE || 'SFTK VOL Account 0000%';
 const results = [];
 async function guard(h, on) {
-  return h.eval(`(async () => { const keys = Object.keys(_orgs).filter(u => /trailheads5|orgfarm-e2c4511b2b/.test(u)); for (const k of keys) _orgs[k].guardAsProd = ${on}; await storageSaveOrgs(); return keys.length; })()`);
+  return h.eval(`(async () => { const keys = Object.keys(_orgs).filter(u => ${JSON.stringify([orgKey('npc'), orgKey('npc2')])}.some(k => u.includes(k))); for (const k of keys) _orgs[k].guardAsProd = ${on}; await storageSaveOrgs(); return keys.length; })()`);
 }
 // answer the tool's own questions until the shared confirmation shows, then read it and Cancel
 async function reachConfirm(h, label) {
@@ -60,7 +65,7 @@ export default async function (h) {
     const all = JSON.parse(readFileSync('docs/fixtures/complex-deployment/profiles.json', 'utf8'));
     const base = JSON.parse(JSON.stringify(all.find(p => (p.profile || p).name === 'SFTK VOL — Accounts')));
     const prof = base.profile || base;
-    Object.assign(prof, { name: 'QA prod gate', sourceOrg: SRC, targetOrg: TGT }); prof.tree.where = "Name LIKE 'SFTK VOL Account 0070%'"; prof.tree.children = [];
+    Object.assign(prof, { name: 'QA prod gate', sourceOrg: SRC, targetOrg: TGT }); prof.tree.where = `Name LIKE '${VOL_LIKE}'`; prof.tree.children = [];
     mkdirSync('dist/tmp', { recursive: true }); writeFileSync('dist/tmp/qa-prod.json', JSON.stringify([base]));
     await h.importProfiles('dist/tmp/qa-prod.json');
     const id = await h.eval(`_profiles.find(p => p.name === 'QA prod gate')?.id`);

@@ -131,7 +131,7 @@ function sftkDeployWrittenObjects(objects, recSel, recChildSel) {
 function sftkDeploySelection(recSel, recChildSel, rootObj, objByPath) {
   const parts = [];
   let total = 0;
-  const add = (n, txt) => { if (n) { parts.push(`${n.toLocaleString()} ${txt}`); total += n; } };
+  const add = (n, txt) => { if (n) { parts.push(`${n.toLocaleString('en-US')} ${txt}`); total += n; } };
   const r = recSel || {};
   const size = s => (s && typeof s.size === 'number') ? s.size : 0;
   add(size(r.push),      `${rootObj} to insert`);
@@ -561,12 +561,12 @@ async function renderDeploy() {
   // what "✓ Tick every insert" would tick: every missing record of every scanned object, the parent rule applied
   const every = sftkDeployRetryPicks(scan, sftkDeployEveryInsert(scan), sftkRecChildRowState);
   const cell = (r, k) => r.cells[k]
-    ? `<td class="ds-dep-num${r.cells[k].n ? ` ds-dep-n-${k}` : ' ds-dep-muted'}" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="${k}" title="${r.cells[k].capped ? `${Number(r.cells[k].n || 0).toLocaleString()} in total — the list shows the first ${Number(r.cells[k].shown || 0).toLocaleString()} of them` : 'Show these records'}">${esc(r.cells[k].text)}</td>`
+    ? `<td class="ds-dep-num${r.cells[k].n ? ` ds-dep-n-${k}` : ' ds-dep-muted'}" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="${k}" title="${r.cells[k].capped ? `${Number(r.cells[k].n || 0).toLocaleString('en-US')} in total — the list shows the first ${Number(r.cells[k].shown || 0).toLocaleString('en-US')} of them` : 'Show these records'}">${esc(r.cells[k].text)}</td>`
     : `<td class="ds-dep-num ds-dep-muted">${r.scanned ? '—' : ''}</td>`;
   const planHtml = `
     <details${_depFoldOpen('plan')} class="ds-rec-card ds-dep-fold" data-fold="plan">
       <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">📋</span><span class="ds-rec-card-title">What the two orgs hold</span>
-        <span class="ds-rec-card-hint">every number opens its records · nothing is selected until you select it</span><span class="ds-dep-foldsum">${[['ins', 'to insert'], ['chg', 'changed'], ['ext', 'only in the target'], ['amb', 'need a decision']].filter(([k]) => sum(k)).map(([k, w]) => `${sum(k).toLocaleString()} ${w}`).join(' · ') || 'nothing to do — in sync'}${unscanned.length ? ` · ${unscanned.length} object${unscanned.length === 1 ? '' : 's'} not read yet` : ''}</span></summary>
+        <span class="ds-rec-card-hint">every number opens its records · nothing is selected until you select it</span><span class="ds-dep-foldsum">${[['ins', 'to insert'], ['chg', 'changed'], ['ext', 'only in the target'], ['amb', 'need a decision']].filter(([k]) => sum(k)).map(([k, w]) => `${sum(k).toLocaleString('en-US')} ${w}`).join(' · ') || 'nothing to do — in sync'}${unscanned.length ? ` · ${unscanned.length} object${unscanned.length === 1 ? '' : 's'} not read yet` : ''}</span></summary>
       <div class="ds-dep-tblwrap"><table class="ds-dep-plan">
         <thead><tr><th>Object</th><th class="ds-dep-num" title="Records read from the source for this deployment">In source</th><th class="ds-dep-num" title="Records read from the target">In target</th>
           <th class="ds-dep-num" title="In the source only — inserted when you select them">🔴 Insert</th><th class="ds-dep-num" title="In both orgs with different values — pick a winner per row">🟡 Changed</th>
@@ -575,19 +575,19 @@ async function renderDeploy() {
         <tbody>${plan.map(r => `<tr${r.pathKey === ((objects.find(o => o.pathKey === _depObjPath) || objects[0] || {}).pathKey) ? ' class="ds-dep-cur" aria-current="true"' : ''}>
           <td><button class="ds-dep-objlink" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="ins" style="padding-left:${r.depth * 16}px">${r.depth ? '↳ ' : ''}${esc(r.obj)}</button>
             <span class="ds-dep-sub">${r.depth ? `under ${esc(r.parentObj || '')}` : 'root'}</span></td>
-          <td class="ds-dep-num">${r.src == null ? '' : r.src.toLocaleString()}</td><td class="ds-dep-num">${r.tgt == null ? '' : r.tgt.toLocaleString()}</td>
+          <td class="ds-dep-num">${r.src == null ? '' : r.src.toLocaleString('en-US')}</td><td class="ds-dep-num">${r.tgt == null ? '' : r.tgt.toLocaleString('en-US')}</td>
           ${cell(r, 'ins')}${cell(r, 'chg')}${cell(r, 'ext')}${r.depth ? cell(r, 'link') : '<td class="ds-dep-num ds-dep-muted"></td>'}${cell(r, 'same')}${cell(r, 'amb')}
           ${''/* a row that is already read has no button of its own (owner 2026-11-13: "we dont need this button as we have the rescan all" · "what we will do is a rescan all and also there a way to select every object to rescan"): a tick per object, and ONE button — 🔄 Rescan all N, or 🔄 Rescan the K selected. An object not read yet keeps 🔎 Scan — its numbers are unknown, not zero. */}
           <td class="ds-dep-rescan-td">${r.depth && !r.scanned ? `<button class="ds-btn ds-btn-xs" data-dep-scan="${esc(r.pathKey)}" title="This object has not been read against this target yet — its records are unknown, not zero">🔎 Scan</button>` : `<label class="ds-dep-rescan-pick" title="Tick to read ${esc(r.obj)} again with 🔄 Rescan — only the ticked objects are read (and the objects under them). Nothing ticked = every object."><input type="checkbox" class="ds-dep-rescan-cb" data-path="${esc(r.pathKey)}" ${_depRescanPick.has(r.pathKey) ? 'checked' : ''}><span>rescan</span></label>`}</td>
         </tr>`).join('')}
-        ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same', 'amb'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
+        ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same', 'amb'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString('en-US')}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
     </details>`;
   // The page's whole-deployment actions sit in the "Between which orgs" card, above the table (user 2026-11-10:
   // "זה נמצא במקום לא טוב … למעלה. באותו card מתחת between which orgs") — they were under the totals row.
   const actionsHtml = `<div class="ds-dep-orgs-acts">
-      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepPiiAll" title="Read the records this deployment inserts and suggest a PII treatment per field — each with a real example and the record it comes from; you tick what applies">🎭 Suggest PII treatment for all ${every.found.toLocaleString()} to insert</button> <span class="ds-dep-muted">${(() => { const n = Object.values(p.piiPolicy || {}).filter(Boolean).length; return n ? `${n} field${n === 1 ? ' is' : 's are'} masked now — ▸ record shows each value as it is written` : 'no field is masked yet'; })()}</span></div>` : ''}
+      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepPiiAll" title="Read the records this deployment inserts and suggest a PII treatment per field — each with a real example and the record it comes from; you tick what applies">🎭 Suggest PII treatment for all ${every.found.toLocaleString('en-US')} to insert</button> <span class="ds-dep-muted">${(() => { const n = Object.values(p.piiPolicy || {}).filter(Boolean).length; return n ? `${n} field${n === 1 ? ' is' : 's are'} masked now — ▸ record shows each value as it is written` : 'no field is masked yet'; })()}</span></div>` : ''}
       <div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs${unscanned.length ? ' ds-btn-primary' : ''}" id="dsDepRescanAll" title="Read every object of this deployment in both orgs — the root and every child, read before or not, parents before their children. Nothing is changed.">${_depRescanLabel(plan.length, unscanned.length)}</button> ${unscanned.length ? `<b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan before calling this pair in sync.` : '<span class="ds-dep-muted" id="dsDepRescanNote">' + _depRescanNote(plan.length) + '</span>'}</div>
-      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
+      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString('en-US')} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
     </div>`;
 
   // ── notes: the same facts the classic header shows ──
@@ -601,7 +601,7 @@ async function renderDeploy() {
   if (scan.dupKeys?.rows) notes.push(sftkRecDupsHtml(scan, p));
   // Phase 5 — the ambiguous copies are listed, not guessed: say where.
   { const nAmb = (scan.ambiguous || []).length;
-    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString()} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record${nAmb === 1 ? '' : 's'} need${nAmb === 1 ? 's' : ''} a decision</b> — more than one record carries the same name, and the scan does not guess. Nothing is deployed for them until it is settled: <button class="ds-btn ds-btn-xs" data-dep-tab-go="amb" title="Opens the ⚠ Needs a decision tab below">⚠ Open Needs a decision</button> — 🔀 merge copies of the same record, or say per record 📌 which ${esc(orgLabel(p.targetOrg))} record it is, or ➕ that it is new there.`); }
+    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString('en-US')} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record${nAmb === 1 ? '' : 's'} need${nAmb === 1 ? 's' : ''} a decision</b> — more than one record carries the same name, and the scan does not guess. Nothing is deployed for them until it is settled: <button class="ds-btn ds-btn-xs" data-dep-tab-go="amb" title="Opens the ⚠ Needs a decision tab below">⚠ Open Needs a decision</button> — 🔀 merge copies of the same record, or say per record 📌 which ${esc(orgLabel(p.targetOrg))} record it is, or ➕ that it is new there.`); }
   // child objects: the same card, without the root's fix buttons (they act on the root's key)
   for (const [pk, cs] of Object.entries(scan.children || {})) {
     if (!cs || !cs.dupKeys || !cs.dupKeys.rows) continue;
@@ -627,7 +627,7 @@ async function renderDeploy() {
       <div class="ds-dep-objsw"><span class="ds-dep-lbl">Object</span>${objects.map(o => {
         const pr = plan.find(r => r.pathKey === o.pathKey);
         const work = pr && pr.scanned ? ['ins', 'chg', 'ext', 'link', 'amb'].reduce((n, k) => n + ((pr.cells[k] && pr.cells[k].n) || 0), 0) : null;
-        return `<button class="ds-dep-objbtn" data-dep-obj="${esc(o.pathKey)}" aria-pressed="${o.pathKey === cur.pathKey}">${o.depth ? '↳ '.repeat(o.depth) : ''}${esc(o.obj)} <small>${work == null ? 'not scanned' : `${work.toLocaleString()} to act on`}</small></button>`;
+        return `<button class="ds-dep-objbtn" data-dep-obj="${esc(o.pathKey)}" aria-pressed="${o.pathKey === cur.pathKey}">${o.depth ? '↳ '.repeat(o.depth) : ''}${esc(o.obj)} <small>${work == null ? 'not scanned' : `${work.toLocaleString('en-US')} to act on`}</small></button>`;
       }).join('')}</div>
       <div class="ds-dep-tabs" role="tablist">${tabs.map(t => `<button role="tab" data-dep-tab="${t.k}" aria-selected="${t.k === _depTab}">${t.label} <b>${planRow && planRow.cells[t.k] ? esc(planRow.cells[t.k].text) : '—'}</b></button>`).join('')}</div>
       <div id="dsDepList"></div>
@@ -657,7 +657,7 @@ async function renderDeploy() {
       <div class="ds-dep-ab-row ds-dep-ab-fields">
         <label class="ds-dep-field" title="How records are written. Auto: synchronous Collections calls below the threshold, one async Bulk API 2.0 job at or above it. Saved on the deployment — the classic pages use the same setting."><span class="ds-dep-field-lbl">Engine</span>
           <select id="dsDepApiMode" class="ds-select ds-select-sm">
-            <option value="auto" ${(p.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk at ≥ ${(Number(p.bulkThreshold) > 0 ? Number(p.bulkThreshold) : 2000).toLocaleString()}</option>
+            <option value="auto" ${(p.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk at ≥ ${(Number(p.bulkThreshold) > 0 ? Number(p.bulkThreshold) : 2000).toLocaleString('en-US')}</option>
             <option value="sync" ${p.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections</option>
             <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
           </select></label>
@@ -723,7 +723,7 @@ async function renderDeploy() {
   eid('dsDepPiiAll')?.addEventListener('click', () => {
     const byObj = {};
     for (const [k, ids] of Object.entries(sftkDeployEveryInsert(scan))) { const o = _depObjName(p, k); byObj[o] = [...new Set([...(byObj[o] || []), ...ids])]; }
-    _depPiiSuggest(p, byObj, `the ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} this deployment inserts`);
+    _depPiiSuggest(p, byObj, `the ${every.found.toLocaleString('en-US')} record${every.found === 1 ? '' : 's'} this deployment inserts`);
   });
   // ✓ every insert in one press — the same sets the per-tab "All" buttons fill, object by object
   eid('dsDepTickAll')?.addEventListener('click', () => {
@@ -733,7 +733,7 @@ async function renderDeploy() {
       for (const id of ids) { set.add(id); n++; }
     }
     _depSelRemember(p);
-    showToast(`✓ ${n.toLocaleString()} record${n === 1 ? '' : 's'} ticked in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'} — untick what should stay out, then Deploy.`, 'success', 5000);
+    showToast(`✓ ${n.toLocaleString('en-US')} record${n === 1 ? '' : 's'} ticked in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'} — untick what should stay out, then Deploy.`, 'success', 5000);
     renderDeploy();
   });
   document.querySelectorAll('[data-dep-scan]').forEach(b => b.addEventListener('click', async () => {
@@ -828,7 +828,7 @@ async function _depPaintTree(p, scan) {
   const order = (_depOrderKey === `${p.id}|${scan.runAt}` && _depOrderData) ? (_depOrderData.objects || []) : [];
   const idOf = pathKey => (_depIdKey === key && _depIdData) ? (_depIdData.objects || []).find(o => o.pathKey === pathKey) : null;
   const srcOrgL = orgLabel(p.sourceOrg || '') || 'source', tgtOrgL = orgLabel(p.targetOrg || '') || 'target';
-  const num = v => (v == null ? '?' : Number(v).toLocaleString());
+  const num = v => (v == null ? '?' : Number(v).toLocaleString('en-US'));
   // The identity field is optional: a card mentions it only where an org HAS
   // it. "✗ ✗" on every card read as two errors per object (user 2026-10-05:
   // "this part seems a bit broken"); the line under the tree says the rest.
@@ -1019,13 +1019,13 @@ async function _depPaintOrder(p, scan) {
   const matchedBy = s => { const m = sftkDeployParentMatchFields(p.tree, s); return m.length === 1 ? m[0] : m.join(' / '); };
   // the aligned records of a parent that is in sync (user 2026-10-27: "a view of the aligned parents and by what key")
   const pairsBtn = s => { const vd = s.vd || {}; const kept = Array.isArray(vd.pairs) && vd.pairs.length; const n = vd.aligned != null ? vd.aligned : 0;
-    return kept ? `<button class="ds-btn ds-btn-xs" data-dep-pairs="${esc(s.refObj)}" title="Each ${esc(s.refObj)} record in ${esc(orgLabel(p.sourceOrg || ''))} and the ${esc(tgtL)} record it lands on — aligned by ${esc(vd.by || matchedBy(s))}">📋 ${n.toLocaleString()} aligned</button>`
+    return kept ? `<button class="ds-btn ds-btn-xs" data-dep-pairs="${esc(s.refObj)}" title="Each ${esc(s.refObj)} record in ${esc(orgLabel(p.sourceOrg || ''))} and the ${esc(tgtL)} record it lands on — aligned by ${esc(vd.by || matchedBy(s))}">📋 ${n.toLocaleString('en-US')} aligned</button>`
       : `<button class="ds-btn ds-btn-xs" data-dep-pairs-check="${esc(s.refObj)}" title="Reads ${esc(s.refObj)} in both orgs again and keeps the aligned pairs, so they can be listed">🔍 List the aligned records</button>`; };
   const stepHtml = (s, i) => {
     const isNext = i === nextIdx;
     const btn = (label, primary) => `<button class="ds-btn ds-btn-xs${primary ? ' ds-btn-primary' : ''}" data-dep-gap="${esc(s.refObj)}" data-dep-gap-for="${esc(s.forObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens it here — align it, then the banner brings you back.">${label}</button>`;
     const status = s.state === 'notneeded' ? `<span class="ds-psync ds-psync-ok" title="${esc(orgLabel(p.sourceOrg || ''))} holds no ${esc(s.refObj)} records, so none of these records can point at one.">✓ not needed — the source has none</span>`
-      : s.state === 'large' ? `<span class="ds-lkp-hint">${s.srcCount == null ? 'size unknown' : `${s.srcCount.toLocaleString()} records`} — too large to check on its own</span> ${btn('🔍 Check now', isNext)}`
+      : s.state === 'large' ? `<span class="ds-lkp-hint">${s.srcCount == null ? 'size unknown' : `${s.srcCount.toLocaleString('en-US')} records`} — too large to check on its own</span> ${btn('🔍 Check now', isNext)}`
       : s.state === 'done' ? `<span class="ds-psync ds-psync-ok">✓ in sync${s.vd ? ` · ${esc(timeAgo(s.vd.at))}` : ''}</span> ${pairsBtn(s)} ${btn('⚖ Open', false)}`
       : s.state === 'empty' ? `<span class="ds-psync ds-psync-bad">${esc(tgtL)} has none at all${s.required ? ' — and a field above requires it' : ''}</span> ${btn(`➕ Deploy ${esc(s.refObj)} first`, true)}`
       : s.state === 'checking' ? (() => { const pos = _depOrderQueue.indexOf(`${key}|${s.refObj}`); return pos > 0
@@ -1052,8 +1052,8 @@ async function _depPaintOrder(p, scan) {
     const parentLine = s => {
       const vd = s.vd || {}, by = vd.by || matchedBy(s), n = vd.aligned != null ? vd.aligned : null;
       const kept = Array.isArray(vd.pairs) && vd.pairs.length;
-      return `<div class="ds-dep-pline" data-dep-pline="${esc(s.refObj)}"><b>${esc(s.refObj)}</b> <span class="ds-dep-muted">needed by ${need(s)} · matched by <b>${esc(by)}</b>${n != null ? ` · ${n.toLocaleString()} record${n === 1 ? '' : 's'} aligned` : ''}${s.vd ? ` · checked ${esc(timeAgo(s.vd.at))}` : ''}</span>
-        ${kept ? `<button class="ds-btn ds-btn-xs" data-dep-pairs="${esc(s.refObj)}" title="Each ${esc(s.refObj)} record in ${esc(orgLabel(p.sourceOrg || ''))} and the ${esc(tgtL)} record it lands on — aligned by ${esc(by)}">📋 Show the ${n.toLocaleString()} aligned record${n === 1 ? '' : 's'}</button>` : `<button class="ds-btn ds-btn-xs" data-dep-pairs-check="${esc(s.refObj)}" title="Reads ${esc(s.refObj)} in both orgs again and keeps the aligned pairs">🔍 Check again to list them</button>`}
+      return `<div class="ds-dep-pline" data-dep-pline="${esc(s.refObj)}"><b>${esc(s.refObj)}</b> <span class="ds-dep-muted">needed by ${need(s)} · matched by <b>${esc(by)}</b>${n != null ? ` · ${n.toLocaleString('en-US')} record${n === 1 ? '' : 's'} aligned` : ''}${s.vd ? ` · checked ${esc(timeAgo(s.vd.at))}` : ''}</span>
+        ${kept ? `<button class="ds-btn ds-btn-xs" data-dep-pairs="${esc(s.refObj)}" title="Each ${esc(s.refObj)} record in ${esc(orgLabel(p.sourceOrg || ''))} and the ${esc(tgtL)} record it lands on — aligned by ${esc(by)}">📋 Show the ${n.toLocaleString('en-US')} aligned record${n === 1 ? '' : 's'}</button>` : `<button class="ds-btn ds-btn-xs" data-dep-pairs-check="${esc(s.refObj)}" title="Reads ${esc(s.refObj)} in both orgs again and keeps the aligned pairs">🔍 Check again to list them</button>`}
         <button class="ds-btn ds-btn-xs ds-dep-pmatch-btn" data-dep-pmatch-edit="${esc(s.refObj)}" title="Choose the field ${esc(s.refObj)} is matched by">✏</button>
         <div class="ds-dep-pairs" data-dep-pairs-host="${esc(s.refObj)}" style="display:none"></div></div>`;
     };
@@ -1141,7 +1141,7 @@ function sftkParentPairsHtml(vd, refObj, srcL, tgtL, srcUrlTpl, tgtUrlTpl) {
   const link = (tpl, id) => tpl.replace('{id}', esc(id));
   return `<table class="ds-dep-pairs-t"><thead><tr><th>${esc(by)}</th><th>in ${esc(srcL)}</th><th></th><th>in ${esc(tgtL)}</th></tr></thead><tbody>
     ${pairs.map(x => `<tr${x.changed ? ' class="ds-dep-pair-chg"' : ''}><td>${esc(String(x.key ?? ''))}</td><td><a href="${link(srcUrlTpl, x.src)}" target="_blank" rel="noopener" title="${esc(x.src)}">open ↗</a></td><td class="ds-dep-pair-arrow" title="${x.changed ? 'The same record by ' + esc(by) + ' — other compared fields differ' : 'The same record by ' + esc(by)}">${x.changed ? '≈' : '='}</td><td><a href="${link(tgtUrlTpl, x.tgt)}" target="_blank" rel="noopener" title="${esc(x.tgt)}">open ↗</a></td></tr>`).join('')}
-  </tbody></table>${n > pairs.length ? `<div class="ds-dep-muted">The first ${pairs.length.toLocaleString()} of ${n.toLocaleString()} aligned records.</div>` : ''}${pairs.some(x => x.changed) ? `<div class="ds-dep-muted">≈ the same record by ${esc(by)}, with other fields that differ — a lookup still lands on it.</div>` : ''}`;
+  </tbody></table>${n > pairs.length ? `<div class="ds-dep-muted">The first ${pairs.length.toLocaleString('en-US')} of ${n.toLocaleString('en-US')} aligned records.</div>` : ''}${pairs.some(x => x.changed) ? `<div class="ds-dep-muted">≈ the same record by ${esc(by)}, with other fields that differ — a lookup still lands on it.</div>` : ''}`;
 }
 
 // PURE. The field(s) a parent object is matched by: every lookup of the deployment that points at it
@@ -1372,7 +1372,7 @@ function _depAmbIntro(p, isRoot, s) {
     <ul class="ds-amb-intro-ways">
       <li>🔀 <b>Copies of the same record? Merge them.</b> Each side that holds more than one copy has a Merge button.</li>
       <li>📌 <b>Different records that share a name? Say which is which.</b> Decide one name at a time with <b>📌 Apply this one</b>, then read both orgs again with the button above.</li>
-      ${adv && nSug ? `<li>💡 <b>${nSug.toLocaleString()} are already filled in.</b> One copy on each side has the same <b>${esc(adv.field)}</b> — check them, then apply.</li>` : ''}
+      ${adv && nSug ? `<li>💡 <b>${nSug.toLocaleString('en-US')} are already filled in.</b> One copy on each side has the same <b>${esc(adv.field)}</b> — check them, then apply.</li>` : ''}
     </ul>
     <details class="ds-amb-intro-more"><summary>What happens after a merge or an answer</summary>
       <div><b>A merge</b> reads the copies live from that org; you choose the record that stays and, for every field that differs, the value it keeps. A merge deletes the copies it merges, after its own confirmation. Both orgs are read again, and the pair is listed under 🟢 Synced when its values are equal, under 🟡 Changed when they still differ.</div>
@@ -1548,12 +1548,12 @@ async function _depMergeCopies(p, side, name, ids, opts = {}) {
   const copyRow = (r, i) => `<div class="ds-merge-copy${i === keep0 ? ' ds-merge-keep' : ''}" data-merge-copy="${i}">
       <label class="ds-merge-copy-lbl"><input type="radio" name="dsMergeKeep" value="${i}" ${i === keep0 ? 'checked' : ''}> Copy ${i + 1}</label>
       <span class="ds-merge-meta">${ages && i === oldest ? chip('oldest', 'Created first') : ''}${ages && i === newest ? chip('newest', 'Created last') : ''}${filled[i] === Math.max(...filled) && !tied ? chip('most filled', 'Holds a value in the most fields') : ''}${i === keep0 ? '<span class="ds-amb-chip ds-amb-chip-sug" title="Ticked for you: the copy with the most fields filled — the oldest of them when they tie">💡 suggested</span>' : ''}</span>
-      <span class="ds-dep-muted">created ${esc(when(r.CreatedDate))} · changed ${esc(when(r.LastModifiedDate))} · ${filled[i].toLocaleString()} field${filled[i] === 1 ? '' : 's'} filled · <a href="${esc(base)}/lightning/r/${esc(r.Id)}/view" target="_blank" rel="noopener" title="${esc(r.Id)}">open ↗</a></span>
+      <span class="ds-dep-muted">created ${esc(when(r.CreatedDate))} · changed ${esc(when(r.LastModifiedDate))} · ${filled[i].toLocaleString('en-US')} field${filled[i] === 1 ? '' : 's'} filled · <a href="${esc(base)}/lightning/r/${esc(r.Id)}/view" target="_blank" rel="noopener" title="${esc(r.Id)}">open ↗</a></span>
       ${diff.differ.length ? `<span class="ds-merge-tells">${tellRow(r)}</span>` : ''}
       ${diff.differ.length ? `<button type="button" class="ds-btn ds-btn-xs ds-merge-useall" data-merge-useall="${i}" title="In every field below, tick this copy's value">⬇ take all its values</button>` : ''}
     </div>`;
   // every differing field: one choice per DISTINCT value (with the copies that hold it), and one typed here (user 2026-10-14)
-  const hint = t => t === 'date' ? 'YYYY-MM-DD' : t === 'datetime' ? '2026-10-14T09:30:00Z' : t === 'boolean' ? 'true / false' : t === 'reference' ? 'a Salesforce id' : 'type a value…';
+  const hint = t => t === 'date' ? 'YYYY-MM-DD' : t === 'datetime' ? '2026-10-14T09:30:00Z' : t === 'boolean' ? 'true / false' : t === 'reference' ? 'a Salesforce id' : (t === 'int' || t === 'long') ? 'a whole number' : (t === 'double' || t === 'currency' || t === 'percent') ? 'a number' : 'type a value…';   // the number hints the value editor already gives (review 2026-11-15: the format was learnt only from the error toast)
   const who = idx => idx.length === recs.length ? 'every copy' : idx.length === 1 ? `copy ${idx[0] + 1}` : `${idx.length} copies: ${idx.map(i => i + 1).join(', ')}`;
   const rows = diff.differ.map(f => `<div class="ds-merge-frow" data-merge-field="${esc(f.name)}" data-merge-type="${esc(f.type)}">
       <div class="ds-merge-fname">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></div>
@@ -1564,10 +1564,10 @@ async function _depMergeCopies(p, side, name, ids, opts = {}) {
   const nd = diff.differ.length;
   const table = `<div class="ds-merge-step"><b>1 · Which record stays?</b> <span class="ds-dep-muted">The other ${recs.length === 2 ? 'copy is' : `${recs.length - 1} copies are`} merged into it. Ticked for you: the copy with the most fields filled${tied ? ' — the oldest of the ones that tie' : ''}.</span></div>
     <div class="ds-merge-copies">${recs.map(copyRow).join('')}</div>
-    <div class="ds-merge-step"><b>2 · What it is written with.</b> <span class="ds-dep-muted">${nd ? `${nd.toLocaleString()} field${nd === 1 ? '' : 's'} differ${nd === 1 ? 's' : ''} between the copies. The record that stays keeps its own value unless you tick another — or type one.` : 'Every writable field holds the same value in all copies — nothing to choose.'}</span></div>
+    <div class="ds-merge-step"><b>2 · What it is written with.</b> <span class="ds-dep-muted">${nd ? `${nd.toLocaleString('en-US')} field${nd === 1 ? '' : 's'} differ${nd === 1 ? 's' : ''} between the copies. The record that stays keeps its own value unless you tick another — or type one.` : 'Every writable field holds the same value in all copies — nothing to choose.'}</span></div>
     ${nd ? `<div class="ds-merge-fields">${rows}</div>` : ''}
-    <div class="ds-dep-muted ds-merge-same">${diff.same.toLocaleString()} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy.</div>
-    ${sameRows ? `<details class="ds-merge-samefold"><summary>Show the ${diff.same.toLocaleString()} field${diff.same === 1 ? '' : 's'} that ${diff.same === 1 ? 'is' : 'are'} the same</summary><div class="ds-merge-wrap"><table class="ds-merge-table">${sameRows}</table></div></details>` : ''}`;
+    <div class="ds-dep-muted ds-merge-same">${diff.same.toLocaleString('en-US')} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy.</div>
+    ${sameRows ? `<details class="ds-merge-samefold"><summary>Show the ${diff.same.toLocaleString('en-US')} field${diff.same === 1 ? '' : 's'} that ${diff.same === 1 ? 'is' : 'are'} the same</summary><div class="ds-merge-wrap"><table class="ds-merge-table">${sameRows}</table></div></details>` : ''}`;
   const others = recs.length === 2 ? 'the other copy is' : `the other ${recs.length - 1} copies are`;
   const stakes = native
     ? `<b>One record stays; ${others} merged into it and deleted.</b> <b>The Toolkit cannot undo a merge.</b>` +
@@ -1575,17 +1575,17 @@ async function _depMergeCopies(p, side, name, ids, opts = {}) {
     : `<b>One record stays; ${others} deleted.</b> <b>The Toolkit cannot undo a merge.</b>` +
       `<details class="sftk-cf-more"><summary>How the Toolkit merges ${esc(plural)} (Salesforce has no merge for them)</summary><div class="sftk-cf-plan"><ol class="sftk-cf-rows">` +
       `<li><b>No merge</b><span>Salesforce has no merge for ${esc(plural)}, so the Toolkit does it by hand</span></li>` +
-      `<li><b>Moves</b><span>What hangs under a copy goes to the record that stays, one relationship at a time (${rels.length.toLocaleString()} relationship${rels.length === 1 ? '' : 's'})</span></li>` +
+      `<li><b>Moves</b><span>What hangs under a copy goes to the record that stays, one relationship at a time (${rels.length.toLocaleString('en-US')} relationship${rels.length === 1 ? '' : 's'})</span></li>` +
       `<li><b>Deletes</b><span>A copy only when everything under it moved</span></li>` +
       `<li><b>Refusal</b><span>A relationship that refuses stops the merge before that copy is deleted</span></li>` +
       `<li><b>Goes with it</b><span>History, sharing and feed rows of a copy</span></li></ol>` +
-      (rels.length ? `<details class="sftk-cf-more"><summary>The relationships (${rels.length.toLocaleString()})</summary>${esc(rels.map(r => r.child).join(', '))}</details>` : '') + `</div></details>`;
+      (rels.length ? `<details class="sftk-cf-more"><summary>The relationships (${rels.length.toLocaleString('en-US')})</summary>${esc(rels.map(r => r.child).join(', '))}</details>` : '') + `</div></details>`;
   const choice = await new Promise(resolve => {
     let done = false;
     const finish = v => { if (!done) { done = true; resolve(v); } };
     sftkDialog({
       icon: '🔀', title: `Merge the ${recs.length} copies of "${name}" in ${org}${opts.walk ? ` — ${opts.walk}` : ''}`, sev: 'red',
-      facts: [label, `${recs.length} copies`, `${diff.differ.length.toLocaleString()} field${diff.differ.length === 1 ? ' differs' : 's differ'}`, native ? 'Salesforce merge' : 'moved, then deleted'],
+      facts: [label, `${recs.length} copies`, `${diff.differ.length.toLocaleString('en-US')} field${diff.differ.length === 1 ? ' differs' : 's differ'}`, native ? 'Salesforce merge' : 'moved, then deleted'],
       stakes, bodyHtml: table,
       note: 'The copies go to the Recycle Bin for 15 days; restoring them there does not take back what moved to the record that stays.',
       actions: [{ id: 'dsMergeCancel', label: 'Cancel' }, { id: 'dsMergeGo', label: '🔀 Merge into the chosen record…', kind: 'danger' }],
@@ -1873,30 +1873,30 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     return `<div class="ds-dep-row${tabDef.k === 'amb' ? ' ds-dep-row-amb' : ''}">${ctl || '<span></span>'}<span class="ds-dep-key" title="${k}">${k}</span><span class="ds-dep-mid">${near}${extra}</span><span class="ds-dep-tail">${tail} <span class="ds-dep-open">${links}</span></span></div>`;
   };
 
-  const nAll = rows.length.toLocaleString();
+  const nAll = rows.length.toLocaleString('en-US');
   // the bulk editor writes ONE value to every ticked record — the button says so, with the count, and sleeps at zero (user 2026-10-31)
   const nSel = (tabDef.k === 'chg' ? (isRoot ? _recSel.overwrite : sel.overwrite) : (isRoot ? _recSel.push : sel.push)).size;
-  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > shown.length ? ` — including the ${(rows.length - shown.length).toLocaleString()} not shown yet (Show all lists them)` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" ${nSel ? '' : 'disabled '}title="One value for every ticked record of this list: type it once, it is written on each of them — the same value on each">✏ Set one value on the ${nSel.toLocaleString()} selected</button>`
-    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" ${nSel ? '' : 'disabled '}title="One value for every ticked record of this list: type it once, it is written on each of them — the same value on each">✏ Set one value on the ${nSel.toLocaleString()} selected</button>`
+  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > shown.length ? ` — including the ${(rows.length - shown.length).toLocaleString('en-US')} not shown yet (Show all lists them)` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" ${nSel ? '' : 'disabled '}title="One value for every ticked record of this list: type it once, it is written on each of them — the same value on each">✏ Set one value on the ${nSel.toLocaleString('en-US')} selected</button>`
+    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" ${nSel ? '' : 'disabled '}title="One value for every ticked record of this list: type it once, it is written on each of them — the same value on each">✏ Set one value on the ${nSel.toLocaleString('en-US')} selected</button>`
     : tabDef.k === 'ext' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list for deletion">🗑 all ${nAll}${!isRoot ? ' (no orphans)' : ''}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
     : tabDef.k === 'link' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" ${relinkBlocked ? 'disabled' : ''}>⇄ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
     : ambRoot && sftkAmbMergeAllPlan(rows, key).length ? (n => `<button class="ds-btn ds-btn-xs" data-dep-amb-mergeall="1" title="Every name whose org holds more than one copy, one merge at a time: each opens its own picker and confirmation; Cancel stops the walk; both orgs are read again once at the end.">🔀 Merge all — ${n} merge${n === 1 ? '' : 's'}, one by one</button>`)(sftkAmbMergeAllPlan(rows, key).length) : '';
   host.innerHTML = `
     <div class="ds-dep-tools">
       <input type="search" id="dsDepFilter" class="ds-dep-filter" placeholder="🔍 filter by name${isRoot ? '' : ' or parent'}…" value="${esc(_depFilter)}" aria-label="Filter records">
-      <span>${esc(sftkDeployCountLabel(info.shown, info.total, info.capped, info.totalIsFloor))} ${esc(cur.obj)} ${esc(tabDef.noun)}${info.capped ? ` — the first ${Number(info.shown || 0).toLocaleString()} are listed here` : ''}</span>
+      <span>${esc(sftkDeployCountLabel(info.shown, info.total, info.capped, info.totalIsFloor))} ${esc(cur.obj)} ${esc(tabDef.noun)}${info.capped ? ` — the first ${Number(info.shown || 0).toLocaleString('en-US')} are listed here` : ''}</span>
       <span class="ds-dep-sp"></span>${bulk}${ambRoot && rows.length ? `<button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepAmbApply" disabled>📌 Apply</button>` : ''}
     </div>
     ${info.capped ? `<div class="ds-dep-note">⚠ This list is truncated — ${tabDef.k === 'same'
-      ? `${info.shown.toLocaleString()} of the synced records are listed; the rest exist and are in sync, they were just not loaded into this result.`
-      : `only the ${info.shown.toLocaleString()} listed record(s) exist in this result, so “all listed” means those, not every record. Run what is listed, 🔄 Refresh state, and repeat — or narrow the deployment.`}</div>` : ''}
+      ? `${info.shown.toLocaleString('en-US')} of the synced records are listed; the rest exist and are in sync, they were just not loaded into this result.`
+      : `only the ${info.shown.toLocaleString('en-US')} listed record(s) exist in this result, so “all listed” means those, not every record. Run what is listed, 🔄 Refresh state, and repeat — or narrow the deployment.`}</div>` : ''}
     ${!isRoot && s.personContacts ? `<div class="ds-dep-note">${esc(sftkPaContactsLine(s.personContacts, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}</div>` : ''}
     ${!isRoot ? (s.warnings || []).map(w => `<div class="ds-dep-note">⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}</div>`).join('') : ''}
     ${tabDef.k === 'amb' && rows.length ? _depAmbIntro(p, isRoot, s) : ''}
     <div class="ds-dep-list">${shown.length ? (ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key, ambMem) : shown.map(rowHtml).join('')) : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`}</div>
-    ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()}
-      <button class="ds-btn ds-btn-xs" data-dep-more="step">Show ${Math.min(SFTK_DEPLOY_WINDOW, rows.length - shown.length).toLocaleString()} more</button>
-      <button class="ds-btn ds-btn-xs" data-dep-more="all">Show all ${rows.length.toLocaleString()}</button></div>` : ''}`;
+    ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString('en-US')} of ${rows.length.toLocaleString('en-US')}
+      <button class="ds-btn ds-btn-xs" data-dep-more="step">Show ${Math.min(SFTK_DEPLOY_WINDOW, rows.length - shown.length).toLocaleString('en-US')} more</button>
+      <button class="ds-btn ds-btn-xs" data-dep-more="all">Show all ${rows.length.toLocaleString('en-US')}</button></div>` : ''}`;
   // Show more / all: grow the window for THIS list and repaint in place,
   // keeping the scroll position.
   host.querySelectorAll('[data-dep-more]').forEach(b => b.addEventListener('click', () => {
@@ -1931,7 +1931,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     if (!lost) for (const [sId] of learn) _depAmbPick.delete(sId);   // the memory is the answer now
     return lost;
   };
-  const ambNotKept = n => showToast(`${n.toLocaleString()} decision(s) could not be remembered — this deployment is not a saved one, so it has no memory to keep them in. Nothing changed.`, 'error', 9000);
+  const ambNotKept = n => showToast(`${n.toLocaleString('en-US')} decision(s) could not be remembered — this deployment is not a saved one, so it has no memory to keep them in. Nothing changed.`, 'error', 9000);
   // one record in the target can be the same as only ONE record in the source
   const ambTwice = recs => {
     const sId = sftkAmbTwice(recs.map(r => [r.sourceId, ambPick(r)]));
@@ -1944,8 +1944,8 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     const b = eid('dsDepAmbApply'); if (!b) return;
     const nP = ambPending().length, nK = ambKept().length;
     b.disabled = !(nP || nK);
-    b.textContent = nP ? `📌 Apply ${nP.toLocaleString()} decision${nP === 1 ? '' : 's'} and read both orgs again`
-      : nK ? `🔄 Read both orgs again — ${nK.toLocaleString()} remembered decision${nK === 1 ? '' : 's'} take${nK === 1 ? 's' : ''} effect`
+    b.textContent = nP ? `📌 Apply ${nP.toLocaleString('en-US')} decision${nP === 1 ? '' : 's'} and read both orgs again`
+      : nK ? `🔄 Read both orgs again — ${nK.toLocaleString('en-US')} remembered decision${nK === 1 ? '' : 's'} take${nK === 1 ? 's' : ''} effect`
       : '📌 Apply — decide at least one below';
   };
   host.querySelectorAll('[data-dep-amb-sel]').forEach(el => el.addEventListener('change', () => {
@@ -2009,7 +2009,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     host.querySelectorAll('[data-dep-amb-sel], [data-dep-amb-one], #dsDepAmbApply').forEach(x => { x.disabled = true; });
     const lost = pend.length ? await ambSave(pend) : 0;
     if (lost) { ambNotKept(lost); repaint(); return; }
-    showToast(`📌 ${ambKept().length.toLocaleString()} decision(s) remembered for ${orgLabel(p.targetOrg)} — reading both orgs again…`, 'success', 5000);
+    showToast(`📌 ${ambKept().length.toLocaleString('en-US')} decision(s) remembered for ${orgLabel(p.targetOrg)} — reading both orgs again…`, 'success', 5000);
     await _depRescan(p);
   });
   ambPaintApply();
@@ -2020,7 +2020,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     touched();
     // the toolbar's "Set one value on the N selected" follows the ticks without a repaint (it stayed disabled, live 2026-11-05)
     const mb = host.querySelector('[data-dep-vals-many]');
-    if (mb) { const n = all.filter(r => r.sourceId && set.has(r.sourceId)).length; mb.disabled = !n; mb.textContent = `✏ Set one value on the ${n.toLocaleString()} selected`; }
+    if (mb) { const n = all.filter(r => r.sourceId && set.has(r.sourceId)).length; mb.disabled = !n; mb.textContent = `✏ Set one value on the ${n.toLocaleString('en-US')} selected`; }
     _depSummary(p, null, null);
   }));
   host.querySelectorAll('[data-dep-dir]').forEach(b => b.addEventListener('click', () => {
@@ -2495,6 +2495,6 @@ function _depSummary(p, objTypeOrNull, objByPathOrNull) {
       : `<span class="ds-rec-tag ds-rec-tag-fail ds-dep-probe-hint" title="A dry run of exactly these inserts: Salesforce refused some of them. The run log and History name each one.">🧪 dry run: ${(last.totals && last.totals.refused) || 0} would be refused${last.totals && last.totals.cascade ? `, ${last.totals.cascade} not checked` : ''}</span>`)
     : '';
   if (el) el.innerHTML = s.total ? s.parts.map(x => `<span class="ds-diff-chip">${esc(x)}</span>`).join(' ') + probeHint : '<span class="ds-dep-muted">Nothing selected — tick records above. ▶ Deploy writes only what you select.</span>';
-  if (run) { run.disabled = !s.total; run.textContent = s.total ? `▶ Deploy ${s.total.toLocaleString()} selected into ${orgLabel(p.targetOrg)}` : '▶ Deploy'; }
+  if (run) { run.disabled = !s.total; run.textContent = s.total ? `▶ Deploy ${s.total.toLocaleString('en-US')} selected into ${orgLabel(p.targetOrg)}` : '▶ Deploy'; }
   const probe = eid('dsRecProbeBtn'); if (probe) probe.disabled = !s.total;
 }

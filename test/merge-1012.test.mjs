@@ -118,7 +118,8 @@ describe('the fields that differ, and what the survivor is written with', () => 
     expect(M.sftkMergeCoerce('date', '14/10/2026').ok).toBe(false);
     expect(M.sftkMergeCoerce('reference', 'not-an-id').ok).toBe(false);
     expect(M.sftkMergeCoerce('string', '  Netanya ')).toEqual({ ok: true, value: 'Netanya' });
-    expect(M.sftkMergeCoerce('int', '7.9')).toEqual({ ok: true, value: 7 });
+    // owner 2026-11-15: cutting 7.9 to 7 was the defect — a whole-number field refuses anything but digits
+    expect(M.sftkMergeCoerce('int', '7.9')).toEqual({ ok: false, error: 'a whole number: digits only, with - in front for a negative (1234 or -1234)' });
     expect(M.sftkMergeTypable('string')).toBe(true);
     expect(M.sftkMergeTypable('address')).toBe(false);
   });

@@ -423,7 +423,7 @@ function _faRenderTable() {
     if (f.pct === null) return '<span class="ds-fa-na" title="Not measured yet — click 📊 Measure usage">—</span>';
     if (f.pct < 0)      return `<span class="ds-fa-na" style="text-decoration:underline dotted" title="${esc('UNKNOWN, not empty. The COUNT() query failed: ' + (f.pctErr || 'no reason reported'))}">n/a ⚠</span>`;
     const cls = f.pct < 1 ? 'ds-fa-empty' : f.pct < 25 ? 'ds-fa-low' : '';
-    return `<span class="${cls}">${f.pct < 1 && f.filled > 0 ? '<1' : Math.round(f.pct)}% <small>(${(f.filled ?? 0).toLocaleString()})</small></span>`;
+    return `<span class="${cls}">${f.pct < 1 && f.filled > 0 ? '<1' : Math.round(f.pct)}% <small>(${(f.filled ?? 0).toLocaleString('en-US')})</small></span>`;
   };
   const ageCell = f => {
     if (f.lastErr) return `<span class="ds-fa-na" style="text-decoration:underline dotted" title="${esc('The MAX(LastModifiedDate) query failed: ' + f.lastErr)}">? ⚠</span>`;
@@ -731,7 +731,7 @@ function faRenderCross() {
       <div class="tablewrap ds-fa-tablewrap"><table class="ds-fa-table">
         <tr>
           <th>Field</th>
-          ${orgs.map(o => `<th title="${esc(o.ok ? (o.recordCount != null ? `${o.recordCount.toLocaleString()} records` : 'measured') : o.error)}">
+          ${orgs.map(o => `<th title="${esc(o.ok ? (o.recordCount != null ? `${o.recordCount.toLocaleString('en-US')} records` : 'measured') : o.error)}">
             ${esc(orgOptionLabel(o.orgUrl, o.label, ls))}${o.ok ? '' : ' ⚠'}</th>`).join('')}
           <th>Verdict</th>
         </tr>

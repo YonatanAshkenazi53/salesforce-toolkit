@@ -16,9 +16,9 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   if (!ids.length || !node) return;
   const many = ids.length > 1;
   const srcL = orgLabel(p.sourceOrg), tgtL = orgLabel(p.targetOrg);
-  showModal(`<div class="ds-modal-header">${many ? `✏ One value for all ${ids.length.toLocaleString()} selected ${esc(obj)} records` : `▸ Record · ${esc(obj)} · ${esc(label || ids[0])}`}
+  showModal(`<div class="ds-modal-header">${many ? `✏ One value for all ${ids.length.toLocaleString('en-US')} selected ${esc(obj)} records` : `▸ Record · ${esc(obj)} · ${esc(label || ids[0])}`}
       <span class="ds-dc-modal-sub">${many
-        ? `a value typed here is written to EVERY one of the ${ids.length.toLocaleString()} records, the same value on each — a field left empty keeps each record's own value; a lookup picked here points every record at that one ${esc(tgtL)} record`
+        ? `a value typed here is written to EVERY one of the ${ids.length.toLocaleString('en-US')} records, the same value on each — a field left empty keeps each record's own value; a lookup picked here points every record at that one ${esc(tgtL)} record`
         : `every writable field and lookup, with the value this record is written with in ${esc(tgtL)} — change any box and it is saved as you type; a record picked for a lookup is where it points`}</span>
       <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
     <div class="ds-modal-body ds-dc-modal-body"><div id="dsValEdHost" class="ds-ve"><div class="ds-drift-compare-loading">Reading the fields…</div></div></div>`);
@@ -103,7 +103,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   const val = v => (v === null || v === undefined || v === '') ? '<span class="ds-dc-empty">empty</span>' : `<span class="ds-dc-v" title="${esc(String(v))}">${esc(typeof v === 'object' ? JSON.stringify(v) : String(v))}</span>`;
   const relName = f => { const rel = srcRec && f.relationshipName && srcRec[f.relationshipName]; return rel && rel.Name != null ? rel.Name : null; };
   const tgtRel = f => { const rel = tgtRec && f.relationshipName && tgtRec[f.relationshipName]; return rel && rel.Name != null ? rel.Name : null; };
-  const hint = t => t === 'date' ? 'YYYY-MM-DD' : t === 'datetime' ? '2026-10-27T09:30:00Z' : t === 'boolean' ? 'true / false' : (t === 'double' || t === 'currency' || t === 'int' || t === 'percent') ? 'a number' : 'type a value…';
+  const hint = t => t === 'date' ? 'YYYY-MM-DD' : t === 'datetime' ? '2026-10-27T09:30:00Z' : t === 'boolean' ? 'true / false' : (t === 'int' || t === 'long') ? 'a whole number' : (t === 'double' || t === 'currency' || t === 'percent') ? 'a number' : 'type a value…';
   const ovOf = id => sftkValOvGet(node, p.targetOrg, id);
   // for many records the box shows a value only when every record carries the same one
   const sameOv = f => { const vs = ids.map(id => ovOf(id)); if (!vs.every(o => f.name in o)) return undefined; const first = vs[0][f.name]; return vs.every(o => JSON.stringify(o[f.name]) === JSON.stringify(first)) ? first : undefined; };
@@ -195,7 +195,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   };
   const piiNote = p.piiPolicy && Object.values(p.piiPolicy).some(Boolean) ? ' A field the PII policy covers keeps its masked value — the policy wins.' : '';
   host.innerHTML = `
-    <div class="ds-ve-tools"><input type="search" id="dsVeFilter" class="ds-input ds-input-sm" placeholder="🔍 find a field…" aria-label="Find a field"><span class="ds-dep-muted">${fields.length.toLocaleString()} writable field${fields.length === 1 ? '' : 's'}${many ? ` · a value typed here is written for all ${ids.length.toLocaleString()} records` : ''}</span><span class="ds-dep-sp"></span>${!many && !p.ephemeral && typeof window._depPiiSuggest === 'function' ? '<button class="ds-btn ds-btn-xs" id="dsVePiiSug" title="Suggest a PII treatment per field from the values of this record — you tick what applies; the rules apply to every record of the deployment">🎭 Suggest PII for this record</button>' : ''}<label class="ds-ve-onlyedited"><input type="checkbox" id="dsVeOnly" ${nEdited ? '' : 'disabled'}> only my changed values (${nEdited})</label></div>
+    <div class="ds-ve-tools"><input type="search" id="dsVeFilter" class="ds-input ds-input-sm" placeholder="🔍 find a field…" aria-label="Find a field"><span class="ds-dep-muted">${fields.length.toLocaleString('en-US')} writable field${fields.length === 1 ? '' : 's'}${many ? ` · a value typed here is written for all ${ids.length.toLocaleString('en-US')} records` : ''}</span><span class="ds-dep-sp"></span>${!many && !p.ephemeral && typeof window._depPiiSuggest === 'function' ? '<button class="ds-btn ds-btn-xs" id="dsVePiiSug" title="Suggest a PII treatment per field from the values of this record — you tick what applies; the rules apply to every record of the deployment">🎭 Suggest PII for this record</button>' : ''}<label class="ds-ve-onlyedited"><input type="checkbox" id="dsVeOnly" ${nEdited ? '' : 'disabled'}> only my changed values (${nEdited})</label></div>
     <div class="ds-merge-wrap ds-ve-wrap"><table class="ds-merge-table ds-ve-table"><thead><tr><th>Field</th>${many ? '' : `<th>${esc(srcL)} <span class="ds-dep-muted">source</span></th>`}${many || !tgtId ? '' : `<th>${esc(tgtL)} <span class="ds-dep-muted">target now</span></th>`}<th>written as <span class="ds-dep-muted">${many ? '(empty box = each record keeps its own value)' : '(the source\'s value unless you change it)'}</span></th></tr></thead>
       <tbody>${rtRow()}${ownerRow()}${fields.map(row).join('') || `<tr><td colspan="4" class="ds-dep-muted">No writable field.</td></tr>`}</tbody></table></div>
     ${!many && unreadable.length ? `<div class="ds-dep-muted ds-ve-note">⚠ ${unreadable.length} field${unreadable.length === 1 ? '' : 's'} could not be read for your user — ${esc(unreadable.join(', '))} — so ${unreadable.length === 1 ? 'its box shows' : 'their boxes show'} "not readable", not empty; a value typed there is still written.</div>` : ''}
@@ -257,12 +257,15 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     const inp = tr.querySelector('.ds-ve-in'); if (!inp) return;
     const field = inp.dataset.veField, err = tr.querySelector('.ds-ve-err');
     const text = inp.value.trim(), st = String(inp.dataset.veSrc || '');
-    let v;
+    // A refused value leaves NO typed value for the field (review 2026-11-15): the save used to stop before the
+    // store, so the prefix an earlier keystroke had saved stayed — typing 7.9 into a whole-number field with a
+    // pause after the 7 stored 7 and Deploy wrote it, under a box showing 7.9 and the words "not saved".
+    let v, bad = '';
     if (tr.classList.contains('ds-ve-null-on')) v = null;
     else if (text === st) v = undefined;           // the source's value: no change kept
     else if (text === '') v = null;                // a value the source has, cleared: written empty
-    else { const r = sftkMergeCoerce(inp.dataset.veType, text); if (!r.ok) { err.textContent = `needs ${r.error} — not saved`; return; } v = r.value; }
-    err.textContent = '';
+    else { const r = sftkMergeCoerce(inp.dataset.veType, text); if (!r.ok) { bad = `needs ${r.error} — not saved, the source's value is written until this fits`; v = undefined; } else v = r.value; }
+    err.textContent = bad;
     if (v === undefined) sftkValOvClear(node, p.targetOrg, ids[0], field); else sftkValOvSet(node, p.targetOrg, ids[0], field, v);
     await saveNode();
     const n = Object.keys(sftkValOvGet(node, p.targetOrg, ids[0])).length;
@@ -311,7 +314,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     sel.querySelector('option[value="__mixed__"]')?.remove();
     tr.classList.toggle('ds-ve-row-on', !!v); const x = tr.querySelector('[data-ve-rt-clear]'); if (x) x.style.visibility = v ? '' : 'hidden';
     rtStatus();
-    showToast(v ? `🪪 Record type → ${sel.selectedOptions[0].textContent} for ${many ? `${ids.length.toLocaleString()} records` : 'this record'} — saved.` : '🪪 Record type: the type of the same API name again — saved.', 'success', 4000);
+    showToast(v ? `🪪 Record type → ${sel.selectedOptions[0].textContent} for ${many ? `${ids.length.toLocaleString('en-US')} records` : 'this record'} — saved.` : '🪪 Record type: the type of the same API name again — saved.', 'success', 4000);
     if (typeof onSaved === 'function') onSaved();
   }));
   // ── the owner: users and queues of the target, picked and saved at once for every record of the dialog ──
@@ -340,7 +343,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
       if (typeof _lkpNameCache !== 'undefined') _lkpNameCache.set(id, name);
       await saveNode();
       res.style.display = 'none'; setCur(id, name); rtStatus();
-      showToast(`👤 Owner → ${name} for ${many ? `${ids.length.toLocaleString()} records` : 'this record'} — saved.`, 'success', 4000);
+      showToast(`👤 Owner → ${name} for ${many ? `${ids.length.toLocaleString('en-US')} records` : 'this record'} — saved.`, 'success', 4000);
       if (typeof onSaved === 'function') onSaved();
     }));
     const run = async () => {
@@ -386,7 +389,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
       wireClear(box);
       const landEl = box.querySelector('[data-ve-land]'); if (landEl) landEl.style.display = 'none';   // a pick beats the name bridge
       res.style.display = 'none'; inp.value = h.textContent; inp.classList.add('ds-ve-lkp-in-on');
-      showToast(`📌 ${field} → ${h.textContent} for ${many ? `${ids.length.toLocaleString()} records` : 'this record'} — saved.`, 'success', 4000);
+      showToast(`📌 ${field} → ${h.textContent} for ${many ? `${ids.length.toLocaleString('en-US')} records` : 'this record'} — saved.`, 'success', 4000);
       if (typeof onSaved === 'function') onSaved();
     }));
     const run = async () => {
@@ -472,7 +475,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     // rows left alone keep their typed values — the toast says so instead of "no typed value left" (2026-11-14)
     const kept = ids.some(id => Object.keys(ovOf(id)).length);
     if (!per && kept) showToast(picks.length ? `✏ ${picks.length} typed value${picks.length === 1 ? '' : 's'} cleared — every other typed value of these records is kept.` : 'Nothing changed — each record keeps its own typed values.', 'success', 5000);
-    else showToast(per ?`✏ ${per} value${per === 1 ? '' : 's'} saved for ${many ? `${ids.length.toLocaleString()} records` : (label || 'this record')} — written by ▶ Deploy.` : `No typed value left for ${many ? 'these records' : (label || 'this record')} — the source's values are written.`, 'success', 5000);
+    else showToast(per ?`✏ ${per} value${per === 1 ? '' : 's'} saved for ${many ? `${ids.length.toLocaleString('en-US')} records` : (label || 'this record')} — written by ▶ Deploy.` : `No typed value left for ${many ? 'these records' : (label || 'this record')} — the source's values are written.`, 'success', 5000);
     if (typeof onSaved === 'function') onSaved();
   });
   eid('dsVeClearAll')?.addEventListener('click', async () => {
@@ -487,7 +490,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
       const stEl = eid('dsVeStatus'); if (stEl) stEl.textContent = 'saved as you type';
       const ca = eid('dsVeClearAll'); if (ca) ca.disabled = true;
     }
-    showToast(`Every changed value removed for ${many ? `${ids.length.toLocaleString()} records` : (label || 'this record')} — the source's values are written.`, 'success', 5000);
+    showToast(`Every changed value removed for ${many ? `${ids.length.toLocaleString('en-US')} records` : (label || 'this record')} — the source's values are written.`, 'success', 5000);
     if (typeof onSaved === 'function') onSaved();
   });
 }

@@ -70,6 +70,6 @@ export default async function (h) {
   h.log('4. PLAN after the re-read:', await dump(h, '.ds-dep-plan', 700));
   try {
     const t = execSync(`sf data query -o npc2 --json -q "SELECT Id, BillingCity FROM Account WHERE Name = 'SFTK CX Duplicate Name'"`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    h.log('CLI trailheads4 — nothing was written:', JSON.stringify(JSON.parse(t.slice(t.indexOf('{'))).result.records.map(r => `${r.Id}:${r.BillingCity}`)));
+    h.log('CLI npc2 — nothing was written:', JSON.stringify(JSON.parse(t.slice(t.indexOf('{'))).result.records.map(r => `${r.Id}:${r.BillingCity}`)));
   } catch (e) { h.log('CLI failed:', e.message.split(NL)[0]); }
 }

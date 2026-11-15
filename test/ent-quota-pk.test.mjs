@@ -143,7 +143,7 @@ describe('pkApiCostLine — local estimate (no helper needed)', () => {
   });
 
   it('thousands are formatted', () => {
-    expect(pkApiCostLine({ total: 1234, known: true }, null).text).toBe(`≈${(1234).toLocaleString()} API calls`);
+    expect(pkApiCostLine({ total: 1234, known: true }, null).text).toBe(`≈${(1234).toLocaleString('en-US')} API calls`);
   });
 
   it('no estimate at all → empty line, not "≈undefined"', () => {
@@ -160,11 +160,11 @@ describe('pkApiCostLine — whose-quota labeling (each org has its OWN pool)', (
       { label: 'Dev',  budget: { max: 15000, remaining: 14900 }, calls: 20 },
       { label: 'Prod', budget: { max: 100000, remaining: 99000 }, calls: 20 },
     ]);
-    expect(r.text).toContain(`Dev has ${(14900).toLocaleString()} of ${(15000).toLocaleString()} daily API calls remaining`);
-    expect(r.text).toContain(`Prod has ${(99000).toLocaleString()} of ${(100000).toLocaleString()} daily API calls remaining`);
+    expect(r.text).toContain(`Dev has ${(14900).toLocaleString('en-US')} of ${(15000).toLocaleString('en-US')} daily API calls remaining`);
+    expect(r.text).toContain(`Prod has ${(99000).toLocaleString('en-US')} of ${(100000).toLocaleString('en-US')} daily API calls remaining`);
     // Pools are NEVER summed: no combined remaining/max anywhere in the line.
-    expect(r.text).not.toContain((14900 + 99000).toLocaleString());
-    expect(r.text).not.toContain((115000).toLocaleString());
+    expect(r.text).not.toContain((14900 + 99000).toLocaleString('en-US'));
+    expect(r.text).not.toContain((115000).toLocaleString('en-US'));
     expect(r.warn).toBe(false);
   });
 
@@ -231,7 +231,7 @@ describe('estimator → formatter integration', () => {
       { label: 'Dev', budget: { max: 15000, remaining: 14000 }, calls: est.perOrg },
     ]);
     expect(r.text).toBe(
-      `≈78 API calls across 3 orgs, more if the object has record types (up to 8 more reads per org) · Dev has ${(14000).toLocaleString()} of ${(15000).toLocaleString()} daily API calls remaining`);
+      `≈78 API calls across 3 orgs, more if the object has record types (up to 8 more reads per org) · Dev has ${(14000).toLocaleString('en-US')} of ${(15000).toLocaleString('en-US')} daily API calls remaining`);
     expect(r.warn).toBe(false);
   });
 });

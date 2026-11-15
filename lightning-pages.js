@@ -1260,7 +1260,7 @@ const LightningPages = (() => {
       const costText = hadCache
         ? 'Reused the last assignment scan — no new API calls for the scan.'
         : (_wswScanCost != null
-            ? `Scan used ≈${Number(_wswScanCost).toLocaleString()} API call${_wswScanCost === 1 ? '' : 's'}.`
+            ? `Scan used ≈${Number(_wswScanCost).toLocaleString('en-US')} API call${_wswScanCost === 1 ? '' : 's'}.`
             : '');
       const costHtml = costText
         ? `<div style="font-size:11px;color:var(--subtext);margin:0 0 6px">${esc(costText)}</div>` : '';
@@ -4502,7 +4502,7 @@ function lpAssignmentsScanPlan(input) {
 // and the sentence informs — nothing anywhere blocks a run because of it.
 function lpApiBudgetText(calls, budget, opts) {
   const o = opts || {};
-  const fmt = v => Number(v).toLocaleString();
+  const fmt = v => Number(v).toLocaleString('en-US');
   const n = Math.max(0, Math.floor(Number(calls) || 0));
   const parts = [];
   if (!o.noEstimate) {

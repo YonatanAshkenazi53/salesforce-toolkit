@@ -37,7 +37,7 @@ const { sftkBudgetCacheFresh, sftkExtractDailyApi } = extractFunctions('sftk-api
   'sftkBudgetCacheFresh', 'sftkExtractDailyApi',
 ]);
 
-const fmt = n => Number(n).toLocaleString();
+const fmt = n => Number(n).toLocaleString('en-US');
 
 // ════════════════════════════════════════════════════════════════
 // sftkEstimateRunCalls — REST vs Bulk vs children vs owner matching

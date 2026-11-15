@@ -7,6 +7,7 @@
 //   UNDO=1   afterwards: Data Studio › History › ↩ Undo the newest entry (TYPE_IT=1 for a guarded org)
 //   VALUE=Closed       the value the action is for
 //   FIX=remap|clear|skip  TARGET=New   the data-fix choice inside the wizard
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function setSelect(h, sel, match) {
   return h.eval(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); if (!s) return 'no select'; const o = [...s.options].find(o => o.value === ${JSON.stringify(match)}) || [...s.options].find(o => (o.textContent + ' ' + o.value).includes(${JSON.stringify(match)})); if (!o) return 'no option for ' + ${JSON.stringify(match)} + ' among ' + [...s.options].map(o => o.value).slice(0, 8).join(','); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return 'set ' + o.value; })()`);
@@ -27,7 +28,7 @@ export default async function (h) {
   await h.waitFor("!!document.querySelector('#dsPkOrg')", 60000, 500);
   await h.sleep(800);
   h.log('org options:', JSON.stringify(await h.eval(`[...document.querySelectorAll('#dsPkOrg option')].map(o => o.textContent.trim() + '=' + o.value)`)));
-  h.log('org:', await setSelect(h, '#dsPkOrg', process.env.ORG === 'npc2' ? 'trailheads4' : 'trailheads5'));
+  h.log('org:', await setSelect(h, '#dsPkOrg', orgKey(process.env.ORG === 'npc2' ? 'npc2' : 'npc')));
   await h.waitFor("document.querySelectorAll('#dsPkObj option').length > 2", 120000, 500);
   h.log('object:', await setSelect(h, '#dsPkObj', process.env.OBJ || 'Account'));
   await h.waitFor("document.querySelectorAll('#dsPkField option').length > 1 && !/Loading/.test(document.querySelector('#dsPkField')?.innerText || '')", 120000, 500);

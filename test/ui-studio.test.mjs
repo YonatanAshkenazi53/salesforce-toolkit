@@ -155,7 +155,7 @@ describe('the picklist matrix is a real table', () => {
 
   it('the counts themselves are untouched — the numbers still mean what they meant', () => {
     // toLocaleString for real counts, ? for "unknown", '' for "not counted".
-    expect(render).toContain("cell.count == null ? '' : cell.count === -1 ? '?' : cell.count.toLocaleString()");
+    expect(render).toContain("cell.count == null ? '' : cell.count === -1 ? '?' : cell.count.toLocaleString('en-US')");
     expect(render).toContain('${rti.inCount}/${rti.total} RT');
   });
 

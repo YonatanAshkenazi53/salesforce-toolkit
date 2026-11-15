@@ -10,10 +10,12 @@
 //   STEP=appdefault    App Default for the app labelled APP (default "SFTK LP Test App"); FF=mobile
 //   STEP=artp          App + Record Type + Profile: APP, PROFILE (default "Standard User"), RT=<name>|ALL (default: the first)
 //   STEP=deactivate    ⏸ Deactivate = remove every assignment of the page
-//   STEP=clone         📋 Clone (LABEL, API; COPY=1 ticks "copy assignments")
+//   STEP=clone         📋 Clone (LABEL, API; COPY=1 ticks "copy assignments"). Without API the copy gets a name of its
+//                      own for this run and is deleted at the end (KEEP=1 leaves it); a page that was there before is never deleted
 //   STEP=users         👥 Show affected users on the first profile row
 //   STEP=whosees       "Who sees what?" → Show users on the first org-default row
 //   SCAN_ONLY=1        open the confirmation, log it, cancel
+import { execFileSync } from 'node:child_process';
 import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards (TYPE_IT=1 for a guarded org)
 const NL = String.fromCharCode(10);
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
@@ -132,7 +134,15 @@ export default async function (h) {
     await after(h, step);
   }
   if (step === 'clone') {
-    const label = process.env.LABEL || 'SFTK LP Clone Test', api = process.env.API || 'SFTK_LP_Clone_Test';
+    // WHY (2026-11-15): the fixed name SFTK_LP_Clone_Test exists in the org since the first run, and the tool now
+    // (rightly) refuses to overwrite a page — every later run ended on that refusal and proved nothing. A name of
+    // its own per run, and the copy this run made is deleted afterwards; the old SFTK_LP_Clone_Test is left alone.
+    const stamp = Date.now().toString(36).toUpperCase();
+    const label = process.env.LABEL || `SFTK LP Clone ${stamp}`, api = process.env.API || `SFTK_LP_Clone_${stamp}`;
+    const tooling = (args) => { const t = execFileSync('sf', args, { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); return JSON.parse(t.slice(t.indexOf('{'))); };
+    const pageIds = () => (tooling(['data', 'query', '-o', 'npc', '-t', '--json', '-q', `"SELECT Id FROM FlexiPage WHERE DeveloperName = '${api}'"`]).result.records || []).map(r => r.Id);
+    const before = pageIds();
+    h.log('clone as:', api, '| pages of that name before:', before.length);
     await h.waitFor("!document.querySelector('#lpCloneBtn')?.disabled", 60000, 500);
     await h.eval(`document.querySelector('#lpCloneBtn').click()`);
     await h.waitFor("!!document.querySelector('#cloneConfirmBtn')", 20000, 300); await h.sleep(300);
@@ -149,6 +159,13 @@ export default async function (h) {
     h.log('clone error:', await dump(h, '#cloneError', 500));
     await after(h, 'clone');
     h.log('HEADER after clone:', await dump(h, '#lpDetailHeader', 300));
+    const made = pageIds().filter(id => !before.includes(id));
+    h.log('CLI: page(s) this run created:', made.length, made.length === 1 ? '✓' : '');
+    if (process.env.KEEP !== '1') for (const id of made) {
+      try { tooling(['data', 'delete', 'record', '-o', 'npc', '-t', '-s', 'FlexiPage', '-i', id, '--json']); h.log('cleanup: deleted the copy', api); }
+      catch (e) { h.log('cleanup FAILED — delete the page', api, 'by hand:', String((e && (e.stdout || e.message)) || e).slice(0, 300)); }
+    }
+    if (!before.length && made.length !== 1) throw new Error(`the clone did not create ${api}`);
   }
   if (step === 'users') {
     const n = await h.eval(`document.querySelectorAll('.lp-users-btn').length`);

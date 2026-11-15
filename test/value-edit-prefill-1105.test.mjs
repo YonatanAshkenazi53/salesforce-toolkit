@@ -24,7 +24,9 @@ describe('one record: the box holds the value that is written', () => {
   it('saved as you type: the source\'s text clears the change, an emptied value writes empty, a bad value is said and not stored', () => {
     expect(VE).toContain("else if (text === st) v = undefined;           // the source's value: no change kept");
     expect(VE).toContain("else if (text === '') v = null;                // a value the source has, cleared: written empty");
-    expect(VE).toContain("if (!r.ok) { err.textContent = `needs ${r.error} — not saved`; return; }");
+    // 2026-11-15: a refused value also drops the prefix an earlier keystroke stored (behaviour in test/whole-number-review-1115.test.mjs)
+    expect(VE).toContain("if (!r.ok) { bad = `needs ${r.error} — not saved, the source's value is written until this fits`; v = undefined; } else v = r.value; }");
+    expect(VE).toContain('err.textContent = bad;');
     expect(VE).toContain("if (v === undefined) sftkValOvClear(node, p.targetOrg, ids[0], field); else sftkValOvSet(node, p.targetOrg, ids[0], field, v);");
     expect(VE).toContain("inp.addEventListener('input', () => { const tr = inp.closest('tr'); tr.querySelector('.ds-ve-err').textContent = ''; mark(tr); queueSave(tr); });");
     expect(VE).toContain("inp.addEventListener('change', () => queueSave(inp.closest('tr'), true));");

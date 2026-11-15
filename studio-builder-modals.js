@@ -1053,7 +1053,7 @@ async function openRecordPickerModal(pathStr) {
     todoLoaded = true;
     todoNote = failed
       ? `⚠ Could not load the needs-deploy records by Id: ${failed}`
-      : `${want.length.toLocaleString()} record(s) need deploying according to the scan${got ? ` — ${got.toLocaleString()} loaded by Id` : ''}${missing.length > CAP ? ` (the first ${CAP.toLocaleString()} of ${missing.length.toLocaleString()} missing from the pages; narrow with a WHERE filter for the rest)` : ''}.`;
+      : `${want.length.toLocaleString('en-US')} record(s) need deploying according to the scan${got ? ` — ${got.toLocaleString('en-US')} loaded by Id` : ''}${missing.length > CAP ? ` (the first ${CAP.toLocaleString('en-US')} of ${missing.length.toLocaleString('en-US')} missing from the pages; narrow with a WHERE filter for the rest)` : ''}.`;
   }
   // A run or a rollback after this scan means these badges are stale. The
   // builder edits a copy, so the refresh writes to the saved deployment and
@@ -1713,8 +1713,8 @@ async function openRecordPickerModal(pathStr) {
           let html = _matchAnalysisHtml(res, clone, true, extras);
           // one line, not one sentence per field (user 2026-11-08: "זה מאוד לא ברור")
           if (weak.length) html = `<div class="ds-subtext ds-match-weak" style="font-size:11px;color:var(--warning,#b45309)">⚠ ${esc(weak.length === 1
-            ? `${weak[0].field}: held by ${weak[0].populated.toLocaleString()} of ${weak[0].total.toLocaleString()} sampled records — adds almost nothing to the key`
-            : `${weak.length} fields add almost nothing to the key — ${weak.map(w => w.field).join(', ')} (each held by at most ${Math.max(...weak.map(w => w.populated)).toLocaleString()} of ${weak[0].total.toLocaleString()} sampled records)`)}</div>` + html;
+            ? `${weak[0].field}: held by ${weak[0].populated.toLocaleString('en-US')} of ${weak[0].total.toLocaleString('en-US')} sampled records — adds almost nothing to the key`
+            : `${weak.length} fields add almost nothing to the key — ${weak.map(w => w.field).join(', ')} (each held by at most ${Math.max(...weak.map(w => w.populated)).toLocaleString('en-US')} of ${weak[0].total.toLocaleString('en-US')} sampled records)`)}</div>` + html;
           if (list.length > capped.length) {
             html += `<div class="ds-subtext" style="font-size:11px">…${list.length - capped.length} more target(s) not auto-graded (cap ${GRADE_TGT_CAP}) — 🧪 Test this key grades them all.</div>`;
           }
@@ -2342,14 +2342,14 @@ function _matchKeyVerdict(sides) {
     const sc = Math.round(st.populatedPct * st.uniquePct / 100);
     if (sc < min) {
       min = sc;
-      why = st.blank ? `${st.blank.toLocaleString()} blank in ${s.label}` : st.dupRecords ? `${st.dupRecords.toLocaleString()} share a key in ${s.label}` : '';
+      why = st.blank ? `${st.blank.toLocaleString('en-US')} blank in ${s.label}` : st.dupRecords ? `${st.dupRecords.toLocaleString('en-US')} share a key in ${s.label}` : '';
     }
   }
   if (empty.length) why = `${why ? why + ' · ' : ''}graded on ${graded.map(s => s.label).join(' and ')} only — ${empty.map(s => s.label).join(' and ')} holds no record of this object yet`;
   return { score: min, label: min >= 90 ? 'Strong key' : min >= 70 ? 'Usable key' : 'Weak key', cls: min >= 90 ? 'ds-diff-sync' : min >= 70 ? 'ds-diff-drift' : 'ds-diff-missing', why };
 }
 function _matchGradeTable(sides) {
-  const n = v => Number(v || 0).toLocaleString();
+  const n = v => Number(v || 0).toLocaleString('en-US');
   const cell = (s, fn) => (s.err || !s.counts) ? '' : fn(sftkKeyStats(s.counts), s.counts);
   const rows = [
     ['hold a value', (st, k) => `<strong>${n(st.populated)}</strong> of ${n(st.total)}${k.sampled ? ' <span class="ds-subtext" title="More than 2,000 records — the first 2,000 were read">(first 2,000)</span>' : ''}${st.blank ? ` · ${n(st.blank)} blank` : ''}`],
@@ -2365,7 +2365,7 @@ function _matchGradeTable(sides) {
 function _matchWouldHtml(res) {
   const k = res && res.cross;
   if (!k) return (res && (res.src || res.tgt)) ? '<span class="ds-subtext">the preview of pairs needs both orgs open</span>' : '';
-  return `would pair <strong>${k.matchedUnique.toLocaleString()}</strong> of ${k.sourceTotal.toLocaleString()} source records · <strong>${k.unmatched.toLocaleString()}</strong> new in the target · <strong>${k.ambiguous.toLocaleString()}</strong> need a decision${k.tiered ? ' <span class="ds-subtext">(most specific first, as the scan pairs)</span>' : ''}`;
+  return `would pair <strong>${k.matchedUnique.toLocaleString('en-US')}</strong> of ${k.sourceTotal.toLocaleString('en-US')} source records · <strong>${k.unmatched.toLocaleString('en-US')}</strong> new in the target · <strong>${k.ambiguous.toLocaleString('en-US')}</strong> need a decision${k.tiered ? ' <span class="ds-subtext">(most specific first, as the scan pairs)</span>' : ''}`;
 }
 function _matchSidesOf(res, profile, extras) {
   return [

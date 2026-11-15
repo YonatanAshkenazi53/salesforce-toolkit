@@ -69,7 +69,7 @@ describe('sftkDeployNodeFacts — what one card says', () => {
 
 describe('the card', () => {
   it('shows how many records each org holds, by org name; an unknown count is "?" and never 0', () => {
-    expect(tree).toContain("const num = v => (v == null ? '?' : Number(v).toLocaleString());");
+    expect(tree).toContain("const num = v => (v == null ? '?' : Number(v).toLocaleString('en-US'));");
     expect(tree).toContain('<span><b>${num(f.src)}</b> in ${esc(srcOrgL)}</span><span class="ds-dtree-arrow">→</span><span><b>${num(f.tgt)}</b> in ${esc(tgtOrgL)}</span>');
   });
   it('one chip per kind of work, and a chip opens that tab of that object', () => {

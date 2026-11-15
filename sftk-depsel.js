@@ -107,7 +107,7 @@ function sftkDepSelRestore(packed, scan, opts) {
 // message. we need the behevior"). Only a tick that was DROPPED is worth a line.
 function sftkDepSelLine(kept, dropped) {
   if (!dropped) return '';
-  const t = n => `${n.toLocaleString()} tick${n === 1 ? '' : 's'}`;
+  const t = n => `${n.toLocaleString('en-US')} tick${n === 1 ? '' : 's'}`;
   return `${t(dropped)} from before ${dropped === 1 ? 'was' : 'were'} dropped — the record${dropped === 1 ? ' is' : 's are'} no longer in the list ${dropped === 1 ? 'it was' : 'they were'} ticked in (written since, or changed).${kept ? ` The other ${t(kept)} ${kept === 1 ? 'is' : 'are'} back.` : ''}`;
 }
 

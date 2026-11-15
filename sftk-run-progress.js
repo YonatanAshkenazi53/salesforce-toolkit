@@ -142,7 +142,10 @@ function sftkRunFmtDur(ms) {
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
 }
 
-function sftkRunFmtN(n) { return Number.isFinite(Number(n)) ? Number(n).toLocaleString() : '?'; }
+// 2026-11-15: 'en-US' on purpose, here and at every number site in both apps. The UI text is English only, so a
+// German or Romanian browser must not print "1.250 records" inside an English sentence. Dates keep the browser's
+// own locale. test/number-format-en-1115.test.mjs fails the gate on a new arg-less number toLocaleString().
+function sftkRunFmtN(n) { return Number.isFinite(Number(n)) ? Number(n).toLocaleString('en-US') : '?'; }
 
 // PURE. What a card says right now. `now` moves the clocks between events.
 function sftkRunProgressCardText(c, now) {

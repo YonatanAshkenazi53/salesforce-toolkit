@@ -573,11 +573,11 @@ function _ocRenderResults() {
         if (r.skipped) return `<tr class="ds-oc-skipped"><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-skip">— ${esc(r.reason || 'Skipped.')}</td></tr>`;
         return `<tr class="ds-oc-row ${colorFor(r.matchPct)}">
           <td>${esc(r.name)} <span class="ds-oc-row-mf">by ${esc(r.matchField)}</span>${r.note ? ` <span class="ds-oc-row-mf" title="${esc(r.note)}">⚠ ${esc(r.note)}</span>` : ''}</td>
-          <td>${r.srcCount.toLocaleString()}</td>
-          <td>${r.tgtCount.toLocaleString()}</td>
-          <td>${r.matched.toLocaleString()}</td>
-          <td>${r.missing ? `<strong>${r.missing.toLocaleString()}</strong>` : '0'}</td>
-          <td>${r.extras  ? `<strong>${r.extras.toLocaleString()}</strong>`  : '0'}</td>
+          <td>${r.srcCount.toLocaleString('en-US')}</td>
+          <td>${r.tgtCount.toLocaleString('en-US')}</td>
+          <td>${r.matched.toLocaleString('en-US')}</td>
+          <td>${r.missing ? `<strong>${r.missing.toLocaleString('en-US')}</strong>` : '0'}</td>
+          <td>${r.extras  ? `<strong>${r.extras.toLocaleString('en-US')}</strong>`  : '0'}</td>
           <td class="ds-oc-pct"><strong>${r.matchPct}%</strong></td>
           <td style="white-space:nowrap">
             <button class="ds-btn ds-btn-xs ds-btn-primary" data-oc-reconcile="${esc(r.name)}">🚀 Deploy</button>

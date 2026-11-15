@@ -518,7 +518,7 @@ function sftkUndoBinAge(whenIso, nowMs) {
 // the truth; the list is what the org can still name today. PURE.
 function sftkUndoBinVerdict(found, counted, capped) {
   const f = Number(found) || 0, c = Number(counted) || 0;
-  const N = v => Number(v).toLocaleString();
+  const N = v => Number(v).toLocaleString('en-US');
   if (capped) return { kind: 'capped', text: `The read stopped at ${N(f)} records; the rollback counted ${N(c)}.` };
   if (f === c) return { kind: 'match', text: `${N(f)} found — the same number the rollback counted.` };
   if (f < c) return { kind: 'fewer', text: `${N(f)} found; the rollback counted ${N(c)}. The other ${N(c - f)} are no longer in the Recycle Bin (it keeps a record for 15 days and has a size limit), so they cannot be named.` };

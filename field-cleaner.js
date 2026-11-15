@@ -471,7 +471,7 @@ function fcEstimateScanCalls(counts, scope, objApi) {
 // when the known call floor alone EXCEEDS the remaining budget (equal is not
 // over) — it informs, it never blocks the scan.
 function fcScanBudgetLine(est, budgetInfo) {
-  const fmt = v => Number(v).toLocaleString();
+  const fmt = v => Number(v).toLocaleString('en-US');
   const e = est || {};
   const now = Number.isFinite(e.now) ? e.now : 0;
   const moreIf = Array.isArray(e.moreIf) ? e.moreIf : [];
@@ -1644,7 +1644,7 @@ const FieldCleaner = (() => {
     // the time left: the legs done so far say how long a unit of weight takes; nothing is said before two legs are done
     const eta = p.doneW >= 3 && p.doneMs > 0 ? Math.max(1, Math.round((p.doneMs / p.doneW) * left / 1000 - (Date.now() - p.legAt) / 1000)) : null;
     const line = eid('fcScanLine');
-    if (line) line.textContent = `Step ${p.idx + 1} of ${p.legs.length} · ${leg ? leg.label : ''}${eta != null ? ` · about ${eta < 60 ? `${eta} s` : `${Math.round(eta / 60)} min`} left` : ' · estimating…'}${p.found ? ` · ${p.found.toLocaleString()} place${p.found === 1 ? '' : 's'} so far` : ''}`;
+    if (line) line.textContent = `Step ${p.idx + 1} of ${p.legs.length} · ${leg ? leg.label : ''}${eta != null ? ` · about ${eta < 60 ? `${eta} s` : `${Math.round(eta / 60)} min`} left` : ' · estimating…'}${p.found ? ` · ${p.found.toLocaleString('en-US')} place${p.found === 1 ? '' : 's'} so far` : ''}`;
   }
   // one message setter for every leg: the text under the cat, and the progress with it
   function _scanMsg(t) {
@@ -2708,7 +2708,7 @@ const FieldCleaner = (() => {
   // left unread does not block, and is named here.
   function _unscannedNoteHtml() {
     const cmt = _cmtUnread
-      ? ` <strong>Custom metadata records were not read</strong> — this org has ${_cmtUnread.toLocaleString()} and the scan reads up to 300. A record whose Field Definition points at this field makes Salesforce refuse the delete: check Setup → Custom Metadata Types before deleting.`
+      ? ` <strong>Custom metadata records were not read</strong> — this org has ${_cmtUnread.toLocaleString('en-US')} and the scan reads up to 300. A record whose Field Definition points at this field makes Salesforce refuse the delete: check Setup → Custom Metadata Types before deleting.`
       : '';
     return `
       <div class="fc-unscanned-note">
@@ -3258,7 +3258,7 @@ const FieldCleaner = (() => {
     const el = eid('fcOrgSweep');
     if (!el || !_selObj || !_selField) return;
     const s = _orgSweep;
-    const N = x => Number(x).toLocaleString();
+    const N = x => Number(x).toLocaleString('en-US');
     if (!s) {
       el.innerHTML = `<div class="fc-fact fc-sweep-fact"><span class="fc-fact-ico">🧭</span><span class="fc-fact-text"><b>Full metadata text scan</b> — the scan above asks Salesforce’s index and reads the kinds it knows. This retrieves the org’s own metadata as a whole, like a project pulled from version control, and finds every file that names <code>${esc(_selField.api)}</code>: what must go or change before the delete (🔒), and what only breaks later (👀) — search layouts, related-list columns, record-type picklist values, Aura markup, templates, translations, permission sets and the rest. What it finds joins the list above with ✂ ⇄ ✎ 🗑 where its kind has them. <strong>Expensive and slow:</strong> one API call per metadata type to list it, then several Metadata API retrieves — hundreds of calls and many minutes on a large org. Pressing the button only counts: the exact calls and time are shown before anything is read. Nothing is written.</span>
         <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcSweepPlan" data-pkg="0" title="Your org’s own components, on standard objects and on the objects your org created. Counts the cost first.">🧭 Your objects — count the cost…</button>
@@ -3538,7 +3538,7 @@ const FieldCleaner = (() => {
     const el = eid('fcRptScan');
     if (!el || !_selObj || !_selField) return;
     const s = _rptScan;
-    const N = x => Number(x).toLocaleString();
+    const N = x => Number(x).toLocaleString('en-US');
     const link = r => `<a href="${esc(`${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${r.Id}/view`)}" target="_blank" rel="noopener">${esc(r.Name || r.Id)}</a>`;
     if (!s) {
       const listed = ((_lastScan && _lastScan.deps) || []).filter(d => d.MetadataComponentType === 'Report').length;
@@ -3698,10 +3698,10 @@ const FieldCleaner = (() => {
     }
     const calls = filled != null ? Math.max(1, Math.ceil(filled / 2000)) : null;
     el.innerHTML = `<div class="fc-fact fc-copy"><span class="fc-fact-ico">📦</span><span class="fc-fact-text"><b>Stored values</b> — ${filled != null
-        ? `<strong>${filled.toLocaleString()}</strong> record${filled === 1 ? '' : 's'} hold${filled === 1 ? 's' : ''} a value in <code>${esc(from)}</code>.`
+        ? `<strong>${filled.toLocaleString('en-US')}</strong> record${filled === 1 ? '' : 's'} hold${filled === 1 ? 's' : ''} a value in <code>${esc(from)}</code>.`
         : `how many records hold a value in <code>${esc(from)}</code> is not measured yet.`}
       Replace moves references only: copy the values to <code>${esc(to)}</code> before the field is deleted.</span>
-      <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcCopyCompare">📦 Compare the two fields${calls ? ` (≈${calls.toLocaleString()} API call${calls === 1 ? '' : 's'})` : ''}</button></span></div>`;
+      <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcCopyCompare">📦 Compare the two fields${calls ? ` (≈${calls.toLocaleString('en-US')} API call${calls === 1 ? '' : 's'})` : ''}</button></span></div>`;
     eid('fcCopyCompare').addEventListener('click', _copyCompare);
   }
 
@@ -3715,7 +3715,7 @@ const FieldCleaner = (() => {
       let r = await _copyRead(false), fillOnly = false;
       if (r.capped && !r.unfiltered) { r = await _copyRead(true); fillOnly = true; }
       if (seq !== _copySeq || !_replOn() || _replField.api !== to) return;
-      if (r.capped && r.unfiltered) throw new Error(`more than ${FC_COPY_CAP.toLocaleString()} records, and this field type cannot be filtered in a query — copy the values with Data Loader instead`);
+      if (r.capped && r.unfiltered) throw new Error(`more than ${FC_COPY_CAP.toLocaleString('en-US')} records, and this field type cannot be filtered in a query — copy the values with Data Loader instead`);
       _copyState = { from, to, rows: r.rows, capped: r.capped, fillOnly, unfiltered: r.unfiltered, overwrite: false, plan: null, result: null };
       _renderCopyPlan();
     } catch (e) {
@@ -3732,7 +3732,7 @@ const FieldCleaner = (() => {
     const plan = sftkCopyValuesPlan(st.rows, from, to, { newDesc: _replField.desc });
     st.plan = plan;
     const n = plan.fill.length + (st.overwrite ? plan.over.length : 0);
-    const N = x => Number(x).toLocaleString();
+    const N = x => Number(x).toLocaleString('en-US');
     const li = [];
     li.push(`<li>✅ <strong>${N(plan.same)}</strong> already hold${plan.same === 1 ? 's' : ''} the same value in <code>${esc(to)}</code></li>`);
     li.push(`<li>➕ <strong>${N(plan.fill.length)}</strong> ${plan.fill.length === 1 ? 'has' : 'have'} <code>${esc(to)}</code> empty — ${plan.fill.length === 1 ? 'it is' : 'these are'} copied</li>`);
@@ -3759,7 +3759,7 @@ const FieldCleaner = (() => {
     const targets = [...st.plan.fill, ...(st.overwrite ? st.plan.over : [])];
     if (!targets.length) return;
     const overN = st.overwrite ? st.plan.over.length : 0;
-    const N = x => Number(x).toLocaleString();
+    const N = x => Number(x).toLocaleString('en-US');
     const undoable = targets.length <= FC_COPY_UNDO;
     let wantCsv = true;
     const gate = await sftkOrgWriteGate(_orgUrl);
@@ -4379,11 +4379,11 @@ const FieldCleaner = (() => {
     // QA 2026-10-06: this read "Empty on 99.9% of 8 of 10,266 records" — the
     // percentage is of ALL records, the count is how many hold a value. Two
     // facts, said as two facts.
-    const scope = `${v.total.toLocaleString()} ${v.sampled ? 'sampled' : 'records'}`;
+    const scope = `${v.total.toLocaleString('en-US')} ${v.sampled ? 'sampled' : 'records'}`;
     const holders = v.bool
-      ? (v.filled === 0 ? 'none is ticked' : `${v.filled.toLocaleString()} ${v.filled === 1 ? 'is' : 'are'} ticked`)
+      ? (v.filled === 0 ? 'none is ticked' : `${v.filled.toLocaleString('en-US')} ${v.filled === 1 ? 'is' : 'are'} ticked`)
       : v.filled === 0 ? 'none holds a value'
-      : `${v.sampled ? '~' : ''}${v.filled.toLocaleString()} hold${v.filled === 1 && !v.sampled ? 's' : ''} a value`;
+      : `${v.sampled ? '~' : ''}${v.filled.toLocaleString('en-US')} hold${v.filled === 1 && !v.sampled ? 's' : ''} a value`;
     // Never round UP to 100% / down to 0% unless the value is truly there —
     // "100% empty" on a field that still holds 12 values would be a lie.
     const pctStr = p => (p >= 99.95 && p < 100) ? '99.9'
@@ -7740,7 +7740,7 @@ const FieldCleaner = (() => {
       confirmLabel: '🗑 Delete field',
       extraHtml: hasValues ? `
         <div class="fc-backup-offer">
-          💾 <strong>${_dataVerdict.filled.toLocaleString()}${_dataVerdict.sampled ? '+' : ''}</strong>
+          💾 <strong>${_dataVerdict.filled.toLocaleString('en-US')}${_dataVerdict.sampled ? '+' : ''}</strong>
           record(s) still hold a value. Download them first?
           <button class="btn btn-secondary btn-sm" id="fcBackupBtn" style="margin-left:6px">💾 Back up values (CSV)</button>
         </div>` : '',
@@ -7793,7 +7793,7 @@ const FieldCleaner = (() => {
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
       if (btn) {
-        btn.textContent = `✅ ${rows.length.toLocaleString()} row(s) saved${rows.length >= 50000 ? ' (capped 50k)' : ''}`;
+        btn.textContent = `✅ ${rows.length.toLocaleString('en-US')} row(s) saved${rows.length >= 50000 ? ' (capped 50k)' : ''}`;
       }
     } catch (e) {
       if (btn) { btn.textContent = '❌ Export failed'; }

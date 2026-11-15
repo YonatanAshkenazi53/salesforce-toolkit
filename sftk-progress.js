@@ -62,7 +62,7 @@ function sftkProgLine(st, now) {
     const legs = st.legs || [], leg = legs[st.idx];
     parts.push(`Step ${Math.min(st.idx + 1, legs.length)} of ${legs.length}${leg ? ` · ${leg.label}` : ''}`);
   } else if (st.mode === 'count' && st.total > 0) {
-    parts.push(`${(st.done || 0).toLocaleString()} of ${st.total.toLocaleString()}${st.unit ? ` ${st.unit}` : ''}`);
+    parts.push(`${(st.done || 0).toLocaleString('en-US')} of ${st.total.toLocaleString('en-US')}${st.unit ? ` ${st.unit}` : ''}`);
   }
   const eta = sftkProgEta(st, now);
   const elapsed = (now - st.startedAt) / 1000;
@@ -71,7 +71,7 @@ function sftkProgLine(st, now) {
   else if (elapsed >= 3) parts.push(`${sftkProgFmtSec(elapsed)} so far`);
   else parts.push('estimating…');
   if (st.lastMs > 0 && (st.mode === 'open' || eta == null)) parts.push(`last time ${sftkProgFmtSec(st.lastMs / 1000)} here`);
-  if (st.found) parts.push(`${st.found.toLocaleString()} ${st.foundWord || 'found'} so far`);
+  if (st.found) parts.push(`${st.found.toLocaleString('en-US')} ${st.foundWord || 'found'} so far`);
   if (st.note) parts.push(st.note);
   return parts.join(' · ');
 }

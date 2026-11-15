@@ -39,7 +39,12 @@ for (const run of batch) {
   writeFileSync(join(outDir, `${run.name}.log`), log);
   const lines = log.split(NL).map(l => l.trimEnd()).filter(Boolean);
   const count = re => lines.filter(l => re.test(l)).length;
-  const exc = count(/PAGE EXCEPTION/), cerr = count(/CONSOLE error/), bad = count(/❌(?! Failed 0)|FAILED|timeout waiting|SECTION FAILED|Not finished|INCOMPLETE/i);   // a report's own "❌ Failed 0" is not a failure
+  const exc = count(/PAGE EXCEPTION/), cerr = count(/CONSOLE error/);
+  // a report's own "❌ Failed 0" is not a failure. FAILED counts in CAPITALS only (2026-11-15): the scripts shout it
+  // ("FAILED:", "RESTORE FAILED"), while the product's own counts say "5 failed" / "2 failed interviews" — not errors.
+  // (The lookahead had lost its word boundary to a literal backspace character, so it excluded nothing.)
+  const shout = /❌(?! Failed 0\b)|FAILED/, soft = /timeout waiting|Not finished|INCOMPLETE/i;
+  const bad = lines.filter(l => shout.test(l) || soft.test(l)).length;
   const last = lines.length ? lines[lines.length - 1].slice(0, 160) : '(no output)';
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   const line = `${r.status === 0 ? '✓' : '✗'} ${run.name} · exit ${r.status === null ? 'timeout' : r.status} · ${secs}s · exceptions ${exc} · console errors ${cerr} · ❌/FAILED lines ${bad} · last: ${last}`;

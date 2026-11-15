@@ -2,13 +2,14 @@
 // the page opens on the stored answers without reading, then ✓ Check all runs
 // every card; prints each card's text. Compare with the CLI (see the fixture
 // README / the commit for the queries).
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 const dump = async (h, sel, n = 3000) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 export default async function (h) {
   // RING=1: both fixture orgs, trailheads5 as the source — the picklist card compares them.
   await h.login(process.env.ORG || 'npc'); if (process.env.RING === '1') await h.login('npc2');
   await h.studio('#/orghealth'); await h.watchErrors();
   if (process.env.RING === '1') {
-    await h.eval(`(() => { _ring = { orgs: ['https://trailheads5.my.salesforce.com', 'https://trailheads4.my.salesforce.com'], sourceUrl: 'https://trailheads5.my.salesforce.com' }; _ohOrg = 'https://trailheads5.my.salesforce.com'; renderOrgHealth(); return true; })()`);
+    await h.eval(`(() => { _ring = { orgs: [${JSON.stringify(orgUrl('npc'))}, ${JSON.stringify(orgUrl('npc2'))}], sourceUrl: ${JSON.stringify(orgUrl('npc'))} }; _ohOrg = ${JSON.stringify(orgUrl('npc'))}; renderOrgHealth(); return true; })()`);
     await h.sleep(1500);
   }
   await h.waitFor("!!document.querySelector('[data-oh-card]')", 30000, 500);

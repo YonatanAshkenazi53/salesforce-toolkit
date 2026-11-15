@@ -336,7 +336,7 @@ function _histKitNote(kit, total) {
   if (!total) return '';
   const ships = tab => typeof sftkShips !== 'function' || sftkShips(tab);
   const tabs = Object.keys(kit).sort((a, b) => kit[b] - kit[a]);
-  return `<div class="ds-pk-note" id="dsHistKitNote">🧰 ${total.toLocaleString()} change${total === 1 ? '' : 's'} made with Toolkit tools ${total === 1 ? 'is' : 'are'} not listed here — each is in the tool that made it, with its ↩ Undo:
+  return `<div class="ds-pk-note" id="dsHistKitNote">🧰 ${total.toLocaleString('en-US')} change${total === 1 ? '' : 's'} made with Toolkit tools ${total === 1 ? 'is' : 'are'} not listed here — each is in the tool that made it, with its ↩ Undo:
     ${tabs.map(t => ships(t)
       ? `<button class="ds-btn ds-btn-xs" data-hist-kit="${esc(t)}" title="Open ${esc(sftkHistoryTabLabel(t))} on its History">${esc(sftkHistoryTabLabel(t))} (${kit[t]})</button>`
       : `<span class="ds-chip" title="This build does not carry the tool">${esc(sftkHistoryTabLabel(t))} (${kit[t]})</span>`).join(' ')}
@@ -415,23 +415,23 @@ function _histSentence(run) {
     const p = run.probe || {};
     const bad = (p.refused || 0) + (p.cascade || 0) + (p.unreached || 0);
     const did = !p.probed ? 'nothing was checked — no insert was selected'
-      : bad ? `${(p.would || 0).toLocaleString()} of ${p.probed.toLocaleString()} would be written${p.refused ? `, ${p.refused} refused` : ''}${p.cascade ? `, ${p.cascade} not checked` : ''}${p.unreached ? `, ${p.unreached} not reached` : ''}`
-      : `every one of the ${p.probed.toLocaleString()} record${p.probed === 1 ? '' : 's'} would be written`;
+      : bad ? `${(p.would || 0).toLocaleString('en-US')} of ${p.probed.toLocaleString('en-US')} would be written${p.refused ? `, ${p.refused} refused` : ''}${p.cascade ? `, ${p.cascade} not checked` : ''}${p.unreached ? `, ${p.unreached} not reached` : ''}`
+      : `every one of the ${p.probed.toLocaleString('en-US')} record${p.probed === 1 ? '' : 's'} would be written`;
     return `Dry run into ${tgt}: ${did}. Nothing was written.`;
   }
   const isRb = run.kind === 'rollback';
   const parts = [];
   if (isRb) {
-    if (t.deleted) parts.push(`deleted ${t.deleted.toLocaleString()} record${t.deleted === 1 ? '' : 's'} the run had created`);
-    if (t.updated) parts.push(`restored ${t.updated.toLocaleString()} record${t.updated === 1 ? '' : 's'} it had overwritten`);
+    if (t.deleted) parts.push(`deleted ${t.deleted.toLocaleString('en-US')} record${t.deleted === 1 ? '' : 's'} the run had created`);
+    if (t.updated) parts.push(`restored ${t.updated.toLocaleString('en-US')} record${t.updated === 1 ? '' : 's'} it had overwritten`);
   } else {
-    if (t.created) parts.push(`inserted ${t.created.toLocaleString()}`);
-    if (t.updated) parts.push(`updated ${t.updated.toLocaleString()}`);
-    if (t.deleted) parts.push(`deleted ${t.deleted.toLocaleString()}`);
-    if (t.pulled)  parts.push(`pulled ${t.pulled.toLocaleString()} into ${src}`);
+    if (t.created) parts.push(`inserted ${t.created.toLocaleString('en-US')}`);
+    if (t.updated) parts.push(`updated ${t.updated.toLocaleString('en-US')}`);
+    if (t.deleted) parts.push(`deleted ${t.deleted.toLocaleString('en-US')}`);
+    if (t.pulled)  parts.push(`pulled ${t.pulled.toLocaleString('en-US')} into ${src}`);
   }
   const did = parts.length ? parts.join(', ') : (run.status === 'failed' ? 'wrote nothing' : 'had nothing to write');
-  const fail = t.failed ? ` — ${t.failed.toLocaleString()} failed` : '';
+  const fail = t.failed ? ` — ${t.failed.toLocaleString('en-US')} failed` : '';
   const stop = run.stopped === 'pause' ? ' — paused before the end' : run.stopped === 'closed' ? ' — stopped when the page closed' : '';
   return `${isRb ? 'Rollback' : 'Deployment'} ${isRb ? 'in' : 'into'} ${tgt}: ${did}${fail}${stop}.`;
 }
@@ -574,12 +574,12 @@ function renderHistory() {
               // Show whichever set is populated so success detail is visible.
               if (isProbe) {
                 const a = (run.probe && run.probe.byObj && run.probe.byObj[obj]) || s.probe || {};
-                const parts = [`<span class="ds-rec-tag ds-rec-tag-ins">${(a.wouldWrite || 0).toLocaleString()} would be written</span>`];
-                if (a.refused)   parts.push(`<span class="ds-rec-tag ds-rec-tag-fail">${a.refused.toLocaleString()} refused</span>`);
+                const parts = [`<span class="ds-rec-tag ds-rec-tag-ins">${(a.wouldWrite || 0).toLocaleString('en-US')} would be written</span>`];
+                if (a.refused)   parts.push(`<span class="ds-rec-tag ds-rec-tag-fail">${a.refused.toLocaleString('en-US')} refused</span>`);
                 if (a.cascade)   parts.push(`<span class="ds-rec-tag" title="Their parent would be refused, so they were never sent — a real run would not insert them either.">${a.cascade} not checked</span>`);
                 if (a.earlier)   parts.push(`<span class="ds-rec-tag" title="They point at a record an earlier step of this run creates — its id does not exist inside one rolled-back transaction, so they were set aside.">${a.earlier} not checked (earlier step)</span>`);
                 if (a.unreached) parts.push(`<span class="ds-rec-tag ds-rec-tag-fail" title="The rounds ran out before Salesforce got to these.">${a.unreached} not reached</span>`);
-                if (a.sampledOf) parts.push(`<span class="ds-rec-tag" title="A dry run sends the first 200 records of each object.">a sample of ${a.sampledOf.toLocaleString()}</span>`);
+                if (a.sampledOf) parts.push(`<span class="ds-rec-tag" title="A dry run sends the first 200 records of each object.">a sample of ${a.sampledOf.toLocaleString('en-US')}</span>`);
                 return `<span class="ds-summary-chip"><strong>${esc(obj)}</strong> · ${parts.join(' ')}</span>`;
               }
               const isRec = run.kind === 'reconcile' ||
@@ -602,7 +602,7 @@ function renderHistory() {
                 // 🎭 the PII policy's work on this run, and whether the audit found anything readable
                 if (s.masked) {
                   const n = (s.masked.hashed || 0) + (s.masked.nulled || 0) + (s.masked.fixed || 0);
-                  parts.push(`<span class="ds-rec-tag" title="Values the PII policy fabricated or masked at write time — never the real value (${s.masked.hashed || 0} fabricated or pseudonymized, ${s.masked.nulled || 0} written empty, ${s.masked.fixed || 0} fixed).">🎭 ${n.toLocaleString()} treated</span>`);
+                  parts.push(`<span class="ds-rec-tag" title="Values the PII policy fabricated or masked at write time — never the real value (${s.masked.hashed || 0} fabricated or pseudonymized, ${s.masked.nulled || 0} written empty, ${s.masked.fixed || 0} fixed).">🎭 ${n.toLocaleString('en-US')} treated</span>`);
                 }
                 if (s.piiAudit) {
                   const hits = Object.values(s.piiAudit.hits || {}).reduce((t, h) => t + (h.n || 0), 0);

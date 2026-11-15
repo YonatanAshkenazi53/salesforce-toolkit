@@ -59,6 +59,6 @@ describe('counting a tree the way the engine reads it', () => {
     expect(TR).toContain('const counts = await countNode(runProfile.tree, null);');
     expect(TR).toContain('_trLastTotalIsBound = bound;');
     expect(TR).toContain('By object: ${esc(breakdown)}');
-    expect(TR).toMatch(/\$\{countsNode\.unscoped \? '≤ ' : ''\}\$\{countsNode\.count\.toLocaleString\(\)\}/);
+    expect(TR).toMatch(/\$\{countsNode\.unscoped \? '≤ ' : ''\}\$\{countsNode\.count\.toLocaleString\('en-US'\)\}/);
   });
 });

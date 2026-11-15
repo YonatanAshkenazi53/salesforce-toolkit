@@ -3,12 +3,13 @@
 // with action groups"). Entries of every kind are seeded into the throwaway
 // profile's history (local storage only), then the page is screenshotted,
 // light and dark.
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 export default async function (h) {
   await h.login('npc'); await h.studio(''); await h.watchErrors();
   await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
   const seeded = await h.eval(`(async () => {
     const d = (hh, m) => new Date(Date.now() - hh * 3600000 - m * 60000).toISOString();
-    const S = 'https://trailheads5.my.salesforce.com', T = 'https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com';
+    const S = ${JSON.stringify(orgUrl('npc'))}, T = ${JSON.stringify(orgUrl('npc2'))};
     const pid = (_profiles.find(p => p.name === 'SFTK CX — Accounts tree') || {}).id || 'x';
     _history.push(
       { id: 'look_r1', kind: 'reconcile', profileName: 'SFTK CX — Accounts tree', profileId: pid, startedAt: d(2, 0), completedAt: d(1, 58), status: 'partial', sourceOrg: S, targetOrg: T,

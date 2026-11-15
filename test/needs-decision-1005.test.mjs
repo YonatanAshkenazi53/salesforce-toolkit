@@ -106,8 +106,8 @@ describe('one name at a time', () => {
     expect(wire).toContain('if (forget.length) await window.sftkForgetPairs?.(p.id, p.targetOrg, forget);');
   });
   it('the button above: applies what is still open and reads both orgs again — or only reads again when all is remembered', () => {
-    expect(wire).toContain('📌 Apply ${nP.toLocaleString()} decision${nP === 1 ? \'\' : \'s\'} and read both orgs again');
-    expect(wire).toContain('🔄 Read both orgs again — ${nK.toLocaleString()} remembered decision');
+    expect(wire).toContain('📌 Apply ${nP.toLocaleString(\'en-US\')} decision${nP === 1 ? \'\' : \'s\'} and read both orgs again');
+    expect(wire).toContain('🔄 Read both orgs again — ${nK.toLocaleString(\'en-US\')} remembered decision');
     const i = wire.indexOf("eid('dsDepAmbApply')?.addEventListener('click'");
     const all = wire.slice(i);
     expect(all).toContain('const lost = pend.length ? await ambSave(pend) : 0;');

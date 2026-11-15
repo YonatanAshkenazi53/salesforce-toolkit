@@ -7,6 +7,7 @@
 //                 FIX=clear|remap|skip (default skip)
 //   SCAN_ONLY=1   stop before the run
 import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function setSelect(h, sel, match) {
   return h.eval(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); if (!s) return 'no select'; const o = [...s.options].find(o => o.value === ${JSON.stringify(match)}) || [...s.options].find(o => (o.textContent + ' ' + o.value).includes(${JSON.stringify(match)})); if (!o) return 'no option for ' + ${JSON.stringify(match)}; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return 'set ' + o.value; })()`);
@@ -50,7 +51,7 @@ export default async function (h) {
     await h.eval(`document.querySelector('#dsPkSyncBtn')?.click()`);
     await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('.ds-toast')", 60000, 500);
     await h.sleep(800);
-    if (await h.eval(`!!document.querySelector('#dsPkSyncSrc')`)) h.log('source:', await setSelect(h, '#dsPkSyncSrc', 'trailheads5'));
+    if (await h.eval(`!!document.querySelector('#dsPkSyncSrc')`)) h.log('source:', await setSelect(h, '#dsPkSyncSrc', orgKey('npc')));
     await h.sleep(800);
     h.log('PLAN:', await dump(h, '#dsModalBox', 3000));
     await h.waitFor("!document.querySelector('#sftkConfirmGo')?.disabled || /nothing to|no change|identical/i.test(document.querySelector('#dsModalBox')?.innerText || '')", 180000, 1000);

@@ -20,7 +20,7 @@ describe('the stored-values count', () => {
     expect(FC).toContain("const isBool = (d.type || _selField.type) === 'boolean';");
     expect(FC).toContain('query: `SELECT COUNT(Id) filled FROM ${obj} WHERE ${fld} = true` });');
     expect(FC).toContain("query: `SELECT MAX(LastModifiedDate) m FROM ${obj} WHERE ${fld} ${isBool ? '= true' : '!= null'}` });");
-    expect(FC).toContain("? (v.filled === 0 ? 'none is ticked' : `${v.filled.toLocaleString()} ${v.filled === 1 ? 'is' : 'are'} ticked`)");
+    expect(FC).toContain("? (v.filled === 0 ? 'none is ticked' : `${v.filled.toLocaleString('en-US')} ${v.filled === 1 ? 'is' : 'are'} ticked`)");
     expect(FC).toContain("${v.bool ? 'Unticked' : 'Empty'} on <strong>${pctStr(emptyPct)}%</strong>");
     expect(FC).toContain("${v.bool ? 'Ticked' : 'Populated'} on <strong>${pctStr(pctFilled)}%</strong>");
   });

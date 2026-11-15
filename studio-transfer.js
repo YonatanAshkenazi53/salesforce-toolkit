@@ -157,7 +157,7 @@ function sftkEstimateRunCalls(plan) {
 // org's estimated calls EXCEED its remaining daily budget (equal is not
 // over). The caller styles the line — nothing here blocks anything.
 function sftkApiBudgetLine(est, budgets) {
-  const fmt = v => Number(v).toLocaleString();
+  const fmt = v => Number(v).toLocaleString('en-US');
   const total = est && Number.isFinite(est.total) ? est.total : null;
   const unknown = !!(est && est.known === false);
   const parts = [];
@@ -384,7 +384,7 @@ async function renderTransfer() {
           <label class="ds-transfer-option-label" for="dsTrApiMode">Engine:</label>
           <select id="dsTrApiMode" class="ds-select ds-select-sm" style="width:auto"
             title="How records are written. Auto: synchronous Collections calls (immediate per-record errors) below the threshold, one async Bulk API 2.0 job at or above it. Synchronous: always Collections, any volume — slower at scale but every error is immediate and per-record. Async: always a Bulk API 2.0 job, even for small sets — one job, results collected when Salesforce finishes.">
-            <option value="auto" ${(_transferProfile?.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk job at ≥ ${Number(_transferProfile?.bulkThreshold) > 0 ? Number(_transferProfile.bulkThreshold).toLocaleString() : '2,000'}</option>
+            <option value="auto" ${(_transferProfile?.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk job at ≥ ${Number(_transferProfile?.bulkThreshold) > 0 ? Number(_transferProfile.bulkThreshold).toLocaleString('en-US') : '2,000'}</option>
             <option value="sync" ${_transferProfile?.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections only</option>
             <option value="bulk" ${_transferProfile?.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
           </select>
@@ -570,7 +570,7 @@ function _syncRunButtons() {
     run.classList.remove('ds-btn-primary');
     run.classList.add('ds-btn-primary-outline');
   } else {
-    run.textContent = `▶ Run Transfer${_trLastTotal != null ? ` (${_trLastTotalIsBound ? '≤ ' : ''}${_trLastTotal.toLocaleString()} records)` : ''}`;
+    run.textContent = `▶ Run Transfer${_trLastTotal != null ? ` (${_trLastTotalIsBound ? '≤ ' : ''}${_trLastTotal.toLocaleString('en-US')} records)` : ''}`;
     run.classList.remove('ds-btn-primary-outline');
     run.classList.toggle('ds-btn-primary', validated);
   }
@@ -823,7 +823,7 @@ function updateTransferPreview(counts = null) {
     // Count badge (populated after Preview Counts)
     const countBadge = countsNode
       ? countsNode.count !== null
-        ? `<span class="ds-tr-plan-count"${countsNode.unscoped ? ' title="Upper bound: SOQL cannot scope a grandchild to filtered parents, so this is the whole table — the run inserts only the children of the records actually in the run"' : ''}>${countsNode.unscoped ? '≤ ' : ''}${countsNode.count.toLocaleString()}</span>`
+        ? `<span class="ds-tr-plan-count"${countsNode.unscoped ? ' title="Upper bound: SOQL cannot scope a grandchild to filtered parents, so this is the whole table — the run inserts only the children of the records actually in the run"' : ''}>${countsNode.unscoped ? '≤ ' : ''}${countsNode.count.toLocaleString('en-US')}</span>`
         : `<span class="ds-tr-plan-err">count failed</span>`
       : '';
 
@@ -910,7 +910,7 @@ function sftkCountBreakdown(counts) {
   const parts = [];
   (function walk(n) {
     if (!n) return;
-    if (n.count != null) parts.push(`${n.unscoped ? '≤ ' : ''}${Number(n.count).toLocaleString()} ${n.obj}`);
+    if (n.count != null) parts.push(`${n.unscoped ? '≤ ' : ''}${Number(n.count).toLocaleString('en-US')} ${n.obj}`);
     else if (n.obj) parts.push(`? ${n.obj}`);
     (n.children || []).forEach(walk);
   })(counts);
@@ -1938,7 +1938,7 @@ async function runTransfer() {
   // (detected + cached via the Organization object).
   const tgtProd = (await ensureOrgType(_transferTgt.orgUrl)) === 'production';
   if ((tgtProd || (_trLastTotal != null && _trLastTotal > 2000)) && !_trBigRunConfirmed) {
-    const nTxt = _trLastTotal != null ? `${_trLastTotalIsBound ? '≤ ' : ''}${_trLastTotal.toLocaleString()} records` : 'records';
+    const nTxt = _trLastTotal != null ? `${_trLastTotalIsBound ? '≤ ' : ''}${_trLastTotal.toLocaleString('en-US')} records` : 'records';
     // Per-object breakdown — "18 records" must never hide that 16 of them are
     // children of the two parents actually picked (user 2026-09-14).
     const breakdown = _trLastCounts ? sftkCountBreakdown(_trLastCounts) : '';
@@ -1954,7 +1954,7 @@ async function runTransfer() {
       </div>
       <div class="ds-modal-footer">
         <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-        <button class="ds-btn ${tgtProd ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsTrBigRunGo">Proceed${_trLastTotal != null ? ` with ${_trLastTotal.toLocaleString()} records` : ''}</button>
+        <button class="ds-btn ${tgtProd ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsTrBigRunGo">Proceed${_trLastTotal != null ? ` with ${_trLastTotal.toLocaleString('en-US')} records` : ''}</button>
       </div>`);
     eid('dsTrBigRunGo')?.addEventListener('click', () => {
       _trBigRunConfirmed = true;
@@ -2106,9 +2106,9 @@ async function runTransfer() {
     const used = sftkEstimateRunCalls(usedPlan);
     if (Number.isFinite(used.total)) {
       const plus = used.known === false ? '+' : '';
-      logRow('🧮', `This run used ≈${used.total.toLocaleString()}${plus} API calls — `
-        + `≈${used.source.toLocaleString()}${plus} on the source org, `
-        + `≈${used.target.toLocaleString()}${plus} on the target.`);
+      logRow('🧮', `This run used ≈${used.total.toLocaleString('en-US')}${plus} API calls — `
+        + `≈${used.source.toLocaleString('en-US')}${plus} on the source org, `
+        + `≈${used.target.toLocaleString('en-US')}${plus} on the target.`);
     }
   } catch (_) { /* informational only — never fail a finished run over it */ }
   // The run just spent calls — drop both meters so the next budget line

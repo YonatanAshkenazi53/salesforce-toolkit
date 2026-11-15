@@ -6,6 +6,7 @@
 // The Ring and the Deploy page share the profile's scope, so their numbers must agree;
 // Org Compare has no filter, so its numbers are reported for the reader, not compared.
 //   PROFILE = deployment name (default: the Accounts tree)
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 const dump = async (h, sel, n = 2000) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function setSelect(h, sel, match) {
   return h.eval(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); if (!s) return 'no select'; const o = [...s.options].find(o => o.value === ${JSON.stringify(match)}) || [...s.options].find(o => (o.textContent + ' ' + o.value).includes(${JSON.stringify(match)})); if (!o) return 'no option for ' + ${JSON.stringify(match)}; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return 'set ' + o.value; })()`);
@@ -22,7 +23,7 @@ export default async function (h) {
   if (process.env.SKIP_OC !== '1') {
   await h.eval(`document.querySelector('[data-view="compare"]')?.click()`);
   await h.waitFor("!!document.querySelector('#dsOCSrc')", 60000, 500); await h.sleep(500);
-  h.log('src:', await setSelect(h, '#dsOCSrc', 'trailheads5'), '| tgt:', await setSelect(h, '#dsOCTgt', 'trailheads4'));
+  h.log('src:', await setSelect(h, '#dsOCSrc', orgKey('npc')), '| tgt:', await setSelect(h, '#dsOCTgt', orgKey('npc2')));
   await h.waitFor("document.querySelectorAll('[data-oc-obj]').length > 5", 180000, 1000); await h.sleep(500);
   await h.eval(`document.querySelector('#dsOCSelNone')?.click()`); await h.sleep(300);
   const ticked = await h.eval(`(() => { let n = 0; for (const o of ['Account', 'Contact', 'Opportunity']) { const c = document.querySelector('[data-oc-obj="' + o + '"]'); if (c) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); n++; } } return n; })()`);
@@ -38,7 +39,7 @@ export default async function (h) {
   // other open org, the Scan button on the target column) — scan this deployment's cell ──
   await h.eval(`document.querySelector('[data-view="ring"]')?.click()`);
   await h.waitFor("!!document.querySelector('#dsRingSrc')", 60000, 500); await h.sleep(1000);
-  h.log('SOURCE menu:', await setSelect(h, '#dsRingSrc', 'https://trailheads5.my.salesforce.com'));
+  h.log('SOURCE menu:', await setSelect(h, '#dsRingSrc', orgUrl('npc')));
   await h.sleep(1500);
   await h.waitFor("!!document.querySelector('[data-ring-cell]')", 60000, 1000); await h.sleep(1000);
   h.log('ring head:', await dump(h, '#dsRingBody', 500));

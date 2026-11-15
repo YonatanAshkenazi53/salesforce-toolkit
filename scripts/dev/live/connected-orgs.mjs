@@ -6,6 +6,7 @@
 //     there, nothing written (CLI) → unguarded
 // Nothing in the org changes. The extension's own storage ends as it began.
 import { execFileSync } from 'node:child_process';
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 const NL = String.fromCharCode(10);
 const lines = (s, n = 2500) => String(s || '').slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
 const fsStatus = () => (JSON.parse(execFileSync('sf', ['data', 'query', '-o', 'npc', '--use-tooling-api', '--json', '-q',
@@ -85,7 +86,7 @@ export default async function (h) {
   h.log('ROW renamed:', renamed);
   if (!/QA Label Test/.test(renamed)) throw new Error('the new label is not shown');
   await press(h, host, 'editOrgLabel');
-  await h.eval(`(() => { const i = document.querySelector('#dsOrgLabelInput'); i.value = ${JSON.stringify(mine.label || 'trailheads5')}; i.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#dsOrgLabelSave').click(); return true; })()`);
+  await h.eval(`(() => { const i = document.querySelector('#dsOrgLabelInput'); i.value = ${JSON.stringify(mine.label || orgKey('npc'))}; i.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#dsOrgLabelSave').click(); return true; })()`);
   await h.sleep(800);
   h.log('ROW renamed back:', await rowFor(h, host));
 

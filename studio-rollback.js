@@ -154,7 +154,7 @@ function _rbRenderPlan() {
   const items = plan;
   const cur = items.find(it => it.key === me.objKey) || items[0];
   const totals = _rbTotals();
-  const n = v => Number(v || 0).toLocaleString();
+  const n = v => Number(v || 0).toLocaleString('en-US');
   const cell = (it, k, val, cls) => `<td class="ds-dep-num ${val ? (cls || '') : 'ds-dep-muted'}" data-rb-obj="${esc(it.key)}" data-rb-tab="${k}" title="Show these records">${n(val)}</td>`;
   const tableRows = items.map(it => it.refused
     ? `<tr><td><button class="ds-dep-objlink" data-rb-obj="${esc(it.key)}" data-rb-tab="del">${esc(it.key)}</button></td><td colspan="6" class="ds-dep-muted">❌ refused: ${esc(it.refused)} — not touched</td></tr>`
@@ -240,20 +240,20 @@ function _rbPaintList(it) {
         : `<span class="ds-dep-open"><a href="${_rbRecUrl(org, r.id)}" target="_blank" rel="noopener">open ↗</a></span>`;
     return `<div class="ds-dep-row ds-dep-row-amb">${ctl}<span class="ds-dep-key" title="${esc(r.id)}">${esc(r.name)}</span><span class="ds-dep-mid">${mid}</span><span class="ds-dep-tail">${tail}</span></div>`;
   };
-  const nAll = rows.length.toLocaleString();
+  const nAll = rows.length.toLocaleString('en-US');
   const bulk = selectable && rows.length && !me.executing
     ? `<button class="ds-btn ds-btn-xs" data-rb-bulk="all">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-rb-bulk="none">✗ None</button>` : '';
   host.innerHTML = `
-    <div class="ds-dep-tabs" role="tablist">${tabs.map(t => `<button role="tab" data-rb-tabsel="${t.k}" aria-selected="${t.k === me.tab}">${t.label} <b>${t.n.toLocaleString()}</b></button>`).join('')}</div>
+    <div class="ds-dep-tabs" role="tablist">${tabs.map(t => `<button role="tab" data-rb-tabsel="${t.k}" aria-selected="${t.k === me.tab}">${t.label} <b>${t.n.toLocaleString('en-US')}</b></button>`).join('')}</div>
     <div class="ds-dep-tools">
       <input type="search" id="dsRbFilter" class="ds-dep-filter" placeholder="🔍 filter by name or Id…" value="${esc(me.filter)}" aria-label="Filter records">
-      <span>${rows.length.toLocaleString()} ${esc(it.objType)} ${esc(tab.noun)}</span>
+      <span>${rows.length.toLocaleString('en-US')} ${esc(it.objType)} ${esc(tab.noun)}</span>
       <span class="ds-dep-sp"></span>${bulk}
     </div>
     <div class="ds-dep-list">${shown.length ? shown.map(rowHtml).join('') : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tab.noun)}.`}</div>`}</div>
-    ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()}
-      <button class="ds-btn ds-btn-xs" data-rb-more="step">Show ${Math.min(SFTK_RB_WINDOW, rows.length - shown.length).toLocaleString()} more</button>
-      <button class="ds-btn ds-btn-xs" data-rb-more="all">Show all ${rows.length.toLocaleString()}</button></div>` : ''}`;
+    ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString('en-US')} of ${rows.length.toLocaleString('en-US')}
+      <button class="ds-btn ds-btn-xs" data-rb-more="step">Show ${Math.min(SFTK_RB_WINDOW, rows.length - shown.length).toLocaleString('en-US')} more</button>
+      <button class="ds-btn ds-btn-xs" data-rb-more="all">Show all ${rows.length.toLocaleString('en-US')}</button></div>` : ''}`;
   const repaint = () => { _rbPaintList(it); _rbRefreshFoot(); };
   host.querySelectorAll('[data-rb-tabsel]').forEach(b => b.addEventListener('click', () => { me.tab = b.dataset.rbTabsel; me.filter = ''; me.window = SFTK_RB_WINDOW; repaint(); }));
   const f = eid('dsRbFilter');
@@ -289,7 +289,7 @@ function _rbPaintList(it) {
 }
 
 function _rbRefreshFoot() {
-  const t = _rbTotals(); const n = v => Number(v || 0).toLocaleString();
+  const t = _rbTotals(); const n = v => Number(v || 0).toLocaleString('en-US');
   const orgs = (_rb.ctx.legs || []).map(l => orgLabel(l.orgUrl)).join(' + ');
   const s = eid('dsRbSummary'); if (s) s.innerHTML = t.any ? `Delete <b>${n(t.del + t.force)}</b> · restore <b>${n(t.res)}</b> in ${esc(orgs)}` : 'Nothing selected — tick records above.';
   const go = eid('dsRbGo'); if (go) { go.disabled = !t.any || _rb.executing; go.textContent = t.any ? `↩ Roll back — delete ${n(t.del + t.force)} · restore ${n(t.res)}` : '↩ Roll back'; }
@@ -299,7 +299,7 @@ function _rbRefreshFoot() {
 async function _rbGo() {
   const me = _rb; const ctx = me.ctx; if (!ctx || me.executing) return;
   const picks = _rbPicks(); const t = _rbTotals(); if (!t.any) return;
-  const n = v => Number(v || 0).toLocaleString();
+  const n = v => Number(v || 0).toLocaleString('en-US');
   const lines = ctx.plan.filter(it => !it.refused).map(it => {
     const s = me.sel[it.key] || { del: new Set(), res: new Set(), force: new Set() };
     const bits = [];
@@ -403,7 +403,7 @@ async function _rbBinRead(objKey) {
 }
 
 function _rbRenderReport() {
-  const me = _rb; const e = me.entry; const n = v => Number(v || 0).toLocaleString();
+  const me = _rb; const e = me.entry; const n = v => Number(v || 0).toLocaleString('en-US');
   const summary = e.summary || {};
   const keys = Object.keys(summary);
   if (!keys.includes(me.objKey)) me.objKey = keys[0] || '';
@@ -462,16 +462,16 @@ function _rbRenderReport() {
       </div>
       ${!keys.length ? '' : `<div class="ds-rec-card ds-rb-records">
         <div class="ds-dep-objbar"><span class="ds-dep-objlbl">object</span>${keys.map(k => `<button class="ds-dep-objbtn ${k === me.objKey ? 'ds-dep-objbtn-on' : ''}" data-rb-robj="${esc(k)}">${esc(k)}</button>`).join('')}</div>
-        <div class="ds-dep-tabs" role="tablist">${tabs.map(t => `<button role="tab" data-rb-rtab="${t.k}" aria-selected="${t.k === me.tab}">${t.label} <b>${t.n.toLocaleString()}</b></button>`).join('')}</div>
+        <div class="ds-dep-tabs" role="tablist">${tabs.map(t => `<button role="tab" data-rb-rtab="${t.k}" aria-selected="${t.k === me.tab}">${t.label} <b>${t.n.toLocaleString('en-US')}</b></button>`).join('')}</div>
         ${note}
         <div class="ds-dep-tools">
           <input type="search" id="dsRbFilter" class="ds-dep-filter" placeholder="🔍 filter by name or Id…" value="${esc(me.filter)}" aria-label="Filter records">
-          <span>${rows.length.toLocaleString()} ${esc(me.objKey)} ${esc(tab.noun)}${all.length < tab.n ? ` — ${n(all.length)} of ${n(tab.n)} named` : ''}</span>
+          <span>${rows.length.toLocaleString('en-US')} ${esc(me.objKey)} ${esc(tab.noun)}${all.length < tab.n ? ` — ${n(all.length)} of ${n(tab.n)} named` : ''}</span>
         </div>
         <div class="ds-dep-list">${shown.length ? shown.map(rowHtml).join('') : `<div class="ds-dep-empty">${waiting ? 'Reading the Recycle Bin…' : q ? 'No record matches that filter.' : (tab.n ? 'No names to list — see the note above.' : `Nothing ${esc(tab.noun)}.`)}</div>`}</div>
-        ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()}
-          <button class="ds-btn ds-btn-xs" data-rb-more="step">Show ${Math.min(SFTK_RB_WINDOW, rows.length - shown.length).toLocaleString()} more</button>
-          <button class="ds-btn ds-btn-xs" data-rb-more="all">Show all ${rows.length.toLocaleString()}</button></div>` : ''}
+        ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString('en-US')} of ${rows.length.toLocaleString('en-US')}
+          <button class="ds-btn ds-btn-xs" data-rb-more="step">Show ${Math.min(SFTK_RB_WINDOW, rows.length - shown.length).toLocaleString('en-US')} more</button>
+          <button class="ds-btn ds-btn-xs" data-rb-more="all">Show all ${rows.length.toLocaleString('en-US')}</button></div>` : ''}
       </div>`}
     </div>`);
   _rbWireBack();

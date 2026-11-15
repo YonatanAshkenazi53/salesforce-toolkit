@@ -531,7 +531,7 @@ async function sftkSeedLoad() {
     const paint = (obj, key, v, why) => {
       const cell = document.querySelector(`[data-seed-cell="${CSS.escape(obj + '|' + key)}"]`);
       if (!cell) return;
-      cell.textContent = v == null ? '?' : Number(v).toLocaleString();
+      cell.textContent = v == null ? '?' : Number(v).toLocaleString('en-US');
       if (v == null && why) cell.title = why;
     };
 
@@ -585,7 +585,7 @@ function sftkSeedRenderRows() {
   // Both are unknown, but only one is final — never render either as 0.
   const n = (v, why) => v === undefined ? '<span title="not counted yet">…</span>'
     : v == null ? `<span style="cursor:help" title="${esc(why || 'The count did not come back — treated as UNKNOWN, never as 0.')}">?</span>`
-    : Number(v).toLocaleString();
+    : Number(v).toLocaleString('en-US');
   body.innerHTML = `
     <div class="ds-ring-cfg" style="padding:12px 14px;margin-top:10px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -1103,7 +1103,7 @@ function sftkSeedDupeGate(risky) {
       <div class="ds-modal-body" style="font-size:12.5px">
         <div>Seeding without deleting only avoids duplicates when the engine can match existing records. These objects have <strong>no match key</strong>, so every source row is inserted — on top of what the target already holds:</div>
         <div style="margin-top:6px;max-height:180px;overflow:auto">
-          ${risky.map(r => `<div style="margin:2px 0"><code>${esc(r.obj)}</code> → ${r.holders.map(h => `${esc(orgLabel(h.url))} <strong>already holds ${Number(h.count).toLocaleString()}</strong>`).join(' · ')}</div>`).join('')}
+          ${risky.map(r => `<div style="margin:2px 0"><code>${esc(r.obj)}</code> → ${r.holders.map(h => `${esc(orgLabel(h.url))} <strong>already holds ${Number(h.count).toLocaleString('en-US')}</strong>`).join(' · ')}</div>`).join('')}
         </div>
         <div class="ds-pk-note" style="margin-top:8px">Fixes, cheapest first: add an <strong>External ID</strong> field on the object (the engine then upserts instead of inserting) · configure Matching in a saved deployment for it · or use <strong>Reset &amp; Seed</strong> to wipe first. You can also proceed and review the duplicate list this run will produce.</div>
       </div>
@@ -1310,7 +1310,7 @@ async function sftkSeedConfirmAndRun(what) {
       const v = rowsByName[o]?.tgtCounts?.[t];
       if (v == null) unknown++; else total += v;
     }
-    return `<div style="margin:2px 0"><strong>${esc(orgLabel(t))}</strong> ${prodBadge(t)}: ~${total.toLocaleString()} record(s) across ${objs.length - unknown} object(s)${unknown ? ` <strong>+ ${unknown} object(s) with UNKNOWN count — ALL of their rows will be deleted</strong>` : ''}${_seedDelMode === 'hard' ? ' — <strong>permanently</strong>' : ' → Recycle Bin'}</div>`;
+    return `<div style="margin:2px 0"><strong>${esc(orgLabel(t))}</strong> ${prodBadge(t)}: ~${total.toLocaleString('en-US')} record(s) across ${objs.length - unknown} object(s)${unknown ? ` <strong>+ ${unknown} object(s) with UNKNOWN count — ALL of their rows will be deleted</strong>` : ''}${_seedDelMode === 'hard' ? ' — <strong>permanently</strong>' : ' → Recycle Bin'}</div>`;
   }).join('');
   const bodyHtml = `
     <div>You are about to delete the selected objects' rows in:</div>
@@ -1551,7 +1551,7 @@ async function sftkSeedRun(what, objs, targets) {
           if (row) {
             row.tgtCounts[t] = now;
             const cell = document.querySelector(`[data-seed-cell="${CSS.escape(o + '|' + _orgKey(t))}"]`);
-            if (cell) cell.textContent = now == null ? '?' : Number(now).toLocaleString();
+            if (cell) cell.textContent = now == null ? '?' : Number(now).toLocaleString('en-US');
           }
           if (what.wipe && !what.seed && now) leftovers.push(`${o} (${now})`);
           // Did this seed leave duplicates behind? Ask the TARGET, not our
@@ -1698,7 +1698,7 @@ function sftkSeedCfgReplaceGate() {
     <div style="margin-top:8px;max-height:200px;overflow:auto">
       ${rows.map(r => `<div style="margin:2px 0"><code>${esc(r.name)}</code> — ${targets.map(t => {
         const c = r.tgtCounts[t];
-        return `${esc(orgLabel(t))} loses ${c == null ? '<strong>an unknown number of</strong>' : `<strong>${Number(c).toLocaleString()}</strong>`} row(s)`;
+        return `${esc(orgLabel(t))} loses ${c == null ? '<strong>an unknown number of</strong>' : `<strong>${Number(c).toLocaleString('en-US')}</strong>`} row(s)`;
       }).join(' &middot; ')}</div>`).join('') || '<div class="ds-oc-sub">Counts were not loaded — the row totals are UNKNOWN.</div>'}
     </div>`;
   return sftkConfirmDestructive({
@@ -1833,7 +1833,7 @@ async function sftkSeedCfgLoad() {
     }
     const paint = (obj, key, val) => {
       const cell = document.querySelector(`[data-cfg-cell="${CSS.escape(obj + '|' + key)}"]`);
-      if (cell) cell.textContent = val == null ? '?' : Number(val).toLocaleString();
+      if (cell) cell.textContent = val == null ? '?' : Number(val).toLocaleString('en-US');
     };
     const count = async (sess, obj) => {
       const r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
@@ -2255,7 +2255,7 @@ function sftkSeedCfgRender() {
   const targets = [..._seedTargets];
   const n = v => v === undefined ? '<span title="not counted yet">...</span>'
     : v == null ? '<span title="count unavailable - treated as UNKNOWN">?</span>'
-    : Number(v).toLocaleString();
+    : Number(v).toLocaleString('en-US');
   const kindChip = k => k === 'mdt'
     ? '<span class="ds-oc-sub" title="Custom Metadata: deployed as metadata, upsert by name - re-runs update, never duplicate.">metadata</span>'
     : '<span class="ds-oc-sub" title="Custom Setting: real rows. The target\u2019s rows are REPLACED so the target matches the source exactly.">setting</span>';

@@ -116,13 +116,34 @@ export default async function (h) {
     h.log('3. CLI target merged copy:', JSON.stringify(gone));
 
     // 4. the page after the one re-read
-    await waitScanned(h); await h.sleep(2000);
-    h.log('4. TABS:', await dump(h, '.ds-dep-tabs', 500));
-    const still = await h.eval(`[...document.querySelectorAll('.ds-amb-group')].filter(g => g.innerText.includes(${JSON.stringify(NAME)})).length`);
-    const where = [];
-    for (const t of ['same', 'chg', 'ins', 'amb']) {
-      const has = await h.eval(`(() => { const b = document.querySelector('[data-dep-obj=""][data-dep-tab="${t}"]') || document.querySelector('[data-dep-tab="${t}"]'); if (!b) return 'no tab'; b.click(); return (document.querySelector('#dsDepList')?.innerText || '').includes(${JSON.stringify(NAME)}); })()`);
-      await h.sleep(300); where.push(`${t}:${has}`);
+    // WHY (2026-11-15): the tab's list was read in the same tick as the click on the tab — the list is drawn AFTER the
+    // click, so every tab answered with the list of the tab before it (the name 'under 🟡 Changed' while the page showed
+    // it under 🟢 Synced; the product was right). Each tab now gets a moment to draw, and the step waits for what it is
+    // about — the name off ⚠ and under 🟢 Synced — instead of trusting one look. No Refresh is pressed here: the ONE
+    // re-read after the second merge is the product's.
+    const whereNow = async () => {
+      const out = [];
+      for (const t of ['same', 'chg', 'ins', 'amb']) {
+        const has = await h.eval(`(() => { const b = document.querySelector('[data-dep-obj=""][data-dep-tab="${t}"]') || document.querySelector('[data-dep-tab="${t}"]'); if (!b) return 'no tab'; b.click(); return true; })()`);
+        await h.sleep(500);   // the list is drawn after the click, not in it
+        out.push(`${t}:${has === true ? await h.eval(`(document.querySelector('#dsDepList')?.innerText || '').includes(${JSON.stringify(NAME)})`) : has}`);
+      }
+      return out;
+    };
+    let still = 1, where = [], tabsWas = '';
+    const until = Date.now() + 180000;
+    for (;;) {
+      await waitScanned(h); await h.sleep(2000);
+      const tabs = await dump(h, '.ds-dep-tabs', 500);
+      still = await h.eval(`[...document.querySelectorAll('.ds-amb-group')].filter(g => g.innerText.includes(${JSON.stringify(NAME)})).length`);
+      where = await whereNow();
+      if (tabs !== tabsWas) { h.log('4. TABS:', tabs, '| on ⚠:', still, '|', where.join(' ')); tabsWas = tabs; }
+      if ((!still && where.includes('same:true')) || Date.now() > until) break;
+      await h.sleep(3000);
+    }
+    if (where.includes('chg:true')) {
+      await h.eval(`(document.querySelector('[data-dep-obj=""][data-dep-tab="chg"]') || document.querySelector('[data-dep-tab="chg"]'))?.click()`); await h.sleep(600);
+      h.log('4. still under 🟡 Changed — the row says:', (await h.eval(`(() => { const l = document.querySelector('#dsDepList'); const r = l && [...l.querySelectorAll('tr, .ds-dep-row, li')].find(x => x.innerText.includes(${JSON.stringify(NAME)})); return (r || l || document.body).innerText.slice(0, 900); })()`)).split(NL).map(x => x.trim()).filter(Boolean).join(' | '));
     }
     h.log('4. groups still on ⚠:', still, '| where the name is now:', where.join(' '));
     await h.eval(`(document.querySelector('[data-dep-obj=""][data-dep-tab="same"]') || document.querySelector('[data-dep-tab="same"]'))?.click()`); await h.sleep(400);

@@ -24,7 +24,7 @@ const { svDeepScanCallEstimate, svDeepScanBudgetLine } =
 
 // toLocaleString is locale-dependent — build expectations with the same
 // formatter the code uses so the assertions hold on any machine.
-const fmt = v => Number(v).toLocaleString();
+const fmt = v => Number(v).toLocaleString('en-US');
 
 // ════════════════════════════════════════════════════════════════
 // Deploy Readiness — drEstimateReadinessCalls

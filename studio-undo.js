@@ -201,12 +201,12 @@ async function sftkUndoCaptureForRun(opts, log) {
         }
         const n = cnt.totalSize;
         if (n > cap) {
-          out.skipped[o.objType] = `${n.toLocaleString()} rows in ${orgLabel(leg.orgUrl)} — above the ${cap.toLocaleString()}-row restore-point limit`;
-          say('⚠', `📸 ${o.objType}: ${n.toLocaleString()} rows in ${orgLabel(leg.orgUrl)} — above the ${cap.toLocaleString()}-row restore-point limit. This run will NOT be rollback-able for ${o.objType}.`, 'ds-prog-warn');
+          out.skipped[o.objType] = `${n.toLocaleString('en-US')} rows in ${orgLabel(leg.orgUrl)} — above the ${cap.toLocaleString('en-US')}-row restore-point limit`;
+          say('⚠', `📸 ${o.objType}: ${n.toLocaleString('en-US')} rows in ${orgLabel(leg.orgUrl)} — above the ${cap.toLocaleString('en-US')}-row restore-point limit. This run will NOT be rollback-able for ${o.objType}.`, 'ds-prog-warn');
           continue;
         }
         const q = sftkUndoReadQuote(n);
-        say('📸', `Restore point: reading ${n.toLocaleString()} ${o.objType} in ${orgLabel(leg.orgUrl)} (${fields.length ? `${fields.length} fields` : 'Ids only — an insert run cannot overwrite'}, ≈${q.calls} API call(s))…`);
+        say('📸', `Restore point: reading ${n.toLocaleString('en-US')} ${o.objType} in ${orgLabel(leg.orgUrl)} (${fields.length ? `${fields.length} fields` : 'Ids only — an insert run cannot overwrite'}, ≈${q.calls} API call(s))…`);
         const res = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: leg.orgUrl, sid: leg.sid,
           query: sftkUndoSnapshotSoql(o.objType, fields) });
         if (res?.error) {
@@ -221,8 +221,8 @@ async function sftkUndoCaptureForRun(opts, log) {
         }
         const capd = sftkUndoCapture(res.records || [], cap);
         if (capd.truncated) {
-          out.skipped[o.objType] = `${capd.count.toLocaleString()} rows — above the ${cap.toLocaleString()}-row restore-point limit`;
-          say('⚠', `📸 ${o.objType}: ${capd.count.toLocaleString()} rows — above the ${cap.toLocaleString()}-row limit. This run will NOT be rollback-able for ${o.objType}.`, 'ds-prog-warn');
+          out.skipped[o.objType] = `${capd.count.toLocaleString('en-US')} rows — above the ${cap.toLocaleString('en-US')}-row restore-point limit`;
+          say('⚠', `📸 ${o.objType}: ${capd.count.toLocaleString('en-US')} rows — above the ${cap.toLocaleString('en-US')}-row limit. This run will NOT be rollback-able for ${o.objType}.`, 'ds-prog-warn');
           continue;
         }
         out.objects[o.objType] = {
@@ -232,7 +232,7 @@ async function sftkUndoCaptureForRun(opts, log) {
           undeletable: desc.undeletable !== false,
           notCovered,
         };
-        say('✅', `📸 ${o.objType}: restore point saved — ${capd.count.toLocaleString()} record(s)${fields.length ? ` × ${fields.length} field(s)` : ''}`);
+        say('✅', `📸 ${o.objType}: restore point saved — ${capd.count.toLocaleString('en-US')} record(s)${fields.length ? ` × ${fields.length} field(s)` : ''}`);
         if (notCovered.length) say('ℹ️', `📸 ${o.objType}: ${notCovered.length} writable field(s) cannot be captured and will NOT be restored by a rollback — ${notCovered.map(f => `${f.name} (${f.type})`).join(', ')}`, 'ds-prog-warn');
       } catch (e) {
         out.skipped[o.objType] = `restore point failed — ${e?.message || e}`;
@@ -467,7 +467,7 @@ async function sftkUndoBuildPlan(loaded, io) {
           continue;
         }
         const q = sftkUndoReadQuote(n);
-        log('🔍', `Reading ${n.toLocaleString()} ${o.objType} in ${orgLabel(leg.orgUrl)} now (≈${q.calls} API call(s)) to compare with the restore point…`);
+        log('🔍', `Reading ${n.toLocaleString('en-US')} ${o.objType} in ${orgLabel(leg.orgUrl)} now (≈${q.calls} API call(s)) to compare with the restore point…`);
         const res = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: leg.orgUrl, sid: leg.sid,
           query: sftkUndoSnapshotSoql(o.objType, withDates(o.fields)) });
         if (!alive()) return null;
@@ -492,7 +492,7 @@ async function sftkUndoBuildPlan(loaded, io) {
         if (o.objType === 'Contact' && scoped.created.length) {
           const pa = new Set(nowRows.filter(r => r && r.IsPersonAccount === true).map(r => r.Id));
           if (pa.size) { const keep = scoped.created.filter(id => !pa.has(id)); personIds = scoped.created.filter(id => pa.has(id)); personSkipped = personIds.length; scoped.created = keep; }
-          if (personSkipped) log('👤', `Contact: ${personSkipped.toLocaleString()} person-account contact(s) go with their Account — not deleted on their own.`);
+          if (personSkipped) log('👤', `Contact: ${personSkipped.toLocaleString('en-US')} person-account contact(s) go with their Account — not deleted on their own.`);
         }
         const p = sftkUndoPlan(diff);
         // The page names records: the current rows by id (created / kept /
@@ -513,9 +513,9 @@ async function sftkUndoBuildPlan(loaded, io) {
           item.kept = scoped.created.length;
           item.keptIds = scoped.created.slice();
           scoped.created = [];
-          log('⚠', `${o.objType}: ${item.kept.toLocaleString()} created record(s) KEPT — the object could not be described, so what hangs under them is unknown.`, 'ds-prog-warn');
+          log('⚠', `${o.objType}: ${item.kept.toLocaleString('en-US')} created record(s) KEPT — the object could not be described, so what hangs under them is unknown.`, 'ds-prog-warn');
         } else if (scoped.created.length && rels.length) {
-          log('🔎', `Checking what hangs under the ${scoped.created.length.toLocaleString()} ${o.objType} to delete — ${rels.length} child object(s), ≈${rels.length} API call(s)…`);
+          log('🔎', `Checking what hangs under the ${scoped.created.length.toLocaleString('en-US')} ${o.objType} to delete — ${rels.length} child object(s), ≈${rels.length} API call(s)…`);
           const createdSet = new Set(scoped.created);
           const kept = new Set();
           for (const rel of rels) {
@@ -539,7 +539,7 @@ async function sftkUndoBuildPlan(loaded, io) {
             }
             let hit = 0;
             for (const row of (r.records || [])) { const pid = row && row[rel.field]; if (pid && createdSet.has(pid)) { kept.add(pid); hit++; } }
-            if (hit) item.cascadeNotes.push(`${hit.toLocaleString()} ${rel.childSObject}`);
+            if (hit) item.cascadeNotes.push(`${hit.toLocaleString('en-US')} ${rel.childSObject}`);
           }
           if (!alive()) return null;
           item.keptForChildren = kept.size;
@@ -548,17 +548,17 @@ async function sftkUndoBuildPlan(loaded, io) {
             item.kept = kept.size;
             item.keptIds = [...kept];
             scoped.created = scoped.created.filter(id => !kept.has(id));
-            log('⚠', `${o.objType}: ${kept.size.toLocaleString()} created record(s) KEPT — ${item.cascadeUnknown.length
+            log('⚠', `${o.objType}: ${kept.size.toLocaleString('en-US')} created record(s) KEPT — ${item.cascadeUnknown.length
               ? `could not check what hangs under them (${item.cascadeUnknown.join(', ')})`
               : `other records were added under them after the run (${item.cascadeNotes.join(', ')}) and would be deleted with them`}.`, 'ds-prog-warn');
           }
         }
         if (scoped.created.length || scoped.changed.length) anyWork = true;
         plan.push(item);
-        log('📋', `${o.objType}: ${scoped.created.length.toLocaleString()} not in the restore point → delete · ${scoped.changed.length.toLocaleString()} overwritten → restore`
-          + `${scoped.createdLater ? ` · ${scoped.createdLater.toLocaleString()} created after the run → left alone` : ''}`
-          + `${scoped.changedLater ? ` · ${scoped.changedLater.toLocaleString()} edited after the run → left alone` : ''}`
-          + `${p.goneCount ? ` · ${p.goneCount.toLocaleString()} deleted since → not restored here` : ''} · ${p.unchanged.toLocaleString()} untouched`);
+        log('📋', `${o.objType}: ${scoped.created.length.toLocaleString('en-US')} not in the restore point → delete · ${scoped.changed.length.toLocaleString('en-US')} overwritten → restore`
+          + `${scoped.createdLater ? ` · ${scoped.createdLater.toLocaleString('en-US')} created after the run → left alone` : ''}`
+          + `${scoped.changedLater ? ` · ${scoped.changedLater.toLocaleString('en-US')} edited after the run → left alone` : ''}`
+          + `${p.goneCount ? ` · ${p.goneCount.toLocaleString('en-US')} deleted since → not restored here` : ''} · ${p.unchanged.toLocaleString('en-US')} untouched`);
       }
     }
   } catch (e) {
@@ -608,7 +608,7 @@ async function sftkUndoExecute(ctx, picks, io) {
   // disables its only rollback button while the rest of the run's inserts and
   // overwrites are still in the org. Measured against the plan, not the picks.
   const coverage = sftkUndoPickCoverage(plan, work);
-  const leftNote = coverage.left ? ` — ${coverage.left.toLocaleString()} of ${coverage.planned.toLocaleString()} record(s) left in place${coverage.kept ? ` (${coverage.kept.toLocaleString()} kept)` : ''}` : '';
+  const leftNote = coverage.left ? ` — ${coverage.left.toLocaleString('en-US')} of ${coverage.planned.toLocaleString('en-US')} record(s) left in place${coverage.kept ? ` (${coverage.kept.toLocaleString('en-US')} kept)` : ''}` : '';
 
   // The rollback's own History entry — written on success AND on a failure
   // half-way, so what happened is never lost.
@@ -649,7 +649,7 @@ async function sftkUndoExecute(ctx, picks, io) {
       const { leg } = item;
       const permanent = item.undeletable === false;
       if (w.created.length) {
-        log('🗑', `Deleting ${w.created.length.toLocaleString()} ${item.objType} created by the run${w.forced ? ` (${w.forced} of them "delete anyway")` : ''}${permanent ? ' — PERMANENTLY, this object has no Recycle Bin' : ' — to the Recycle Bin'}, ${Math.ceil(w.created.length / SLICE)} call(s) of ${SLICE}…`);
+        log('🗑', `Deleting ${w.created.length.toLocaleString('en-US')} ${item.objType} created by the run${w.forced ? ` (${w.forced} of them "delete anyway")` : ''}${permanent ? ' — PERMANENTLY, this object has no Recycle Bin' : ' — to the Recycle Bin'}, ${Math.ceil(w.created.length / SLICE)} call(s) of ${SLICE}…`);
         progress({ phase: 'fetched', obj: `🗑 ${item.objType}`, count: w.created.length });
         for (let i = 0; i < w.created.length; i += SLICE) {
           const slice = w.created.slice(i, i + SLICE);
@@ -677,11 +677,11 @@ async function sftkUndoExecute(ctx, picks, io) {
           }
           progress({ phase: 'batch', obj: `🗑 ${item.objType}`, done: Math.min(i + SLICE, w.created.length), total: w.created.length, created: r.deleted, failed: r.deleteFailed, okWord: 'deleted' });
         }
-        log(r.deleteFailed ? '⚠' : '✅', `${item.objType}: ${r.deleted.toLocaleString()} deleted${r.deleteFailed ? `, ${r.deleteFailed.toLocaleString()} not confirmed` : ''}`, r.deleteFailed ? 'ds-prog-warn' : '');
+        log(r.deleteFailed ? '⚠' : '✅', `${item.objType}: ${r.deleted.toLocaleString('en-US')} deleted${r.deleteFailed ? `, ${r.deleteFailed.toLocaleString('en-US')} not confirmed` : ''}`, r.deleteFailed ? 'ds-prog-warn' : '');
       }
       if (w.changed.length) {
         const payload = sftkUndoRestorePayload(item.objType, w.changed);
-        log('↩', `Restoring ${payload.length.toLocaleString()} ${item.objType} to their values from the restore point, ${Math.ceil(payload.length / SLICE)} call(s) of ${SLICE}…`);
+        log('↩', `Restoring ${payload.length.toLocaleString('en-US')} ${item.objType} to their values from the restore point, ${Math.ceil(payload.length / SLICE)} call(s) of ${SLICE}…`);
         progress({ phase: 'fetched', obj: `↩ ${item.objType}`, count: payload.length });
         const fieldsOf = new Map(w.changed.map(c => [c.id, c.fields || []]));
         for (let i = 0; i < payload.length; i += SLICE) {
@@ -706,14 +706,14 @@ async function sftkUndoExecute(ctx, picks, io) {
           }
           progress({ phase: 'batch', obj: `↩ ${item.objType}`, done: Math.min(i + SLICE, payload.length), total: payload.length, created: r.restored, failed: r.restoreFailed, okWord: 'restored' });
         }
-        log(r.restoreFailed ? '⚠' : '✅', `${item.objType}: ${r.restored.toLocaleString()} restored${r.restoreFailed ? `, ${r.restoreFailed.toLocaleString()} not confirmed` : ''}`, r.restoreFailed ? 'ds-prog-warn' : '');
+        log(r.restoreFailed ? '⚠' : '✅', `${item.objType}: ${r.restored.toLocaleString('en-US')} restored${r.restoreFailed ? `, ${r.restoreFailed.toLocaleString('en-US')} not confirmed` : ''}`, r.restoreFailed ? 'ds-prog-warn' : '');
       }
       // VERIFY — re-read and compare again, judged on exactly the records
       // the rollback acted on (a restored record now carries a fresh
       // LastModifiedDate, so the "edited after the run" filter must NOT
       // apply to it). Quoted first, like every other read.
       const vq = sftkUndoReadQuote(item.nowCount);
-      log('🔍', `Verifying ${item.objType}: re-reading ≈${item.nowCount.toLocaleString()} rows in ${orgLabel(leg.orgUrl)} (≈${vq.calls} API call(s))…`);
+      log('🔍', `Verifying ${item.objType}: re-reading ≈${item.nowCount.toLocaleString('en-US')} rows in ${orgLabel(leg.orgUrl)} (≈${vq.calls} API call(s))…`);
       try {
         const res = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: leg.orgUrl, sid: leg.sid,
           query: sftkUndoSnapshotSoql(item.objType, withDates(item.fields)) });
@@ -738,11 +738,11 @@ async function sftkUndoExecute(ctx, picks, io) {
     recordActivity?.('transfer');
     await _sftkUndoPersist(siblings);
     const gone = Object.values(results).reduce((n, r) => n + (r.stillGone || 0), 0);
-    const tail = gone ? ` ${gone.toLocaleString()} record(s) the run deleted are still gone — ${Object.values(results).some(r => r.goneHard) ? 'hard-deleted, permanently' : 'in the Recycle Bin; restore them there within 15 days'}.` : '';
+    const tail = gone ? ` ${gone.toLocaleString('en-US')} record(s) the run deleted are still gone — ${Object.values(results).some(r => r.goneHard) ? 'hard-deleted, permanently' : 'in the Recycle Bin; restore them there within 15 days'}.` : '';
     log(status === 'success' ? '🏁' : '⚠', status === 'success'
       ? `Rollback complete — everything it acted on is verified; recorded in History.${tail}`
       : verified === 'success'
-      ? `Rollback verified for everything it acted on, but ${coverage.left.toLocaleString()} of ${coverage.planned.toLocaleString()} record(s) in the plan were not picked${coverage.kept ? ` or were kept (${coverage.kept.toLocaleString()} kept)` : ''} and still hold the run's changes — recorded in History as partial; ↩ Roll back stays available for the rest.${tail}`
+      ? `Rollback verified for everything it acted on, but ${coverage.left.toLocaleString('en-US')} of ${coverage.planned.toLocaleString('en-US')} record(s) in the plan were not picked${coverage.kept ? ` or were kept (${coverage.kept.toLocaleString('en-US')} kept)` : ''} and still hold the run's changes — recorded in History as partial; ↩ Roll back stays available for the rest.${tail}`
       : `Rollback finished with status "${status}" — see the lines above. It is recorded in History; ↩ Roll back stays available to try again once the refusal is sorted.${tail}`, status === 'success' ? '' : 'ds-prog-warn');
     showToast(status === 'success' ? (gone ? '✅ Rollback complete and verified — see the note about deleted records' : '✅ Rollback complete and verified') : `⚠ Rollback ${status} — see the page`, status === 'success' ? 'success' : 'warning', 6000);
     progress({ phase: 'end' });

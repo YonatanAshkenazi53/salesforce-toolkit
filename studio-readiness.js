@@ -1181,7 +1181,7 @@ function drEstimateReadinessCalls(targets, objects, checks) {
 // org's estimated calls EXCEED its remaining budget (equal is not over);
 // this line informs, it never blocks.
 function drReadinessBudgetLine(est, budgets) {
-  const fmt = v => Number(v).toLocaleString();
+  const fmt = v => Number(v).toLocaleString('en-US');
   const e = est || {};
   const total = Number.isFinite(e.total) ? e.total : 0;
   const parts = [

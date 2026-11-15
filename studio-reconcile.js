@@ -1178,7 +1178,7 @@ async function renderReconcile() {
       && !(cs.changed || []).length && !(cs.onlyInTarget || []).length;
     const kidEmptyCls = kidAllEmpty ? ' ds-rec-cols-hide' : '';
     const _pa = cs.personContacts;
-    const kidEmptyStrip = kidAllEmpty ? `<div class="ds-rec-card ds-rec-card-good ds-rec-card-tight"><span class="ds-rec-card-ico">✓</span><div><b>Nothing to do for ${esc(childObj)}</b> — no records to insert, relink, update or delete under these parents${(cs.identical || []).length ? ` · ${(cs.identical || []).length.toLocaleString()} synced (listed below)` : ''}.${_pa && (_pa.src || _pa.tgt) ? ` ${esc(sftkPaContactsLine(_pa, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}` : ''}</div></div>` : '';
+    const kidEmptyStrip = kidAllEmpty ? `<div class="ds-rec-card ds-rec-card-good ds-rec-card-tight"><span class="ds-rec-card-ico">✓</span><div><b>Nothing to do for ${esc(childObj)}</b> — no records to insert, relink, update or delete under these parents${(cs.identical || []).length ? ` · ${(cs.identical || []).length.toLocaleString('en-US')} synced (listed below)` : ''}.${_pa && (_pa.src || _pa.tgt) ? ` ${esc(sftkPaContactsLine(_pa, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}` : ''}</div></div>` : '';
 
     return `
     <div class="ds-rec-child-body">
@@ -1497,7 +1497,7 @@ async function renderReconcile() {
       <label class="ds-rec-delmode" title="How records are written for THIS pair's actions. Auto: synchronous Collections below the threshold, one async Bulk API 2.0 job at or above it. Synchronous: always Collections — slower at scale, every error immediate and per-record. Async: always a Bulk job. Saved on the deployment — the Run page and fan-out use the same setting.">
         <span>Engine:</span>
         <select id="dsRecApiMode" class="ds-select ds-select-sm">
-          <option value="auto" ${(p.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk at ≥ ${(Number(p.bulkThreshold) > 0 ? Number(p.bulkThreshold) : 2000).toLocaleString()}</option>
+          <option value="auto" ${(p.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk at ≥ ${(Number(p.bulkThreshold) > 0 ? Number(p.bulkThreshold) : 2000).toLocaleString('en-US')}</option>
           <option value="sync" ${p.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections</option>
           <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
         </select>
@@ -2077,7 +2077,7 @@ function openMatchReview(p) {
         ${made}
       </div>
       <div class="ds-modal-footer ds-mm-foot">
-        <span class="ds-dep-muted">🧠 ${memN.toLocaleString()} pair(s) remembered for ${esc(tgtL)}</span>
+        <span class="ds-dep-muted">🧠 ${memN.toLocaleString('en-US')} pair(s) remembered for ${esc(tgtL)}</span>
         <button class="ds-btn ds-btn-xs" id="dsMmClearMem" ${memN ? '' : 'disabled'} title="Forget every remembered pair for this target org — those records match by name again on the next scan.">Forget them all…</button>
         <span class="ds-dep-sp"></span>
         <button class="ds-btn ds-btn-primary" id="dsMmClose">Done</button>
@@ -2333,7 +2333,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     const a = (sum && sum.probe) || {};
     const t = probeAgg[obj] = probeAgg[obj] || { probed: 0, wouldWrite: 0, refused: 0, cascade: 0, unreached: 0, earlier: 0, sampledOf: 0 };
     for (const k of Object.keys(t)) t[k] += Number(a[k]) || 0;
-    return `${obj}: ${(a.wouldWrite || 0).toLocaleString()} of ${(a.probed || 0).toLocaleString()} would be written${a.refused ? `, ${a.refused} refused` : ''}${a.cascade ? `, ${a.cascade} not checked (their parent would be refused)` : ''}${a.earlier ? `, ${a.earlier} not checked (they point at a record an earlier step creates)` : ''}${a.unreached ? `, ${a.unreached} not reached` : ''}${a.sampledOf ? ` — a sample: the first ${a.probed} of ${a.sampledOf.toLocaleString()}` : ''}`;
+    return `${obj}: ${(a.wouldWrite || 0).toLocaleString('en-US')} of ${(a.probed || 0).toLocaleString('en-US')} would be written${a.refused ? `, ${a.refused} refused` : ''}${a.cascade ? `, ${a.cascade} not checked (their parent would be refused)` : ''}${a.earlier ? `, ${a.earlier} not checked (they point at a record an earlier step creates)` : ''}${a.unreached ? `, ${a.unreached} not reached` : ''}${a.sampledOf ? ` — a sample: the first ${a.probed} of ${a.sampledOf.toLocaleString('en-US')}` : ''}`;
   };
   const probeStatuses = [];   // one engine verdict per call
   // ⛔ RUN GATE (user 2026-08-10: "the recommendation to sync parents first
@@ -3602,7 +3602,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       const entry = _history[_history.length - 1];
       if (entry && entry.id === runId) { if (saved) entry.fieldChangesStored = fc.length; else entry.fieldChangesNotStored = fc.length; }
       // said at once, not only in a later export (owner 2026-11-13: "what will the user see if he had no storage?")
-      if (!saved && !(typeof _settings !== 'undefined' && _settings && _settings.countsOnly)) log('⚠', `The before and after of ${fc.length.toLocaleString()} updated record(s) could not be saved in this browser (no storage left). The run itself is not affected and can still be rolled back; the History export will list the first 200 updated records per object only. Free space: History → 🧹 Clear cached org data, or a shorter "Keep N days".`, 'ds-prog-warn');
+      if (!saved && !(typeof _settings !== 'undefined' && _settings && _settings.countsOnly)) log('⚠', `The before and after of ${fc.length.toLocaleString('en-US')} updated record(s) could not be saved in this browser (no storage left). The run itself is not affected and can still be rolled back; the History export will list the first 200 updated records per object only. Free space: History → 🧹 Clear cached org data, or a shorter "Keep N days".`, 'ds-prog-warn');
     }
   }
   await storageSaveHistory();
@@ -3611,8 +3611,8 @@ async function runReconcile(profile, objType, buckets, opts) {
     const pt = probeTotals;
     const verdict = !pt.probed ? 'nothing was checked — no insert is selected'
       : (pt.refused || pt.cascade || pt.unreached)
-        ? `${pt.would.toLocaleString()} of ${pt.probed.toLocaleString()} would be written — ${pt.refused ? `${pt.refused} refused` : ''}${pt.cascade ? `${pt.refused ? ', ' : ''}${pt.cascade} not checked (their parent would be refused)` : ''}${pt.unreached ? `${(pt.refused || pt.cascade) ? ', ' : ''}${pt.unreached} not reached` : ''}`
-        : `every one of the ${pt.probed.toLocaleString()} record(s) would be written`;
+        ? `${pt.would.toLocaleString('en-US')} of ${pt.probed.toLocaleString('en-US')} would be written — ${pt.refused ? `${pt.refused} refused` : ''}${pt.cascade ? `${pt.refused ? ', ' : ''}${pt.cascade} not checked (their parent would be refused)` : ''}${pt.unreached ? `${(pt.refused || pt.cascade) ? ', ' : ''}${pt.unreached} not reached` : ''}`
+        : `every one of the ${pt.probed.toLocaleString('en-US')} record(s) would be written`;
     log(runStatus === 'success' ? '✅' : runStatus === 'partial' ? '⚠' : '❌', `🧪 Dry run complete: ${verdict}. Nothing was written${stoppedWhy ? ' — stopped before every object was checked' : ''}.`, runStatus === 'success' ? '' : 'ds-prog-err');
     _recRunVerdictTop(prog, runStatus, `🧪 Dry run: ${verdict}. Nothing was written.`);
     window._sftkRunActive = false;
@@ -3954,8 +3954,8 @@ async function sftkOpenIdentityModal(p, scan) {
       <div class="ds-dep-tblwrap"><table class="ds-dep-plan"><thead><tr><th>Object</th><th>${esc(srcL)} (source)</th><th>${esc(tgtL)} (target)</th><th class="ds-dep-num">Matched pairs</th><th></th></tr></thead><tbody>
       ${st.objects.map(o => { const s = scanOf(o); const pairs = s ? sftkIdBackfillPairs(s).length : null;
         return `<tr><td><span style="padding-left:${o.depth * 16}px">${o.depth ? '↳ ' : ''}<b>${esc(o.obj)}</b></span>${o.customizable === false ? ' <span class="ds-lkp-hint" title="Salesforce does not allow custom fields on this object, so it cannot carry an identity.">cannot take custom fields</span>' : ''}</td>
-          <td>${pill(o.src)}</td><td>${pill(o.tgt)}</td><td class="ds-dep-num">${pairs == null ? '<span class="ds-dep-muted">not scanned</span>' : pairs.toLocaleString()}</td>
-          <td>${o.tgt === 'yes' && pairs ? `<button class="ds-btn ds-btn-xs" data-id-stamp="${esc(o.pathKey)}" title="Write each matched source record's Id onto its target record — do this only when the pairs are right">🪪 Stamp ${pairs.toLocaleString()}</button>` : ''}</td></tr>`; }).join('')}
+          <td>${pill(o.src)}</td><td>${pill(o.tgt)}</td><td class="ds-dep-num">${pairs == null ? '<span class="ds-dep-muted">not scanned</span>' : pairs.toLocaleString('en-US')}</td>
+          <td>${o.tgt === 'yes' && pairs ? `<button class="ds-btn ds-btn-xs" data-id-stamp="${esc(o.pathKey)}" title="Write each matched source record's Id onto its target record — do this only when the pairs are right">🪪 Stamp ${pairs.toLocaleString('en-US')}</button>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div>
       <div class="ds-rec-card-line" style="margin-top:10px"><b>Create the field</b> — a Text(18) External ID field, unique and case-sensitive, plus the permission set <code>${esc(sftkIdPermSetName())}</code> assigned to you (a field without access is invisible even to an admin). Nothing else in the org changes. Production asks you to type its name first.</div>
       <div style="display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-top:6px">
@@ -4812,7 +4812,7 @@ function sftkRecDupsHtml(scan, p, objLabel) {
   // Match review only has something to do when BOTH unmatched buckets hold rows
   // (user 2026-09-21: followed the advice, the dialog was empty).
   const unS = (scan.missingInTarget || []).length, unT = (scan.onlyInTarget || []).length;
-  const n = ((scan.dupKeys.keys || []).length || ex.length).toLocaleString();
+  const n = ((scan.dupKeys.keys || []).length || ex.length).toLocaleString('en-US');
   // one line, then the copies and the way out under a fold (user 2026-10-25: "make this tab more readable and
   // easier to understand" / "here we don't offer to merge them")
   return `<div class="ds-rec-dups">
@@ -4824,7 +4824,7 @@ function sftkRecDupsHtml(scan, p, objLabel) {
           <li><b>Copies of the same record? 🔀 Merge them.</b> Under ⚠ Needs a decision below, every such name offers a merge: the copies in ${esc(orgLabel(p.sourceOrg))}, in ${esc(orgLabel(p.targetOrg))}, or both sides — you choose the record that stays and the values it keeps. One of them junk? Delete or rename it, then 🔄 Refresh state.</li>
           <li><b>Different records that share a name? Make the key tell them apart.</b> Add a field to the key — most specific first matches each record by the fields it has (Name + account number, Name + billing city). ${saved ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(p.id)}" title="Opens this deployment in the builder — Pick Records → Matching">✏ Change the match key</button>` : '<span class="ds-lkp-hint">Save this pair as a deployment to change its match key.</span>'}</li>
           ${unS && unT
-            ? `<li><b>Or pair them by hand.</b> <button class="ds-btn ds-btn-xs" data-rec-dupfix="review" title="Pick, for each unmatched source record, the target record it really is — remembered for this org pair">🔗 Match review</button> pairs the ${unS.toLocaleString()} unmatched source record(s) with the ${unT.toLocaleString()} unmatched target record(s) — you say which is which.</li>`
+            ? `<li><b>Or pair them by hand.</b> <button class="ds-btn ds-btn-xs" data-rec-dupfix="review" title="Pick, for each unmatched source record, the target record it really is — remembered for this org pair">🔗 Match review</button> pairs the ${unS.toLocaleString('en-US')} unmatched source record(s) with the ${unT.toLocaleString('en-US')} unmatched target record(s) — you say which is which.</li>`
             : `<li><b>Pairing by hand is not possible here:</b> every copy already got a partner by name, in whatever order Salesforce returned them — the coin flip itself. Use step 1 or 2.</li>`}
           <li><b>Then make it stick.</b> Once the pairs are right, <button class="ds-btn ds-btn-xs" data-rec-dupfix="stamp" title="Writes each source record's Id into SFTK_ID__c on its matched target record — future scans match on that, whatever the names are">🪪 Stamp identity</button> writes each source record’s Id onto its target record, so later scans match on that and never on the name again. <i>Do this last</i> — stamping while copies are still ambiguous would cement a coin flip.</li>
         </ol>
@@ -4876,7 +4876,7 @@ function sftkEngineNote(p) {
   const thr = (p && Number(p.bulkThreshold) > 0) ? Number(p.bulkThreshold) : 2000;
   if (mode === 'bulk' && bypass) return { kind: 'warn', text: 'Bypass is chosen, and Bulk API 2.0 cannot bypass duplicate rules — this deployment is written through synchronous Collections calls instead, so batch size and threads apply.' };
   if (mode === 'bulk') return { kind: 'info', text: 'Bulk API 2.0 runs the target’s duplicate rules and cannot bypass them: a record a rule blocks is refused and named. Choosing Bypass moves the deployment to Collections calls.' };
-  if (mode === 'auto' && bypass) return { kind: 'info', text: `Bypass keeps every object on Collections calls, also at or above ${thr.toLocaleString()} records — Bulk API 2.0 cannot bypass duplicate rules.` };
+  if (mode === 'auto' && bypass) return { kind: 'info', text: `Bypass keeps every object on Collections calls, also at or above ${thr.toLocaleString('en-US')} records — Bulk API 2.0 cannot bypass duplicate rules.` };
   return null;
 }
 

@@ -387,7 +387,7 @@ describe('stored values — the wiring keeps the laws', () => {
   const run = FC.slice(FC.indexOf('async function _copyRun() {'), FC.indexOf("// 🔑 Copy the old field's access to the replacement field."));
   it('nothing is read until the user asks, and the cost is on the button', () => {
     expect(FC).toContain("eid('fcCopyCompare').addEventListener('click', _copyCompare);");
-    expect(FC).toContain('📦 Compare the two fields${calls ? ` (≈${calls.toLocaleString()} API call${calls === 1 ? \'\' : \'s\'})` : \'\'}');
+    expect(FC).toContain('📦 Compare the two fields${calls ? ` (≈${calls.toLocaleString(\'en-US\')} API call${calls === 1 ? \'\' : \'s\'})` : \'\'}');
   });
   it('overwriting an existing value is never the default', () => {
     expect(FC).toContain('overwrite: false, plan: null, result: null };');

@@ -5,7 +5,8 @@
 //   STEP=access      🔑 copy the old field's access to the new field
 //   STEP=flow        ⇄ Replace on a flow (FLOW=<label>, default "SFTK FC Test Flow 2")
 //   STEP=flowall     the "… in all N Flows" button: one confirmation per FLOW, however many versions are listed
-//   STEP=every       "Everything at once": ⇄ Replace all N (SWAP=0: ✂ Remove all N); CANCEL_AT=<n> cancels the n-th dialog (the walk must stop)
+//   STEP=every       "Everything at once": ⇄ Replace all N (SWAP=0: ✂ Remove all N); CANCEL_AT=<n> cancels the n-th dialog (the walk must stop);
+//                    SCOPE=all|must answers "which ones?" (default all: also the 👀 ones that only might break)
 //   STEP=layout      ⇄ Replace on the first layout row
 //   STEP=page        ⇄ Replace on the first Lightning page row
 //   STEP=report      ⇄ Replace on the first report row
@@ -135,6 +136,10 @@ export default async function (h) {
     return;
   }
   if (step === 'rptscan') {
+    // WHY (2026-11-15): the report sweep moved into the "Look further than the index" fold, which starts FOLDED —
+    // innerText of a folded <details> is empty, so the run logged an empty panel and clicked a button nobody could see
+    h.log('further fold:', await h.eval(`(() => { const d = document.querySelector('details.fc-fold[data-fold="further"]'); if (!d) return 'no fold'; const was = d.open; d.open = true; return was ? 'already open' : 'opened'; })()`));
+    await h.waitFor("!!document.querySelector('#fcRptCount')", 30000, 300);
     h.log('REPORT PANEL:', await dump(h, '#fcRptScan', 500));
     await h.eval(`document.querySelector('#fcRptCount').click()`);
     await h.waitFor("!!document.querySelector('#fcRptGo') || /no reports|could not be listed/.test(document.querySelector('#fcRptScan')?.innerText || '')", 120000, 500);
@@ -158,6 +163,14 @@ export default async function (h) {
     h.log('everything box:', await dump(h, '#fcFixEvery', 400));
     if (!(await h.eval(`!!document.querySelector(${JSON.stringify(sel)})`))) { h.log('no such button'); return; }
     await h.eval(`document.querySelector(${JSON.stringify(sel)}).click()`);
+    // WHY (2026-11-15): "Everything at once" now asks WHICH ones first (the 🔒 that block the delete, or also the 👀
+    // that might break) when the list holds both. Unanswered, the walk never started: 0 dialogs, exit 0, nothing done.
+    const asked = await h.waitFor("!!document.querySelector('#fcScopeAll') || !!document.querySelector('#sftkConfirmGo')", 25000, 300).then(() => h.eval(`!!document.querySelector('#fcScopeAll')`)).catch(() => false);
+    if (asked) {
+      const want = (process.env.SCOPE || 'all').toLowerCase() === 'must' ? '#fcScopeMust' : '#fcScopeAll';
+      h.log('SCOPE DIALOG:', (await h.eval(`(document.querySelector('#modalBox')?.innerText || '')`)).split(NL).map(x => x.trim()).filter(Boolean).join(' | ').slice(0, 700));
+      h.log('scope answered:', await h.eval(`(() => { const b = document.querySelector(${JSON.stringify(want)}); if (!b || b.disabled) return 'button off: ' + ${JSON.stringify(want)}; const t = b.textContent.trim(); b.click(); return t; })()`));
+    } else h.log('scope dialog: not asked (one kind of item only)');
     const cancelAt = Number(process.env.CANCEL_AT) || 0;
     let dialogs = 0;
     for (let i = 0; i < 20; i++) {
@@ -175,6 +188,7 @@ export default async function (h) {
       await h.sleep(1500);
     }
     h.log('dialogs shown:', dialogs);
+    if (!dialogs) throw new Error('"Everything at once" opened no confirmation — the walk never started');
     h.log('DONE:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-item-fixed .fc-item-ok')].map(e => e.innerText.slice(0, 110))`)));
     h.log('still open:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-fix-pair')].map(e => e.dataset.type + ':' + e.dataset.name)`)));
     h.log('INLINE ERRORS:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-item-err')].map(e => e.innerText.slice(0, 300))`)));

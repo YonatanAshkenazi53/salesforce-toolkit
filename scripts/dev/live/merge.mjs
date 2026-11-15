@@ -34,12 +34,12 @@ export default async function (h) {
   if (!id) throw new Error('fixture profile missing');
 
   const before = cli('npc', `SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = '${NAME}' ORDER BY CreatedDate`);
-  h.log('0. CLI trailheads5 before:', JSON.stringify(before.map(r => `${r.Id}:${r.BillingCity}/${r.AnnualRevenue}`)));
+  h.log('0. CLI npc before:', JSON.stringify(before.map(r => `${r.Id}:${r.BillingCity}/${r.AnnualRevenue}`)));
   if (before.length !== 2) throw new Error(`the fixture pair is not there (${before.length} records) — seed-source.apex / restoreDuplicateName first`);
   const haifa = before.find(r => r.BillingCity === 'Haifa') || before[0];
   const eilat = before.find(r => r !== haifa);
   const tgtBefore = cli('npc2', `SELECT Id, BillingCity FROM Account WHERE Name = '${NAME}'`);
-  h.log('0. CLI trailheads4 before:', tgtBefore.length, 'record(s)');
+  h.log('0. CLI npc2 before:', tgtBefore.length, 'record(s)');
 
   let survivorId = null;
   try {
@@ -98,13 +98,13 @@ export default async function (h) {
 
     // 4. the org
     const after = cli('npc', `SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = '${NAME}'`);
-    h.log('4. CLI trailheads5 after:', JSON.stringify(after.map(r => `${r.Id}:${r.BillingCity}/${r.AnnualRevenue}`)));
+    h.log('4. CLI npc after:', JSON.stringify(after.map(r => `${r.Id}:${r.BillingCity}/${r.AnnualRevenue}`)));
     if (after.length !== 1 || after[0].Id !== haifa.Id || after[0].BillingCity !== 'Eilat' || Number(after[0].AnnualRevenue) !== 7) throw new Error('the org does not show one record with the chosen values (city from the other copy, revenue typed)');
     const gone = cli('npc', `SELECT Id, IsDeleted, MasterRecordId FROM Account WHERE Id = '${eilat.Id}'`, true);
     h.log('4. CLI the merged copy:', JSON.stringify(gone));
     if (!gone[0] || !gone[0].IsDeleted || gone[0].MasterRecordId !== haifa.Id) throw new Error('the copy is not a merged (deleted) record pointing at the record that stayed');
     const tgtAfter = cli('npc2', `SELECT Id FROM Account WHERE Name = '${NAME}'`);
-    h.log('4. CLI trailheads4 after:', tgtAfter.length, 'record(s) —', tgtAfter.length === tgtBefore.length ? 'unchanged' : 'CHANGED');
+    h.log('4. CLI npc2 after:', tgtAfter.length, 'record(s) —', tgtAfter.length === tgtBefore.length ? 'unchanged' : 'CHANGED');
 
     // 5. the page after the re-read
     await waitScanned(h); await h.sleep(2000);

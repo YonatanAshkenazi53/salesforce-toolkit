@@ -79,8 +79,12 @@ export default async function (h) {
     await h.sleep(2500);
   }
   await h.waitFor("document.getElementById('progressPanel').style.display === 'none'", 300000, 1000).catch(() => {});
-  await h.sleep(2000);
-  h.log('3. result:', await dialogText(h));
+  // WHY (2026-11-15): a clean delete no longer ends in a dialog — the Flows page puts a result line at the top of
+  // the list (.result-toast, 12 s); only a run with refusals opens a dialog. Read whichever one is shown.
+  await h.waitFor("!!document.querySelector('#flowList .result-toast') || !!(document.querySelector('.sftk-cf') && document.querySelector('.sftk-cf').offsetParent)", 20000, 300).catch(() => {});
+  const result3 = (await h.eval(`(document.querySelector('#flowList .result-toast')?.innerText || '').split(String.fromCharCode(10)).join(' ').trim()`)) || await dialogText(h);
+  h.log('3. result:', result3 || '(nothing shown)');
+  if (!/1 flow version deleted successfully/.test(result3)) throw new Error('the page did not say the version was deleted: ' + (result3 || 'no result line, no dialog'));
   const gone = !versions().some(v => v.Id === withInt.Id);
   const intLeft = interviewsOf([withInt.Id]).length;
   h.log(`3. CLI: version ${gone ? 'deleted ✓' : 'STILL THERE ❌'} · its interviews left: ${intLeft}`);

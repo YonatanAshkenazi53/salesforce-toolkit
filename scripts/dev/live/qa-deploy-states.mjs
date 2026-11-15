@@ -6,8 +6,9 @@
 //   5. the org picker folds itself once the pair is set and both orgs are open
 // Screenshots: dist/qa/shots/deploy-*.png
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 const SHOTS = 'dist/qa/shots';
-const SRC = 'https://trailheads5.my.salesforce.com', TGT = 'https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com';
+const SRC = orgUrl('npc'), TGT = orgUrl('npc2');
 const waitScanned = h => h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000);
 const folds = h => h.eval(`JSON.stringify([...document.querySelectorAll('details.ds-dep-fold[data-fold]')].map(d => d.dataset.fold + (d.open ? ':open' : ':folded')))`);
 const checks = [];
@@ -32,7 +33,7 @@ export default async function (h) {
   const info1 = await h.eval(`(document.querySelector('.ds-dep-info')?.innerText || document.querySelector('.ds-dep-page')?.innerText || '').slice(0, 600)`);
   h.log('1. one org closed:', info1.replace(/\s+/g, ' ').slice(0, 400));
   // nothing read yet → the picker card says which org is closed; once read, the warning moves into About
-  check(h, '1. the page says which org is closed', /not open|Only trailheads5 is open/.test(info1), '');
+  check(h, '1. the page says which org is closed', /not open|Only .+ is open/.test(info1), '');
   await h.shot(`${SHOTS}/deploy-1-one-org-closed.png`);
 
   // 2. both open, a parent object missing

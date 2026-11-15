@@ -30,7 +30,7 @@ const ENTITY_CHUNK = 200;  // LP_ENTITY_CHUNK
 const CHUNKS = { pageChunk: PAGE_CHUNK, descChunk: DESC_CHUNK, entityChunk: ENTITY_CHUNK };
 
 // Locale-proof expected number rendering — the formatter uses toLocaleString.
-const fmt = n => Number(n).toLocaleString();
+const fmt = n => Number(n).toLocaleString('en-US');
 
 // ══════════════════════════════════════════════════════════════
 describe('lpAssignmentsScanPlan — the "Who sees what?" estimator', () => {

@@ -10,9 +10,10 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { removeVolume } from '../video/fixture.mjs';
+import { orgUrl, orgKey } from './_orgs.mjs';   // the orgs by sf alias — the trailheads trials are gone (2026-11-15)
 const NAME = 'QA bulk volume';
 const WHERE = "Name LIKE 'SFTK VOL Account 007%'";
-const SRC = 'https://trailheads5.my.salesforce.com', TGT = 'https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com';
+const SRC = orgUrl('npc'), TGT = orgUrl('npc2');
 const count = () => JSON.parse(execFileSync('sf', ['data', 'query', '-o', 'npc2', '--json', '-q', `"SELECT COUNT() FROM Account WHERE ${WHERE}"`], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })).result.totalSize;
 const waitScanned = h => h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000);
 

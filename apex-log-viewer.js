@@ -77,7 +77,7 @@
 
   function _logMoreBar(shown, total) {
     return `<div class="adbg-log-more" id="alvLogMore">` +
-           `Showing ${shown.toLocaleString()} of ${total.toLocaleString()} lines — scroll to load more` +
+           `Showing ${shown.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} lines — scroll to load more` +
            `</div>`;
   }
 
@@ -106,7 +106,7 @@
     if (moreEl) {
       if (st.shown >= st.lines.length) moreEl.remove();
       else moreEl.textContent =
-        `Showing ${st.shown.toLocaleString()} of ${st.lines.length.toLocaleString()} lines — scroll to load more`;
+        `Showing ${st.shown.toLocaleString('en-US')} of ${st.lines.length.toLocaleString('en-US')} lines — scroll to load more`;
     }
   }
 
@@ -136,7 +136,7 @@
       return;
     }
     if (matches >= FILTER_CAP) {
-      html += `<div class="adbg-log-more">First ${FILTER_CAP.toLocaleString()} matches shown — narrow your filter.</div>`;
+      html += `<div class="adbg-log-more">First ${FILTER_CAP.toLocaleString('en-US')} matches shown — narrow your filter.</div>`;
     }
     view.innerHTML = html;
   }

@@ -22,6 +22,9 @@ export function restoreFieldCleanerFixture(alias = 'npc', log = () => {}) {
   step('field access (permission set)', () => deploy(join(root, 'base'), 'force-app/main/default/permissionsets'));
   step('layout + Lightning page', () => deploy(join(root, 'surfaces'), 'force-app'));
   step('flow 2', () => deploy(join(root, 'flow2'), 'force-app'));
+  // the custom report type too (2026-11-15): "Replace all" now walks it (its column moves to the replacement field),
+  // and nothing put it back — the next run found four items where the fixture has five
+  step('report type', () => deploy(join(root, 'reporttype'), 'force-app'));
   const flows = join(root, 'base', 'force-app', 'main', 'default', 'flows');
   const file = join(flows, 'SFTK_FC_Test_Flow.flow-meta.xml');
   try {

@@ -178,12 +178,27 @@ function sftkMergeCoerce(type, text) {
   const t = String(type || ''), s = String(text == null ? '' : text).trim();
   if (s === '') return { ok: true, value: null };
   if (t === 'boolean') { if (/^(true|yes|1)$/i.test(s)) return { ok: true, value: true }; if (/^(false|no|0)$/i.test(s)) return { ok: true, value: false }; return { ok: false, error: 'true or false' }; }
-  if (['double', 'currency', 'int', 'percent', 'long'].includes(t)) {
+  if (t === 'int' || t === 'long') {
+    // A whole-number field takes an optional minus sign and digits, nothing else (owner 2026-11-15): 7.9 was
+    // cut to 7 and 1e3 / 1,234 were rewritten, each passed as ok, so a number the user never typed reached
+    // the org. A dot, a comma, grouping spaces, a plus sign or an exponent is refused with the format to use.
+    // The sentence names the minus sign (review 2026-11-15): +7 and a typographic minus pasted from a document
+    // got "digits only" and the user was not told what to change.
+    if (!/^-?\d+$/.test(s)) return { ok: false, error: 'a whole number: digits only, with - in front for a negative (1234 or -1234)' };
+    // The limit is said as the number itself (review 2026-11-15): "at most 15 digits" was untrue, a 16-digit
+    // number up to 2^53-1 passed. An int field is 32-bit in Salesforce, so 3000000000 is refused here, before
+    // the dialog closes, and not by the org after the confirmation. For long, past 2^53 a JS number no longer
+    // holds every digit, so the value written would differ from the typed one.
+    const n = Number(s), max = t === 'int' ? 2147483647 : Number.MAX_SAFE_INTEGER, min = t === 'int' ? -2147483648 : -Number.MAX_SAFE_INTEGER;
+    if (!(n >= min && n <= max)) return { ok: false, error: `a whole number between ${min} and ${max}` };
+    return { ok: true, value: n === 0 ? 0 : n };   // '-0' is written as 0
+  }
+  if (['double', 'currency', 'percent'].includes(t)) {
     // A comma is removed only where it groups thousands (1,234.56 / -12,000). Any other comma is refused
     // (2026-11-14): stripping every comma turned a decimal comma (1,5 / 12,5 / 1.234,56) into 15 / 125 /
     // 1.23456 and passed it as ok, so the wrong number reached the org. Saying so beats guessing a locale.
     if (s.includes(',') && !/^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) return { ok: false, error: 'a number (use a dot for decimals, e.g. 1234.56)' };
-    const n = Number(s.replace(/,/g, '')); if (!Number.isFinite(n)) return { ok: false, error: 'a number' }; return { ok: true, value: t === 'int' || t === 'long' ? Math.trunc(n) : n };
+    const n = Number(s.replace(/,/g, '')); if (!Number.isFinite(n)) return { ok: false, error: 'a number' }; return { ok: true, value: n };
   }
   if (t === 'date') { if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { ok: false, error: 'a date as YYYY-MM-DD' }; return { ok: true, value: s }; }
   if (t === 'datetime') {

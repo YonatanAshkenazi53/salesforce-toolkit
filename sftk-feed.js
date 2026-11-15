@@ -50,10 +50,10 @@ function sftkFeedCounts(e) {
   }
   const parts = [];
   const isRb = e.kind === 'rollback';
-  if (ins) parts.push(`${ins.toLocaleString()} ${isRb ? 'restored' : 'inserted'}`);
-  if (upd) parts.push(`${upd.toLocaleString()} ${isRb ? 'restored' : 'updated'}`);
-  if (del) parts.push(`${del.toLocaleString()} deleted`);
-  if (fail) parts.push(`${fail.toLocaleString()} failed`);
+  if (ins) parts.push(`${ins.toLocaleString('en-US')} ${isRb ? 'restored' : 'inserted'}`);
+  if (upd) parts.push(`${upd.toLocaleString('en-US')} ${isRb ? 'restored' : 'updated'}`);
+  if (del) parts.push(`${del.toLocaleString('en-US')} deleted`);
+  if (fail) parts.push(`${fail.toLocaleString('en-US')} failed`);
   return parts.join(' · ') || 'nothing written';
 }
 
@@ -155,7 +155,7 @@ function sftkFeedTime(iso) {
     const g = sftkFeedGroups(all, Date.now(), filter);
     host.innerHTML = g.n ? g.days.map(dayHtml).join('')
       : `<div class="sftk-feed-empty">${all.length ? 'Nothing matches.' : 'Nothing yet — every change the Toolkit or Data Studio makes is listed here, with the time it was made.'}</div>`;
-    const n = document.getElementById('sftkFeedCount'); if (n) n.textContent = `${g.n.toLocaleString()} of ${all.length.toLocaleString()}`;
+    const n = document.getElementById('sftkFeedCount'); if (n) n.textContent = `${g.n.toLocaleString('en-US')} of ${all.length.toLocaleString('en-US')}`;
     host.querySelectorAll('[data-feed-tool]').forEach(b => b.addEventListener('click', () => { if (typeof window.sftkToolHistoryOpen === 'function') window.sftkToolHistoryOpen(b.dataset.feedTool); }));
     host.querySelectorAll('[data-feed-studio]').forEach(b => b.addEventListener('click', () => { if (typeof closeModal === 'function') closeModal(); if (typeof navigateToView === 'function') navigateToView('history'); else location.hash = '#/history'; }));
     // the Toolkit: ↩ Undo asks in the page's one dialog, so the feed steps aside and comes back after

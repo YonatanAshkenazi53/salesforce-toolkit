@@ -71,6 +71,11 @@ describe('Studio topbar never pushes a control off the right edge (QA sizes 2026
     expect(m).not.toMatch(/kbd/);
     expect(HTML).toMatch(/<kbd>Ctrl<\/kbd><kbd>K<\/kbd>\s*<span>Quick nav<\/span>/);
   });
+  // 2026-11-15: the re-shots at 1093 / 911 / 853 CSS px had no open-orgs chip — an older rule hid its CONTAINER below 1100 px
+  it('the open-orgs chip container is not hidden at laptop widths either (only below 800 px)', () => {
+    for (const w of [1320, 1100, 960]) expect(mediaBody(w)).not.toMatch(/\.ds-pair-ctl/);
+    expect(mediaBody(800)).toMatch(/\.ds-pair-ctl\s*\{\s*display:\s*none/);
+  });
   it('the Licence, Activity and open-orgs controls are never hidden by a width rule', () => {
     for (const w of [1320, 1100, 960]) {
       expect(mediaBody(w)).not.toMatch(/sftkTermsBtn|sftkFeedBtn|\.ds-pair-chip\s*[,{]/);

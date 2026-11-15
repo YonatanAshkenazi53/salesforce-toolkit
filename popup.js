@@ -3489,8 +3489,8 @@ function buildDepScanOffer() {
       return;
     }
     const over = plan.calls > b.remaining;
-    meter.textContent = `Org API budget: ${b.remaining.toLocaleString()} of ${b.max.toLocaleString()} daily calls remaining`
-      + (over ? ` — ⚠ this scan's ${plan.calls.toLocaleString()} call(s) may exhaust it.` : '.');
+    meter.textContent = `Org API budget: ${b.remaining.toLocaleString('en-US')} of ${b.max.toLocaleString('en-US')} daily calls remaining`
+      + (over ? ` — ⚠ this scan's ${plan.calls.toLocaleString('en-US')} call(s) may exhaust it.` : '.');
   })();
 
   const btn = document.createElement('button');

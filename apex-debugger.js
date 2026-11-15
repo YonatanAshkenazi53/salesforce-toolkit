@@ -1789,7 +1789,7 @@ const ApexDebugger = (() => {
 
   function _logMoreBar(shown, total) {
     return `<div class="adbg-log-more" id="adbgLogMore">` +
-           `Showing ${shown.toLocaleString()} of ${total.toLocaleString()} lines — scroll to load more` +
+           `Showing ${shown.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} lines — scroll to load more` +
            `</div>`;
   }
 
@@ -1863,7 +1863,7 @@ const ApexDebugger = (() => {
     if (moreEl) {
       if (st.shown >= st.lines.length) moreEl.remove();
       else moreEl.textContent =
-        `Showing ${st.shown.toLocaleString()} of ${st.lines.length.toLocaleString()} lines — scroll to load more`;
+        `Showing ${st.shown.toLocaleString('en-US')} of ${st.lines.length.toLocaleString('en-US')} lines — scroll to load more`;
     }
   }
 
@@ -1885,7 +1885,7 @@ const ApexDebugger = (() => {
     if (moreEl) {
       if (st.shown >= st.lines.length) moreEl.remove();
       else moreEl.textContent =
-        `Showing ${st.shown.toLocaleString()} of ${st.lines.length.toLocaleString()} lines — scroll to load more`;
+        `Showing ${st.shown.toLocaleString('en-US')} of ${st.lines.length.toLocaleString('en-US')} lines — scroll to load more`;
     }
   }
 
@@ -1935,7 +1935,7 @@ const ApexDebugger = (() => {
       return;
     }
     if (matches >= FILTER_CAP) {
-      html += `<div class="adbg-log-more">First ${FILTER_CAP.toLocaleString()} matches shown — narrow your filter.</div>`;
+      html += `<div class="adbg-log-more">First ${FILTER_CAP.toLocaleString('en-US')} matches shown — narrow your filter.</div>`;
     }
     view.innerHTML = html;
   }
@@ -2022,7 +2022,7 @@ const ApexDebugger = (() => {
         return `<div class="adbg-limit-row">
           <span class="adbg-limit-lbl">${lbl}</span>
           <span class="adbg-limit-bar"><span class="adbg-limit-fill${cls}" style="width:${pct}%"></span></span>
-          <span class="adbg-limit-val">${lim.used.toLocaleString()} / ${lim.max.toLocaleString()}</span>
+          <span class="adbg-limit-val">${lim.used.toLocaleString('en-US')} / ${lim.max.toLocaleString('en-US')}</span>
         </div>`;
       }).join('');
     const limitsBlock = limitRows ? `<div class="adbg-limits">${limitRows}</div>` : '';
@@ -2044,7 +2044,7 @@ const ApexDebugger = (() => {
         <div class="adbg-limit-alert-body">
           <strong>${peakPct >= 95 ? 'Governor limit almost hit' : 'Governor limit running high'}</strong>
           ${limitAlerts.map(a => `<div class="adbg-limit-alert-row">
-            <code>${_esc(a.name)}</code> — <b>${a.used.toLocaleString()} of ${a.max.toLocaleString()}</b>
+            <code>${_esc(a.name)}</code> — <b>${a.used.toLocaleString('en-US')} of ${a.max.toLocaleString('en-US')}</b>
             <span class="adbg-limit-alert-pct">${a.pct}%</span>
           </div>`).join('')}
           <div class="adbg-limit-alert-hint">${peakPct >= 95
@@ -2335,7 +2335,7 @@ const ApexDebugger = (() => {
           <div class="adbg-log-title-bar" id="adbgLogToggle" title="Click to minimize / expand the log">
             <span class="adbg-log-caret adbg-i" data-i="chevron" aria-hidden="true"></span>
             <span class="adbg-i" data-i="doc" aria-hidden="true"></span>Log Content
-            <span class="adbg-cnt-badge">${(p.stats?.lines || 0).toLocaleString()} lines</span>
+            <span class="adbg-cnt-badge">${(p.stats?.lines || 0).toLocaleString('en-US')} lines</span>
             <!-- Font-size controls. NO inline onclick here — MV3 extension
                  pages block inline handlers (CSP), so it silently never ran
                  and every A± click also collapsed the log via bubbling. The
@@ -3332,9 +3332,9 @@ const ApexDebugger = (() => {
     const topMs = p => (p.timeline && p.timeline[0]) ? p.timeline[0].ms : 0;
     const rows = [
       ['Duration',        p => p.meta.DurationMilliseconds ?? '—', v => typeof v === 'number' ? (v >= 1000 ? (v/1000).toFixed(1)+'s' : v+'ms') : v, true],
-      ['Log lines',       p => p.stats.lines,      v => v.toLocaleString(), true],
+      ['Log lines',       p => p.stats.lines,      v => v.toLocaleString('en-US'), true],
       ['SOQL queries',    p => p.stats.soql,       v => v, true],
-      ['Query rows',      p => p.stats.soqlRows,   v => v.toLocaleString(), true],
+      ['Query rows',      p => p.stats.soqlRows,   v => v.toLocaleString('en-US'), true],
       ['DML statements',  p => p.stats.dml,        v => v, true],
       ['Exceptions',      p => p.errors.length,    v => v, true],
       ['Peak limit %',    p => peak(p),            v => v + '%', true],
@@ -3345,7 +3345,7 @@ const ApexDebugger = (() => {
       const d = b - a;
       if (d === 0) return '<span class="adbg-cmp-same">=</span>';
       const better = d < 0;   // lower is better for every metric here
-      return `<span class="${better ? 'adbg-cmp-better' : 'adbg-cmp-worse'}">${_ICON(better ? 'arrow-down' : 'arrow-up')}${Math.abs(Math.round(d * 10) / 10).toLocaleString()}</span>`;
+      return `<span class="${better ? 'adbg-cmp-better' : 'adbg-cmp-worse'}">${_ICON(better ? 'arrow-down' : 'arrow-up')}${Math.abs(Math.round(d * 10) / 10).toLocaleString('en-US')}</span>`;
     };
     const name = p => `${_esc((p.meta.Operation || 'log').slice(0, 34))}<br><small>${p.meta.StartTime ? new Date(p.meta.StartTime).toLocaleTimeString() : ''}</small>`;
     detail.innerHTML = `

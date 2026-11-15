@@ -212,7 +212,7 @@ describe('History shows the policy\'s work on a run', () => {
     expect(REC).toContain('...(childPii[obj] || {}),');
   });
   it('the card says how many values were treated and whether the audit was clean', () => {
-    expect(HIST).toContain('🎭 ${n.toLocaleString()} treated');
+    expect(HIST).toContain('🎭 ${n.toLocaleString(\'en-US\')} treated');
     expect(HIST).toContain('🔎 audit clean');
     expect(HIST).toContain('🔎 audit: ${hits} finding(s)');
   });
