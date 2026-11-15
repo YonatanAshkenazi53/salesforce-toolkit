@@ -6127,6 +6127,10 @@ button.ds-badge-masked:hover { filter: brightness(1.1); }
 .ds-pii-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border-light, var(--border)); font-size: 12.5px; }
 .ds-pii-row code { min-width: 160px; }
 .ds-pii-row .ds-dep-muted { flex: 1; }
+/* an example under every masked field: the real value, what is written instead, the record (2026-11-15) */
+.ds-pii-row { flex-wrap: wrap; }
+.ds-pii-row-ex { flex: 1 1 100%; font-size: 12px; padding: 0 0 2px 2px; color: var(--text); overflow-wrap: anywhere; }
+.ds-pii-row-ex-lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--subtext); margin-right: 4px; }
 .ds-pii-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; flex-wrap: wrap; }
 /* Suggest-PII modal */
 .ds-pii-sug-body { max-height: 60vh; overflow-y: auto; }

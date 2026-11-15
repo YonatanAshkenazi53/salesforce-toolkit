@@ -2336,6 +2336,46 @@ function bldPiiRulesForObjectList(policy, objectApi) {
     .map(k => ({ key: k, field: k.slice(k.indexOf('.') + 1), strategy: (policy[k] && policy[k].strategy) || 'hash' }))
     .sort((a, b) => a.field.localeCompare(b.field));
 }
+// An example for EVERY masked field (owner 2026-11-15: "we need to show an example for every field marked for pii"):
+// the newest record of the source that holds a value in the field — the real value struck through, what Deploy
+// writes instead, and the record it comes from. Read-only; one small query per field. A field the source cannot
+// filter on (long text) is read without the filter and the first value found is used.
+function bldPiiExampleQuery(objectApi, field, desc, fieldNames) {
+  const extra = ['FirstName', 'LastName', 'Name', 'AccountId'].filter(n => n !== field && (fieldNames || []).includes(n));
+  const cols = [field, ...extra].join(', ');
+  return desc && desc.filterable === false
+    ? `SELECT ${cols} FROM ${objectApi} ORDER BY LastModifiedDate DESC LIMIT 50`
+    : `SELECT ${cols} FROM ${objectApi} WHERE ${field} != null ORDER BY LastModifiedDate DESC LIMIT 3`;
+}
+// what the example cell says when there is no pair to show — never a blank, never a guess
+function bldPiiExampleWhy(o) {
+  if (o.noSession) return 'no example — the source org is not open in a Chrome tab';
+  if (o.error) return `no example — the source could not be read: ${o.error}`;
+  return 'no example — no record of the source holds a value in this field';
+}
+async function bldPiiFillListExamples(p, objectApi, rules) {
+  if (!rules || !rules.length) return;
+  const cellOf = key => document.querySelector(`#dsModalBox [data-pii-ex="${CSS.escape(key)}"]`);
+  const say = (key, text) => { const c = cellOf(key); if (c) c.innerHTML = `<span class="ds-pii-prev-none">${esc(text)}</span>`; };
+  const sess = _builderSession();
+  if (!sess.orgUrl || !sess.sid) { rules.forEach(r => say(r.key, bldPiiExampleWhy({ noSession: true }))); return; }
+  bldPiiEnsureSalt(p);
+  let d = null;
+  try { d = await describe(objectApi); } catch (_) { d = null; }
+  const names = d && Array.isArray(d.fields) ? d.fields.map(f => f.name) : [];
+  for (const r of rules) {
+    if (!cellOf(r.key)) return;   // the window was closed or redrawn
+    const desc = (d && Array.isArray(d.fields) ? d.fields.find(f => f.name === r.field) : null) || { name: r.field, type: 'string' };
+    let q;
+    try { q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true, query: bldPiiExampleQuery(objectApi, r.field, desc, names) }); }
+    catch (e) { q = { error: String((e && e.message) || e) }; }
+    if (!q || q.error) { say(r.key, bldPiiExampleWhy({ error: sftkFriendlyError(String((q && q.error) || 'no answer')).message })); continue; }
+    const pairs = await bldPiiPreviewPairs(p, objectApi, r.field, desc, (p.piiPolicy || {})[r.key], q.records || [], 1);
+    const c = cellOf(r.key);
+    if (!c) return;
+    if (pairs.length) c.innerHTML = `<span class="ds-pii-row-ex-lbl">Example</span> ${bldPiiPreviewHtml(pairs)}`; else say(r.key, bldPiiExampleWhy({}));
+  }
+}
 function bldOpenPiiListModal(objectApi) {
   const p = _editingProfile;
   if (!p) return;
@@ -2344,9 +2384,10 @@ function bldOpenPiiListModal(objectApi) {
   showModal(`<div class="ds-modal-header">${dsIcon('lock')} Masked fields of ${esc(objectApi)}<button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
     <div class="ds-modal-body">
       <div class="ds-pii-how"><b>What a treatment does.</b> When ▶ Deploy writes a record, a treated field never gets the real value: it gets a <b>fabricated</b> value of the same kind (a name that is a name, a phone in the same shape, an e-mail made from the fabricated name on a domain that cannot receive mail), a <b>pseudonym</b> (a hash, same shape) or it is <b>written empty</b>. Every fake derives from a hash of the real value with a key kept on this PC — the same value always becomes the same fake, so re-runs still match — and nothing in the target can be turned back without the key. The source org is never changed. After the write the run reads a sample back and says whether anything still looks like PII.</div>
-      <div class="ds-pii-list" id="dsPiiList">${rules.length ? rules.map(r => `<div class="ds-pii-row" data-pii-row="${esc(r.key)}"><code>${esc(r.field)}</code><span class="ds-dep-muted">${esc(what(r.key))}</span><button class="ds-btn ds-btn-xs" data-pii-unmask="${esc(r.key)}" title="Write the real value again">✕ Unmask</button></div>`).join('') : '<div class="ds-dep-muted">No field of this object is masked.</div>'}</div>
+      <div class="ds-pii-list" id="dsPiiList">${rules.length ? rules.map(r => `<div class="ds-pii-row" data-pii-row="${esc(r.key)}"><code>${esc(r.field)}</code><span class="ds-dep-muted">${esc(what(r.key))}</span><button class="ds-btn ds-btn-xs" data-pii-unmask="${esc(r.key)}" title="Write the real value again">✕ Unmask</button><span class="ds-pii-row-ex" data-pii-ex="${esc(r.key)}"><span class="ds-pii-prev-none">reading an example…</span></span></div>`).join('') : '<div class="ds-dep-muted">No field of this object is masked.</div>'}</div>
       <div class="ds-pii-foot">${rules.length ? `<button class="ds-btn ds-btn-sm" id="dsPiiUnmaskAll">✕ Unmask all ${rules.length} — write the real values</button>` : ''}<span class="ds-dep-sp"></span><span class="ds-dep-muted">Pick fields: 🎭 in Fields &amp; mapping, or Suggest PII treatments. Changes count when you Save the deployment.</span></div>
     </div>`);
+  bldPiiFillListExamples(p, objectApi, rules);   // one real value of each field and what it is written as
   const policy = () => (p.piiPolicy && typeof p.piiPolicy === 'object') ? p.piiPolicy : null;
   const drop = keys => { const pol = policy(); if (!pol) return; for (const k of keys) delete pol[k]; if (!Object.keys(pol).length) delete p.piiPolicy; };
   document.querySelectorAll('[data-pii-unmask]').forEach(x => x.addEventListener('click', () => {
