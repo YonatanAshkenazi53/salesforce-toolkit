@@ -257,7 +257,7 @@ function sftkSweepKindTable() {
   Translations:           { label: 'Translations', sev: 'mention', why: 'the translated text goes with the field' },
   ExperienceBundle:       { label: 'Experience Cloud pages', sev: 'mention', why: 'the page or component names the field as text — it breaks where it reads it' },
   CustomLabel:            { label: 'Custom Labels', sev: 'mention', why: 'a label’s text holds the field’s name — nothing stops the delete' },
-  SameNameOtherObject:    { label: 'Same name, another object', sev: 'mention', why: 'a component of another object (or code that never names this object) holds a field of the same API name — most likely that object’s own field, not this one; it does not join the list, and Salesforce’s own delete check decides' },
+  SameNameOtherObject:    { label: 'Same name, another object', sev: 'mention', why: 'a component of another object holds a field of the same API name by its bare name, or code that names this object nowhere in its file (a file-level test) holds it — most likely that object’s own field, not this one; it does not join the list, and Salesforce’s own delete check decides' },
   Other:                  { label: 'Other components', sev: 'mention', why: 'the component names the field — the delete goes through; what reads it may break' },
   };
 }
@@ -415,32 +415,110 @@ function sftkSweepRun(files, forms) {
   // every caller that slices sftkSweepRun alone keeps working.
   const objName = String((forms && forms.object) || '');
   const objLc = objName.toLowerCase();
-  const objWord = objName ? new RegExp(`(?<![A-Za-z0-9_])${objName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i') : null;
-  const ownerOf = p => {   // the object an object-shaped file belongs to, or null when its path does not say
+  // 2026-11-15 (review of f0334a0): that guard asked for the literal "<Object>.<Field>" and nothing else, so it also
+  // demoted REAL blockers — a field reached through a relationship name (Owner.Region__c, Parent_Account__r.Status__c,
+  // Account.Parent.Status__c), an Activity field in Task / Event files and code, a Person Account file, and a dynamic
+  // 'Field__c' in generic SObject code. Now: Task / Event files are Activity's own and PersonAccount is Account's own;
+  // in another object's file only a BARE name (or one spelled with that file's own object name) is demoted — a
+  // relationship path keeps its kind, as this text scan cannot resolve it; code "names the object" also by Task /
+  // Event / PersonAccount, a quoted bare field name or a path of two hops keeps its kind, and a comment no longer
+  // counts as naming the object. The code test stays FILE-level (the object's name anywhere in the code): the kind's
+  // why says so.
+  const escRx = x => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // 2026-11-15 (second review): a CUSTOM field of Task, Event or Activity is one field of the Activity family
+  // whichever of the three was picked (the removers' listOwn rule in sftkMdEditField) — with Task picked, an Event
+  // rule or the Activity object's own formula was called "Event's own field of this name", which is untrue.
+  const actFam = /__c$/i.test(String((forms && forms.field) || '')) && /^(task|event|activity)$/.test(objLc);
+  const ALIAS = { activity: ['Task', 'Event'], account: ['PersonAccount'],   // their files and code hold the object's own fields
+    ...(actFam ? { [objLc]: ['Task', 'Event', 'Activity'] } : {}) };
+  const isOwn = o => {
+    const c = String(o || '').toLowerCase();
+    if (!c || !objLc) return false;
+    if (c === objLc || (ALIAS[objLc] || []).some(a => a.toLowerCase() === c)) return true;
+    return typeof sftkMdIsOwnObj === 'function' && sftkMdIsOwnObj(o, objName);   // the removers' rule, where the page has it
+  };
+  const objWord = objName ? new RegExp(`(?<![A-Za-z0-9_])(?:${[objName, ...(ALIAS[objLc] || [])].map(escRx).join('|')})(?![A-Za-z0-9_])`, 'i') : null;
+  const fieldG = forms && forms.field ? new RegExp(`(?<![A-Za-z0-9_])${escRx(forms.field)}(?![A-Za-z0-9_])`, 'gi') : null;
+  // every mention of the field on a line, with the dotted path written before it ("Owner", "Account.Parent", "")
+  const mentions = line => {
+    const out = [];
+    if (!fieldG) return out;
+    const t = String(line || '');
+    fieldG.lastIndex = 0;
+    for (let m; (m = fieldG.exec(t));) {
+      const pre = /((?:[$A-Za-z0-9_]+\.)+)$/.exec(t.slice(0, m.index));
+      out.push({ path: pre ? pre[1].slice(0, -1) : '', before: t[m.index - 1] || '', after: t[m.index + m[0].length] || '' });
+    }
+    return out;
+  };
+  // In ANOTHER object's file: does the line name the field through something that may lead to OUR object?
+  const pathMayBeOurs = (line, owner) => mentions(line).some(x => {
+    if (!x.path) return false;                                                 // bare: the file's own object's field
+    const ot = /^\$ObjectType\.([A-Za-z0-9_]+)\.Fields$/i.exec(x.path);
+    if (ot) return isOwn(ot[1]);                                               // $ObjectType.Contact.Fields.X is Contact's
+    // "Contact.X" in Contact's own file; $Source (a lookup filter's own record) and $Record are the file's object
+    // too (2026-11-15 second review: a Contact lookup filter's $Source.Status__c joined as Account's blocker)
+    if (/^(?:\$source|\$record)$/i.test(x.path) || x.path.toLowerCase() === String(owner).toLowerCase()) return false;
+    return true;                                                               // a relationship path: not resolvable here, kept
+  });
+  // In code that never names the object: a dynamic 'Field__c' / "Field__c", or a path that goes through a
+  // RELATIONSHIP. 2026-11-15 (second review): "two or more hops" also kept this.con.Status__c and the LWC wire shape
+  // this.rec.fields.Status__c.value — a variable, `this` and `.fields.` / `.data.` are no relationship. A hop counts
+  // when it ends in __r, or is a capitalised name after the variable (Owner, Account, Parent).
+  const codeMayBeOurs = line => mentions(line).some(x => {
+    if ((x.before === "'" || x.before === '"') && x.after === x.before) return true;
+    const segs = x.path.split('.').filter(Boolean);
+    if (segs[0] && segs[0].toLowerCase() === 'this') segs.shift();
+    return segs.some((g, i) => /__r$/i.test(g) || (i > 0 && /^[A-Z]/.test(g) && !/^(fields|data)$/i.test(g)));
+  });
+  const noComments = t => String(t || '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/<!--[\s\S]*?-->/g, ' ').replace(/(^|[^:'"])\/\/[^\n]*/g, '$1');
+  const ownerOf = (p, text) => {   // the object an object-shaped file belongs to, or null when its path does not say
     const seg = String(p || '').replace(/^unpackaged\//, '').split('/');
     const base = (seg[seg.length - 1] || '').replace(/\.[^.]+$/, '');
     switch (seg[0]) {
       case 'objects': case 'workflows': case 'sharingRules': case 'matchingRules': case 'assignmentRules': case 'autoResponseRules': case 'escalationRules': return base;
+      // quickActions (2026-11-15): "Contact.New_Thing" carries its object the same way — it joined the list for
+      // Account's field of the same name; a global action has no dot and stays unowned
       case 'duplicateRules': case 'approvalProcesses': return base.includes('.') ? base.split('.')[0] : null;
+      // 2026-11-15 (second review): a create action that lives on one object but makes a record of ANOTHER names
+      // its <targetObject>'s fields (Contact.New_Account → Account's) — the remover's own rule (sftkMdEditField
+      // QuickAction: targetObject, else the host). The name prefix alone demoted Account's real blocker.
+      case 'quickActions': {
+        const tgt = /<targetObject>\s*([^<\s]+)\s*<\/targetObject>/i.exec(String(text || ''));
+        return tgt ? tgt[1] : (base.includes('.') ? base.split('.')[0] : null);
+      }
       default: return null;
     }
   };
   const CODE = new Set(['ApexClass', 'ApexTrigger', 'ApexPage', 'ApexComponent', 'LightningComponentBundle']);
   const ON = sftkSweepKindTable().SameNameOtherObject;
   const other = (k, note) => ({ ...k, type: 'SameNameOtherObject', label: ON.label, sev: ON.sev, why: ON.why, section: note });
+  // 2026-11-15 (second review): a cross-object field update writes the PARENT's field by its bare name, with
+  // <targetObject>AccountId</targetObject> beside it — in Contact's workflow file that is Account's field, not
+  // Contact's. True = the update's target is, or may be, our object (a custom lookup cannot be told here: kept,
+  // as a relationship path is); false = no target, or one that leads to another object.
+  const fieldUpdateMayBeOurs = (text, h, owner) => {
+    const sec = _sftkSweepSectionAt(sftkSweepSections(text), h.offset);
+    const tg = sec && /<targetObject>\s*([^<\s]+)\s*<\/targetObject>/i.exec(String(text).slice(sec.start, sec.end));
+    if (!tg) return false;
+    if (typeof sftkRelLookupField !== 'function') return true;
+    const r = sftkRelLookupField(String(owner).toLowerCase(), tg[1]);
+    return !r || !r.obj ? true : isOwn(r.obj);
+  };
   for (const [path, text] of files) {
     if (/package\.xml$/.test(path)) continue;
     const lines = sftkSweepHits(text, forms);
     if (!lines.length) continue;
     let any = false;
-    const owner = ownerOf(path);
-    const codeNamesObj = !objWord || objWord.test(String(text || ''));
+    const owner = ownerOf(path, text);
+    const codeNamesObj = !objWord || objWord.test(noComments(text));
     for (const h of lines) {
       let k = sftkSweepKind(path, text, h, forms);
       if (!k) continue;
       const qualified = !!(forms && forms.qualified && forms.qualified.test(h.text));
-      if (objLc && owner && owner.toLowerCase() !== objLc && !qualified) k = other(k, `${owner}’s own field of this name`);
-      else if (objLc && CODE.has(k.type) && !codeNamesObj) k = other(k, `the code never names ${objName}`);
+      if (objLc && owner && !isOwn(owner) && !qualified && !pathMayBeOurs(h.text, owner)
+        && !(k.type === 'WorkflowFieldUpdate' && fieldUpdateMayBeOurs(text, h, owner))) k = other(k, `${owner}’s own field of this name`);
+      else if (objLc && !owner && CODE.has(k.type) && !codeNamesObj && !codeMayBeOurs(h.text)) k = other(k, `the code never names ${objName}`);
       any = true;
       hits.push({ path: k.path, file: k.file || null, line: h.line, text: h.text, type: k.type, label: k.label, sev: k.sev, why: k.why, component: k.component, section: k.section });
     }

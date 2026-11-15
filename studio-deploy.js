@@ -438,8 +438,15 @@ async function _depSetPair(p, srcKey, tgtKey) {
   const open = (typeof sftkOpenOrgs === 'function') ? sftkOpenOrgs() : [];
   const src = open.find(o => o.key === srcKey), tgt = open.find(o => o.key === tgtKey);
   if (src && tgt && src.key === tgt.key) { showToast('Source and target must be two different orgs.', 'warning', 3500); return; }
+  const prevTgt = p.targetOrg;
   if (src) p.sourceOrg = src.url;
   if (tgt) p.targetOrg = tgt.url;
+  // 2026-11-15: the owner fallback is a User Id of the OLD target. The Builder cleared it on its own two
+  // selects only, while the pair is picked HERE — a swap or a new target kept it and the run wrote that Id
+  // as OwnerId into the other org. Cleared before the save; the user picks again from the new target.
+  if (typeof sftkOwnerFallbackForTarget === 'function' && sftkOwnerFallbackForTarget(p, prevTgt)) {
+    showToast('Target changed — the owner fallback user belonged to the old target and was cleared. Pick one again in the deployment\'s owner settings.', 'warning', 7000);
+  }
   delete p.sourcePinned; delete p.targetOrgs; delete p._srcCrownMoved;   // old ring fields, retired
   if (src && typeof dsSetPreferredSource === 'function') { try { await dsSetPreferredSource(src.url, { rerender: false }); } catch (_) {} }
   if (!p.ephemeral && typeof storageSaveProfiles === 'function') { try { await storageSaveProfiles(); } catch (_) {} }
@@ -923,12 +930,26 @@ function sftkDeployParentsVerdict(steps) {
   return { cls: 'ok', text: `✓ all ${s.length} parent object(s) aligned` };
 }
 
+// PURE. What a 'behind' parent row says. 2026-11-15: ambiguous keys make a parent 'behind' now (lookups to
+// it are refused until resolved), so the row names them — "0 missing · 0 changed" alone would not say why.
+function sftkDeployBehindText(vd) {
+  const n = k => (Number(vd && vd[k]) || 0);
+  const amb = n('ambiguous');
+  return `🔴 ${n('missing').toLocaleString('en-US')} missing · 🟡 ${n('changed').toLocaleString('en-US')} changed`
+    + (amb ? ` · ⚠ ${amb.toLocaleString('en-US')} ambiguous — lookups to them are refused until resolved` : '');
+}
+
 // PURE. One numbered step per OUTSIDE object, naming every object.field of the
 // deployment that needs it. parentDeps (optional, { refObj: [outside objects it
 // points at] }) puts an outside object AFTER the outside objects it needs itself
 // (2026-11-14: PricebookEntry was step 6 above Product2, step 7 — its journey ran
 // first and every insert was refused). Otherwise first-seen order; a cycle keeps
 // first-seen order for the objects caught in it.
+// 2026-11-15: when nothing is ready the step placed is one IN the cycle, not the
+// first unplaced one — PricebookEntry → Product2 ⇄ Family__c put PricebookEntry
+// above Product2 again, only because it was seen first. The walk: from the first
+// unplaced step along its first unplaced dependency until an object repeats; that
+// one is in the cycle, a step that merely depends on it is passed through.
 function sftkDeployOrderSteps(objects, parentDeps) {
   const byRef = new Map();
   for (const o of (objects || [])) for (const g of (o.parents || [])) {
@@ -943,23 +964,40 @@ function sftkDeployOrderSteps(objects, parentDeps) {
   for (const s of seen) s.dependsOn = (deps[s.refObj] || []).filter(r => r !== s.refObj && byRef.has(r));
   const out = [], placed = new Set();
   while (out.length < seen.length) {
-    // the first not-yet-placed step whose own parents are all placed; none (a cycle) → the first not placed
-    const s = seen.find(x => !placed.has(x.refObj) && x.dependsOn.every(r => placed.has(r)))
-      || seen.find(x => !placed.has(x.refObj));
+    // the first not-yet-placed step whose own parents are all placed; none (a cycle) → a step of that cycle
+    let s = seen.find(x => !placed.has(x.refObj) && x.dependsOn.every(r => placed.has(r)));
+    if (!s) {
+      s = seen.find(x => !placed.has(x.refObj));
+      for (const walked = new Set(); !walked.has(s.refObj);) {
+        walked.add(s.refObj);
+        s = byRef.get(s.dependsOn.find(r => !placed.has(r)));
+      }
+    }
     placed.add(s.refObj); out.push(s);
   }
   return out;
 }
 
 // PURE. The step '← next' points at: the first unsettled step whose own parents (dependsOn) are all
-// settled; -1 when every step is settled. A cycle among the unsettled ones falls back to the first
-// unsettled step (2026-11-14: never send the user to a parent its own parents would make fail).
+// settled; -1 when every step is settled. A cycle among the unsettled ones falls back to a step of that
+// cycle (2026-11-14: never send the user to a parent its own parents would make fail; 2026-11-15: a step
+// that only DEPENDS on the cycle is not the fallback).
 function sftkDeployNextStepIdx(steps, settled) {
   const s = steps || [];
   const unsettled = new Set(s.filter(x => !settled(x)).map(x => x.refObj));
   if (!unsettled.size) return -1;
   const ready = s.findIndex(x => unsettled.has(x.refObj) && !(x.dependsOn || []).some(r => unsettled.has(r)));
-  return ready >= 0 ? ready : s.findIndex(x => unsettled.has(x.refObj));
+  if (ready >= 0) return ready;
+  // the same walk as sftkDeployOrderSteps (kept inline: both functions stand alone)
+  const byRef = new Map(s.map(x => [x.refObj, x]));
+  let cur = s.find(x => unsettled.has(x.refObj));
+  for (const walked = new Set(); !walked.has(cur.refObj);) {
+    walked.add(cur.refObj);
+    const next = byRef.get((cur.dependsOn || []).find(r => unsettled.has(r) && byRef.has(r)));
+    if (!next) break;   // its open dependency is not a step of this list: nothing better to offer
+    cur = next;
+  }
+  return s.indexOf(cur);
 }
 
 async function _depPaintOrder(p, scan) {
@@ -1031,7 +1069,7 @@ async function _depPaintOrder(p, scan) {
       : s.state === 'checking' ? (() => { const pos = _depOrderQueue.indexOf(`${key}|${s.refObj}`); return pos > 0
           ? `<span class="ds-dep-pbar" aria-hidden="true"><span></span></span><span class="ds-lkp-hint">waiting · ${pos} ahead of it</span>`
           : `<span class="ds-dep-pbar ds-dep-pbar-live" role="progressbar" aria-label="reading ${esc(s.refObj)} in both orgs"><span></span></span><span class="ds-lkp-hint">⏳ reading ${esc(s.refObj)} in both orgs…</span>`; })()
-      : s.state === 'behind' ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span> ${btn('⚖ Open & fix', isNext)}`
+      : s.state === 'behind' ? `<span class="ds-psync ds-psync-bad">${esc(sftkDeployBehindText(s.vd))} · ${esc(timeAgo(s.vd.at))}</span> ${btn('⚖ Open & fix', isNext)}`
       : `<span class="ds-lkp-hint">couldn't check automatically</span> ${btn('🔍 Compare & fix', false)}`;
     return `<div class="ds-ordstep${settled(s) ? ' ds-ordstep-done' : ''}${isNext ? ' ds-ordstep-next' : ''}">
       <span class="ds-ordstep-num">${i + 1}</span>
@@ -2479,6 +2517,32 @@ async function _depRun(p, objType, buckets) {
   }
 }
 
+// PURE. The 🧪 chip next to ▶ Deploy: what the last dry run of exactly this selection said. last =
+// window._sftkProbeLast { status, totals, incomplete, net }. 2026-11-15 (live check, network dropped mid dry run):
+// the chip read "🧪 dry run: 0 would be refused" — a clean-looking result for a run that reached no record. A dry
+// run that stopped says it stopped and how many records it did not reach. Returns { cls, title, text }.
+function sftkProbeHint(last) {
+  if (!last) return null;
+  const t = last.totals || {};
+  const n = k => Number(t[k]) || 0, f = v => Number(v).toLocaleString('en-US');
+  if (last.incomplete || n('unreached')) {
+    const rest = n('unreached') ? `${f(n('unreached'))} record${n('unreached') === 1 ? '' : 's'} not reached` : !n('probed') ? 'no record was checked' : 'not every record was checked';
+    return { cls: 'ds-rec-tag-fail',
+      title: `${last.net ? 'The connection to Salesforce dropped during the dry run. ' : ''}The dry run of these inserts did not finish, so it says nothing about the records it did not reach. Nothing was written. Run 🧪 Dry run again.`,
+      text: `🧪 dry run stopped before it finished — ${rest}${n('refused') ? `, ${f(n('refused'))} would be refused` : ''}` };
+  }
+  if (last.status === 'success') {
+    return { cls: 'ds-rec-tag-ins', title: 'A dry run of exactly these inserts: Salesforce accepted every record and rolled the transaction back.',
+      text: '🧪 dry run passed — every record would be written' };
+  }
+  if (!n('probed')) {
+    return { cls: 'ds-rec-tag-fail', title: 'The dry run of these inserts checked no record — the run log and History say why. Nothing was written.',
+      text: '🧪 dry run: no record was checked' };
+  }
+  return { cls: 'ds-rec-tag-fail', title: 'A dry run of exactly these inserts: Salesforce refused some of them. The run log and History name each one.',
+    text: `🧪 dry run: ${f(n('refused'))} would be refused${n('cascade') ? `, ${f(n('cascade'))} not checked` : ''}` };
+}
+
 // ── the action bar: what ▶ Deploy will do, in words ───────────────────────
 function _depSummary(p, objTypeOrNull, objByPathOrNull) {
   // the ⏸ panel says which objects the run writes — it follows every tick (2026-11-08)
@@ -2489,11 +2553,8 @@ function _depSummary(p, objTypeOrNull, objByPathOrNull) {
   const el = eid('dsDepSummary'), run = eid('dsRecRunBtn');
   // 🧪 the last dry run's verdict rides along while the ticked inserts are the ones it checked
   const last = window._sftkProbeLast;
-  const probeHint = (last && s.total && typeof sftkProbeSelKey === 'function' && last.key === sftkProbeSelKey(p.id, _recSel, _recChildSel))
-    ? (last.status === 'success'
-      ? `<span class="ds-rec-tag ds-rec-tag-ins ds-dep-probe-hint" title="A dry run of exactly these inserts: Salesforce accepted every record and rolled the transaction back.">🧪 dry run passed — every record would be written</span>`
-      : `<span class="ds-rec-tag ds-rec-tag-fail ds-dep-probe-hint" title="A dry run of exactly these inserts: Salesforce refused some of them. The run log and History name each one.">🧪 dry run: ${(last.totals && last.totals.refused) || 0} would be refused${last.totals && last.totals.cascade ? `, ${last.totals.cascade} not checked` : ''}</span>`)
-    : '';
+  const ph = (last && s.total && typeof sftkProbeSelKey === 'function' && last.key === sftkProbeSelKey(p.id, _recSel, _recChildSel)) ? sftkProbeHint(last) : null;
+  const probeHint = ph ? `<span class="ds-rec-tag ${ph.cls} ds-dep-probe-hint" title="${esc(ph.title)}">${esc(ph.text)}</span>` : '';
   if (el) el.innerHTML = s.total ? s.parts.map(x => `<span class="ds-diff-chip">${esc(x)}</span>`).join(' ') + probeHint : '<span class="ds-dep-muted">Nothing selected — tick records above. ▶ Deploy writes only what you select.</span>';
   if (run) { run.disabled = !s.total; run.textContent = s.total ? `▶ Deploy ${s.total.toLocaleString('en-US')} selected into ${orgLabel(p.targetOrg)}` : '▶ Deploy'; }
   const probe = eid('dsRecProbeBtn'); if (probe) probe.disabled = !s.total;

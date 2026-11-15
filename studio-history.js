@@ -432,7 +432,8 @@ function _histSentence(run) {
   }
   const did = parts.length ? parts.join(', ') : (run.status === 'failed' ? 'wrote nothing' : 'had nothing to write');
   const fail = t.failed ? ` — ${t.failed.toLocaleString('en-US')} failed` : '';
-  const stop = run.stopped === 'pause' ? ' — paused before the end' : run.stopped === 'closed' ? ' — stopped when the page closed' : '';
+  // 'network' (2026-11-15): the connection to Salesforce dropped mid-run — said here, and ▶ Continue is offered
+  const stop = run.stopped === 'pause' ? ' — paused before the end' : run.stopped === 'closed' ? ' — stopped when the page closed' : run.stopped === 'network' ? ' — stopped when the connection to Salesforce dropped' : '';
   return `${isRb ? 'Rollback' : 'Deployment'} ${isRb ? 'in' : 'into'} ${tgt}: ${did}${fail}${stop}.`;
 }
 
@@ -556,7 +557,7 @@ function renderHistory() {
             ${run.sequenceName && !isRollback ? `<span class="ds-chip" title="This run was one step of the sequence “${esc(run.sequenceName)}”. ↩ Roll back sequence undoes EVERY step of that sequence run, not only this one (live 2026-09-23).">🔗 step of “${esc(run.sequenceName)}”</span>` : ''}
             ${run._archived ? '<span class="ds-chip" title="Loaded from the 📦 on-PC archive (IndexedDB) — runs that aged past the 100-run hot cap live there instead of being deleted">📦 archived</span>' : ''}
             ${run.scheduledRun ? '<span class="ds-chip">📅 scheduled</span>' : ''}
-            ${run.stopped === 'pause' ? '<span class="ds-chip" title="You paused this run; it stopped after the batch in flight. Nothing is half-written.">⏸ paused</span>' : run.stopped === 'closed' ? '<span class="ds-chip" title="The page was closed while this run was on; the engine stopped after the batch in flight. Nothing is half-written.">⏹ page closed</span>' : run.stopped === 'cancel' ? '<span class="ds-chip">⏹ cancelled</span>' : ''}
+            ${run.stopped === 'pause' ? '<span class="ds-chip" title="You paused this run; it stopped after the batch in flight. Nothing is half-written.">⏸ paused</span>' : run.stopped === 'closed' ? '<span class="ds-chip" title="The page was closed while this run was on; the engine stopped after the batch in flight. Nothing is half-written.">⏹ page closed</span>' : run.stopped === 'cancel' ? '<span class="ds-chip">⏹ cancelled</span>' : run.stopped === 'network' ? '<span class="ds-chip" title="The connection to Salesforce dropped while this run was on. What it wrote before that is listed below; ▶ Continue re-ticks the records it did not reach.">⚠ connection dropped</span>' : ''}
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
           </div>
           ${_histActionsHtml(_histRunGroups(run))}
@@ -635,6 +636,8 @@ function renderHistory() {
                 hasSplit ? `upsert: ${s.upsertCreated || 0} created · ${s.upsertUpdated || 0} updated`
                          : `${s.created || 0} created`,
                 s.failed ? `${s.failed} failed` : '',
+                // 2026-11-15: a thrown write call's records — neither created nor failed
+                s.unconfirmed ? `${sftkRunUnconfirmedInfo(s).note.replace(/^, /, '')}${s.writeError ? ` — ${s.writeError}` : ''}` : '',
                 s.notProcessed ? `${s.notProcessed} not confirmed written — the Bulk job was aborted when the run was cancelled` : '',
                 s.personContactsSkipped ? `${s.personContactsSkipped} Person Account contact(s) left out — Salesforce creates them with the Account` : '',
                 s.connected ? `${s.connected} linked to parent` : '',
@@ -648,7 +651,7 @@ function renderHistory() {
               const headCounts = hasSplit
                 ? `${s.upsertCreated || 0}↑ ${s.upsertUpdated || 0}↻`
                 : `${s.created || 0}↑`;
-              return `<span class="ds-summary-chip" title="${esc(chipTitle)}">${esc(obj)}: ${headCounts}${verifiedMark}${s.failed ? ' '+s.failed+'✗' : ''}${s.notProcessed ? ' '+s.notProcessed+'⏸' : ''}${s.personContactsSkipped ? ' '+s.personContactsSkipped+'👤' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}${s.viaBulk ? ' <span style="opacity:.75">⚡ via Bulk API</span>' : ''}</span>`;
+              return `<span class="ds-summary-chip" title="${esc(chipTitle)}">${esc(obj)}: ${headCounts}${verifiedMark}${s.failed ? ' '+s.failed+'✗' : ''}${s.unconfirmed ? ' '+s.unconfirmed+'?' : ''}${s.notProcessed ? ' '+s.notProcessed+'⏸' : ''}${s.personContactsSkipped ? ' '+s.personContactsSkipped+'👤' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}${s.viaBulk ? ' <span style="opacity:.75">⚡ via Bulk API</span>' : ''}</span>`;
             }).join('')}
           </div>
           ${(() => {

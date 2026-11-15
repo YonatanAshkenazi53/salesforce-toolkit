@@ -109,7 +109,9 @@ describe('the pages', () => {
     expect(REC).toContain("kind:         PROBE ? 'dryrun' : 'reconcile',");
     expect(REC).toContain("...(PROBE ? {} : { undo: { ...undoStub, ...runEnd, runEndByOrg } }),");
     // the selections stay and nothing is re-scanned: the dry run returns before the refresh
-    expect(REC).toMatch(/if \(PROBE\) \{[\s\S]*?renderReconcile\(\);\n    return;\n  \}\n  log\(stoppedWhy \? '⏸' : '✅'/);
+    // 2026-11-15: the real run's last line is sftkRunEndLine now (a run the network stopped no longer says
+    // "Transfer complete" in green) — the pin is the same: the dry run returns before the real run's ending.
+    expect(REC).toMatch(/if \(PROBE\) \{[\s\S]*?renderReconcile\(\);\n    return;\n  \}\n[\s\S]{0,900}?const endLine = sftkRunEndLine\(/);
   });
   it('History: a dry run entry has its chip and sentence, and offers neither Retry nor Continue nor Roll back', () => {
     expect(HIST).toContain("🧪 dry run — nothing written");

@@ -48,24 +48,44 @@ function sftkRunProgressReduce(state, evt, now) {
   now = now || Date.now();
   if (!evt || !evt.phase) return null;
   switch (evt.phase) {
-    case 'start': state.t0 = now; return null;
+    // 2026-11-15: one page run can be several engine calls (the Deploy page sends the new-parent inserts, then one
+    // call per group under existing parents), and each call ends with 'end'. A later call's 'start' reopens the
+    // view — the ticker gave up for good after the first 'end', so the next call's cards never moved.
+    case 'start': state.t0 = now; state.ended = false; return null;
     case 'hb':    return null;
+    // 2026-11-15 (live check, network dropped mid dry run: two cards stayed on "reading records… 0:00", and a
+    // half-written card read "written"). A card the run ends on while it is still open is closed AS STOPPED
+    // (endedOpen) — never left reading, never shown as done.
     case 'end':
       state.ended = true;
-      for (const c of state.cards.values()) c.finished = true;
+      for (const c of state.cards.values()) {
+        if (!c.finished) { c.endedOpen = true; c.lastAt = now; }
+        c.finished = true;
+      }
       return { ended: true };
+    // The engine's own word that an object's read or write threw (background.js, the node's catch).
+    case 'nodeError': {
+      const c = _sftkRunCard(state, evt.obj, now);
+      c.afterDone = !!c.finished && c.mode !== 'read';
+      c.error = String(evt.message || 'failed');
+      c.finished = true;
+      return { card: c };
+    }
     case 'step':
       state.stepIdx = (evt.index || 0) + 1;
       return { step: { index: evt.index || 0, total: evt.total || 0, name: evt.name || '' } };
     case 'node': {
       const c = _sftkRunCard(state, evt.obj, now);
       c.mode = 'read'; c.state = 'reading';
+      // the same object in a later engine call of this run: the card is open again
+      c.finished = false; c.endedOpen = false; c.error = ''; c.afterDone = false;
       return { card: c };
     }
     case 'fetched': {
       const c = _sftkRunCard(state, evt.obj, now);
       c.mode = 'write'; c.state = 'writing'; c.total = Number(evt.count) || 0; c.done = 0;
       c.writeStartedAt = now;
+      c.finished = false; c.endedOpen = false; c.error = ''; c.afterDone = false;
       // 🧪 a dry run: the records are built now and sent later, in one transaction
       if (evt.probe) { c.probe = true; c.sampledOf = Number(evt.sampledOf) || 0; }
       if (c.total === 0) c.finished = true;
@@ -153,9 +173,16 @@ function sftkRunProgressCardText(c, now) {
   const since = c.writeStartedAt || c.startedAt;
   const elapsedMs = Math.max(0, (c.finished ? c.lastAt : now) - since);
   const out = { icon: '⏳', title: c.obj, stateText: '', timeText: '', numsText: '', pct: 0, failPct: 0, alive: true };
+  // the browser's raw network token ("Failed to fetch") in words — sftk-friendly-error.js, when it is loaded
+  const words = m => (typeof sftkNetworkWords === 'function' ? sftkNetworkWords(m) : String(m));
   if (c.mode === 'read') {
+    out.timeText = sftkRunFmtDur((c.finished ? c.lastAt : now) - c.startedAt);
+    // 2026-11-15: a card is never left "reading" once its run is over. The read threw: say why. The run ended
+    // with nothing fetched (stopped, or the object was skipped because none of its parents was written): say
+    // only what is certain — no record of it was read.
+    if (c.error) { out.icon = '❌'; out.stateText = `stopped: ${words(c.error)}`; out.alive = false; return out; }
+    if (c.finished) { out.icon = '➖'; out.stateText = 'the run ended — no records were read'; out.alive = false; return out; }
     out.stateText = 'reading records…';
-    out.timeText = sftkRunFmtDur(now - c.startedAt);
     return out;
   }
   const total = c.total || 0, done = c.done || 0;
@@ -169,13 +196,24 @@ function sftkRunProgressCardText(c, now) {
       const bad = v.refused + v.cascade + v.unreached;
       out.icon = bad ? '⚠' : '✅'; out.pct = 100;
       out.failPct = v.probed ? Math.min(100, Math.round(bad / v.probed * 100)) : 0;
-      out.stateText = v.refused ? `dry run: ${sftkRunFmtN(v.refused)} would be refused` : bad ? 'dry run: not every record was checked' : 'dry run: every record would be written';
-      out.numsText = `${sftkRunFmtN(v.probed)} checked · ${sftkRunFmtN(v.wouldWrite)} would be written${v.refused ? ` · ${sftkRunFmtN(v.refused)} refused` : ''}${v.cascade ? ` · ${sftkRunFmtN(v.cascade)} not checked (parent refused)` : ''}${v.unreached ? ` · ${sftkRunFmtN(v.unreached)} not reached` : ''}${v.sampledOf ? ` · a sample of ${sftkRunFmtN(v.sampledOf)}` : ''}`;
+      // 2026-11-15: records Salesforce never got to are named, with their count — "5 checked · 5 not reached"
+      // said both at once. The count that leads is "in the dry run" then, not "checked".
+      out.stateText = v.refused ? `dry run: ${sftkRunFmtN(v.refused)} would be refused${v.unreached ? `, ${sftkRunFmtN(v.unreached)} not reached` : ''}`
+        : v.unreached ? `dry run stopped — ${sftkRunFmtN(v.unreached)} not reached`
+        : bad ? 'dry run: not every record was checked' : 'dry run: every record would be written';
+      out.numsText = `${sftkRunFmtN(v.probed)} ${v.unreached ? 'in the dry run' : 'checked'} · ${sftkRunFmtN(v.wouldWrite)} would be written${v.refused ? ` · ${sftkRunFmtN(v.refused)} refused` : ''}${v.cascade ? ` · ${sftkRunFmtN(v.cascade)} not checked (parent refused)` : ''}${v.unreached ? ` · ${sftkRunFmtN(v.unreached)} not reached` : ''}${v.sampledOf ? ` · a sample of ${sftkRunFmtN(v.sampledOf)}` : ''}`;
       out.alive = false;
       return out;
     }
     out.icon = '🧪';
     if (!total) { out.icon = '✅'; out.stateText = 'nothing to check'; out.alive = false; return out; }
+    // the run is over and this object never got its verdict (2026-11-15)
+    if (c.error || c.endedOpen) {
+      out.icon = c.error ? '❌' : '⚠'; out.alive = false;
+      out.stateText = c.error ? `dry run stopped: ${words(c.error)}` : 'dry run stopped — not checked';
+      out.numsText = `${sftkRunFmtN(total)} record(s) not reached${c.sampledOf ? ` · a sample of ${sftkRunFmtN(c.sampledOf)}` : ''}`;
+      return out;
+    }
     if (c.state === 'probing') {
       out.stateText = `dry run · round ${c.round || 1}: Salesforce is checking…`;
       out.numsText = `${sftkRunFmtN(total)} record(s) in the transaction${c.sampledOf ? ` · a sample of ${sftkRunFmtN(c.sampledOf)}` : ''}`;
@@ -197,13 +235,25 @@ function sftkRunProgressCardText(c, now) {
     if (c.state === 'JobComplete') { out.icon = c.failed ? '⚠' : '✅'; out.stateText = `${job} complete`; }
     else if (c.state === 'Aborted')  { out.icon = '✋'; out.stateText = `${job} aborted`; }
     else if (c.state === 'Failed')   { out.icon = '❌'; out.stateText = `${job} failed`; }
+    else if (c.error)                { out.icon = '❌'; out.stateText = `${job} stopped: ${words(c.error)}`; }
+    // the run ended while the job was not finished: its last known state, not "last answered 40s ago" forever
+    else if (c.endedOpen)            { out.icon = '⚠'; out.stateText = `${job}: ${c.state || 'InProgress'} when the run ended — not confirmed complete`; }
     else {
       const ago = Math.round((now - c.lastAt) / 1000);
       out.stateText = `${job}: ${c.state || 'InProgress'} · Salesforce last answered ${ago <= 1 ? 'just now' : `${ago}s ago`}`;
     }
+  } else if (c.error) {
+    // 2026-11-15: the object's call threw. Written-then-failed (a later step of the object) is not "stopped".
+    out.icon = '❌';
+    out.stateText = c.afterDone ? `written — a later step failed: ${words(c.error)}` : `stopped: ${words(c.error)}`;
+  } else if (c.endedOpen && total) {
+    // the run ended with this object part-way: never "written"
+    out.icon = '⚠';
+    out.stateText = done ? 'stopped before every record was written' : 'stopped — nothing was written';
   } else if (c.finished) {
     out.icon = c.failed ? '⚠' : '✅';
-    out.stateText = c.failed ? `written, ${sftkRunFmtN(c.failed)} failed` : 'written';
+    // an object with no records to write is not "written" (2026-11-15)
+    out.stateText = c.failed ? `written, ${sftkRunFmtN(c.failed)} failed` : (total || done) ? 'written' : 'nothing to write';
   } else if (done === 0) {
     out.stateText = total ? 'fetched — writing…' : 'nothing to write';
     if (!total) { out.icon = '✅'; out.alive = false; }
@@ -251,7 +301,7 @@ function sftkRunProgressHandler(logEl) {
     row.querySelector('.ds-prog-bar-fill').style.width = `${t.pct}%`;
     row.querySelector('.ds-prog-bar-fail').style.width = `${t.failPct}%`;
     row.classList.toggle('ds-prog-card-done', !!c.finished);
-    row.classList.toggle('ds-prog-card-failed', !!c.failed);
+    row.classList.toggle('ds-prog-card-failed', !!c.failed || !!c.error);
     logEl.scrollTop = logEl.scrollHeight;
   }
 
@@ -271,7 +321,7 @@ function sftkRunProgressHandler(logEl) {
   // same node back). Events keep folding into the state meanwhile; the ticker
   // repaints every live card once the node is connected again.
   let pendingRepaint = false;
-  return (evt) => {
+  const handler = (evt) => {
     if (!evt || !logEl) return;
     const now = Date.now();
     const r = sftkRunProgressReduce(state, evt, now);
@@ -307,7 +357,51 @@ function sftkRunProgressHandler(logEl) {
     if (r.cards) { for (const c of r.cards) paint(c, now); start(); return; }
     if (r.card) { paint(r.card, now); if (!r.card.finished) start(); }
   };
+  // the log node knows its current view, so the page that owns the run can close it (sftkRunProgressClose)
+  if (logEl) { try { logEl._sftkRunView = handler; } catch (_) { /* a frozen node */ } }
+  return handler;
 }
+// 2026-11-15: the page's own "this run is over". The engine sends 'end' when a call returns, but a page run can
+// end without it (the worker died, the port dropped, the page's own call threw) — and then cards stayed on
+// "reading records…" for good. Every page that ends a run calls this; it is the same 'end' the engine sends.
+function sftkRunProgressClose(logEl) {
+  const h = logEl && logEl._sftkRunView;
+  if (typeof h === 'function') h({ phase: 'end' });
+}
+// ── What a run's result needs said, shared by every page that shows one ────
+// 2026-11-15. (1) A write call that THROWS no longer replaces the object's
+// summary with { error } (release QA 2026-11-14): the records are counted as
+// `unconfirmed`, with the call's own message in `writeError`. The pages read
+// only error / failed, so an expired target session showed a green
+// "0 created" row and no "reopen the org tab" hint. One reading for all pages.
+function sftkRunUnconfirmedInfo(s) {
+  const n = (s && s.unconfirmed > 0) ? Number(s.unconfirmed) : 0;
+  const why = String((s && (s.error || s.writeError)) || '');
+  return {
+    n,
+    // writeRefused = Salesforce refused the call before saving anything.
+    note: !n ? '' : (s.writeRefused
+      ? `, ${n.toLocaleString('en-US')} not written (the write call was refused)`
+      : `, ${n.toLocaleString('en-US')} not confirmed written`),
+    expired: /SESSION_EXPIRED|session.*expired|INVALID_SESSION/i.test(why),
+  };
+}
+// (2) A run the engine REFUSED because another Data Studio run is on wrote
+// nothing. The pages took it down their "failed midway" branch: a failed
+// History entry carrying a restore point, and "roll back if anything was
+// written" — a roll-back whose time window lies inside the OTHER tab's run.
+// Returns true when the result is such a refusal, after saying the engine's
+// line, warning (not "failed") and dropping the restore point just captured.
+// io: { log(icon, msg, cls), toast(msg, kind, ms), dropRestorePoint() }.
+async function sftkRunRefusedBusy(result, io) {
+  if (!(result && result.busy === true)) return false;
+  const line = String(result.error || 'Another Data Studio run is already in progress.');
+  try { io && io.log && io.log('⏳', line, 'ds-prog-warn'); } catch (_) { /* the line is also in the toast */ }
+  try { io && io.toast && io.toast('Not started — another Data Studio run is in progress. Nothing was written.', 'warning', 7000); } catch (_) { /* no toast host */ }
+  try { if (io && io.dropRestorePoint) await io.dropRestorePoint(); } catch (_) { /* pruned with the oldest restore points later */ }
+  return true;
+}
+
 // Keep the old name alive for any caller that still uses it (both pages are
 // migrated; the alias costs nothing and prevents a silent "no progress").
 function _runProgressHandler(logEl) { return sftkRunProgressHandler(logEl); }

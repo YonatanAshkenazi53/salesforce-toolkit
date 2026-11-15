@@ -34,7 +34,10 @@ describe('1. pages — app assignments are read from the Lightning apps, Home / 
     const idx = OH.sftkOhAppIndex(appsAnswer, reads);
     expect(idx.ok).toBe(true);
     expect(OH.sftkOhAppCount(idx, 'Acct_App_Page')).toBe(1);
-    expect(OH.sftkOhAppCount(idx, 'Case_RT_Page')).toBe(1);          // app + record type + profile, namespaced content
+    // 2026-11-15: this line used to pass 'Case_RT_Page' with no namespace and expect 1 — the suffix match that
+    // let the org's own unused page borrow a packaged page's assignment. The page is now named by its full name.
+    expect(OH.sftkOhAppCount(idx, 'Case_RT_Page', 'ns')).toBe(1);    // app + record type + profile, namespaced content
+    expect(OH.sftkOhAppCount(idx, 'Case_RT_Page')).toBe(0);          // the org's own page of that name is NOT ns__Case_RT_Page
     expect(OH.sftkOhAppCount(idx, 'Other_Page')).toBe(0);
     const probe = OH.sftkOhPageDescribeVerdict({ actionOverrides: [] }, '0M0000000000001', 'Acct_App_Page', []);
     const st = OH.sftkOhPageState({ metaOk: true, assignments: OH.sftkOhAppCount(idx, 'Acct_App_Page'), appsOk: idx.ok, needsProbe: true, probe });
@@ -77,7 +80,9 @@ describe('1. pages — app assignments are read from the Lightning apps, Home / 
     expect(SRC).not.toContain('pageAssignments) ||');
     expect(SRC).toContain("SELECT Id, DeveloperName, Label FROM CustomApplication WHERE UiType = 'Lightning'");
     expect(SRC).toContain('services/data/v62.0/tooling/sobjects/CustomApplication/${encodeURIComponent(a.Id)}');
-    expect(SRC).toContain('assignments: sftkOhAppCount(appIndex, x.page.DeveloperName), appsOk: appIndex.ok, appsError: appIndex.error, probe');
+    // 2026-11-15: the call now passes the page's namespace too; the card's run() is executed for real in
+    // test/regress-1115-flows-debug-health.test.mjs.
+    expect(SRC).toContain('assignments: sftkOhAppCount(appIndex, x.page.DeveloperName, x.page.NamespacePrefix,');
   });
 });
 

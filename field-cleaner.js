@@ -1664,9 +1664,15 @@ const FieldCleaner = (() => {
     const progTimer = setInterval(() => { if (!eid('fcScanProg')) { clearInterval(progTimer); _scanProg = null; return; } _scanProgPaint(); }, 1000);
 
     const gen = _orgGen;   // 2026-11-14: a scan still running when the org switches must not land in the new org's page
+    // 2026-11-15 (review of f0334a0): that was checked once, before the results. init() nulls the selection on a
+    // switch, so a scan in its first reads then threw on _selObj.api / _selField.api and the catch painted
+    // "Unexpected error: Cannot read properties of null" into the NEW org's page; the not-found and
+    // could-not-scan answers landed there too. Every answer is now checked before anything is painted, the catch
+    // included, and the field lookup works on the selection it was started with.
     try {
       // ── 1. Resolve CustomField tooling ID ─────────────────
-      const fieldId = await resolveCustomFieldId();
+      const fieldId = await resolveCustomFieldId(_selObj, _selField);
+      if (gen !== _orgGen) return;
       if (!fieldId) {
         // A field THIS Toolkit deleted is a known case, not a mystery (user
         // 2026-10-02: the re-scan after a delete said "Could not locate").
@@ -1676,6 +1682,7 @@ const FieldCleaner = (() => {
           deleted = (Array.isArray(d.sftk_fc_deletion_log) ? d.sftk_fc_deletion_log : [])
             .find(e => e && e.object === _selObj?.api && e.field === _selField?.api && (!e.orgUrl || !_orgUrl || sftkOrgKey(e.orgUrl) === sftkOrgKey(_orgUrl)));
         } catch (_) { deleted = null; }
+        if (gen !== _orgGen) return;
         if (deleted) {
           const until = new Date(Date.parse(deleted.at) + 15 * 24 * 3600 * 1000).toISOString().slice(0, 10);
           showScanError(
@@ -1704,6 +1711,7 @@ const FieldCleaner = (() => {
                `FROM MetadataComponentDependency WHERE RefMetadataComponentId = '${fieldId}'`
       });
 
+      if (gen !== _orgGen) return;
       if (depRes.error) {
         const fe = sftkFriendlyError(depRes.error);
         showScanError(
@@ -1785,6 +1793,7 @@ const FieldCleaner = (() => {
       _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope, unread: scanUnread };
       await renderResults(_lastScan.deps, fieldId);
     } catch (e) {
+      if (gen !== _orgGen) return;   // the old org's scan failing on the switch says nothing about the new org
       const fe = sftkFriendlyError(e.message);
       showScanError(`Unexpected error: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`);
     } finally {
@@ -2424,7 +2433,20 @@ const FieldCleaner = (() => {
   // names the field somewhere a component or rule reads it (2026-11-14, see toggleXmlInspector).
   function _flexiNamesBeyondText(metadata, objApi, fieldApi) {
     if (!metadata || typeof metadata !== 'object') return false;
-    const rest = { ...metadata };
+    // 2026-11-15 (review of f0334a0): only the page's own description and label were left out, so a Rich Text
+    // component whose text says the field's name, or a component's title / label / header, kept the page "named
+    // inside a longer value": never settled, nothing for ✂ to take out, Delete Field locked with no way on but
+    // App Builder. A component's display-text properties are free text too — Salesforce does not hold a field on
+    // them — and are left out the same way. Everything else (related-list columns, filters, criteria) still counts.
+    const FREE_TEXT = /^(?:richTextValue|decorators)$|(?:title|label|header|heading)$/i;
+    const strip = node => {
+      if (Array.isArray(node)) return node.filter(x => !(x && typeof x === 'object' && typeof x.name === 'string' && 'value' in x && FREE_TEXT.test(x.name))).map(strip);
+      if (!node || typeof node !== 'object') return node;
+      const out = {};
+      for (const k of Object.keys(node)) out[k] = strip(node[k]);
+      return out;
+    };
+    const rest = strip(metadata);
     delete rest.description; delete rest.masterLabel;
     return flexiPageReferencesField(rest, objApi, fieldApi);
   }
@@ -2510,7 +2532,9 @@ const FieldCleaner = (() => {
     const row = (records || []).find(r => r && r.Id && String(r.NamespacePrefix || '').toLowerCase() === want);
     return row ? row.Id : null;
   }
-  async function resolveCustomFieldId() {
+  // 2026-11-15: the selection comes in as PARAMETERS (named as the module's own, which they shadow) — an org switch
+  // nulls the module's _selObj / _selField while a lookup is in flight, and the next query then threw on null.
+  async function resolveCustomFieldId(_selObj, _selField) {
     const devName = deriveDevName(_selField.api);
     _resolveErr = '';
     const note = r => { if (r && r.error) _resolveErr = String(r.error); };
@@ -6013,10 +6037,26 @@ const FieldCleaner = (() => {
     // still named the field. A queried field goes only when nothing left in the flow reads it through that lookup
     // (its name, or the variable it stores into); otherwise it is put back and the lookup is named as left.
     const escR = x => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // 2026-11-15 (review of f0334a0): "the rest of the flow" was JSON.stringify of everything, documentation
+    // included — a flow or element DESCRIPTION / label that said "Get_Account.Region__c" put the queried field
+    // back, the refusal claimed a merge field "is read elsewhere", and ✂ could never clean the version. Only what
+    // the flow reads counts: the keys the scan and the ⇄ engine skip (sftk-flowsurgery's SFTK_FLOW_TEXT_KEYS) are
+    // skipped here too.
+    const DOC_KEYS = new Set(['description', 'label', 'interviewLabel', 'defaultConnectorLabel', 'fullName', 'processType', 'status']);
+    const restText = skipEl => {
+      const out = [];
+      (function walk(v) {
+        if (v == null || v === skipEl) return;
+        if (typeof v === 'string') { out.push(v); return; }
+        if (Array.isArray(v)) { v.forEach(walk); return; }
+        if (typeof v === 'object') for (const k of Object.keys(v)) { if (!DOC_KEYS.has(k)) walk(v[k]); }
+      })(metadata);
+      return out.join('\n');
+    };
     for (const q of qDropped) {
       const names = [q.el.name, q.el.outputReference].filter(Boolean).map(String);
       if (!names.length) continue;
-      const rest = JSON.stringify({ ...metadata, recordLookups: (metadata.recordLookups || []).filter(x => x !== q.el) });
+      const rest = restText(q.el);
       const readVia = names.find(n => new RegExp(`(?<![A-Za-z0-9_$])${escR(n)}\\.${escR(fieldApi)}(?![A-Za-z0-9_])`, 'i').test(rest));
       if (!readVia) continue;
       q.el.queriedFields = q.before;
@@ -7149,8 +7189,16 @@ const FieldCleaner = (() => {
   // layout with verify: null — the same round trip the fix itself needs sanitizeLayoutMetadata, up to 14
   // strip-and-retries and a deploy fallback for (Salesforce refuses the GET's bare-string summaryLayout,
   // platformActionList… on PATCH), so the undo was refused on those layouts, and where it went through it always
-  // read "0 of 1 step verified". Now: a Metadata API deploy of the layout as it was (no sanitizing needed — the same
-  // path the fix falls back to and ↩ Restore points use), re-read through readMetadata until the field is on it again.
+  // read "0 of 1 step verified". Now: a Metadata API deploy of the layout as it was (no sanitizing needed), re-read
+  // through readMetadata until the field is on it again.
+  // 2026-11-15 (review of f0334a0): this said it was the path the fix falls back to and ↩ Restore points use — it
+  // was not: those (deployLayoutViaMetadataApi) deploy a second time without platformActionList / quickActionList
+  // when Salesforce refuses the layout on them, and the undo sent ONE deploy, so it was refused where Restore points
+  // went through. The step now carries that second deploy as `retry` (sftkHistoryUndo sends it on the same errors).
+  // And the re-read looked for <field> / <fields> only, while the fix also takes the field out of
+  // multilineLayoutFields and relatedObjects (a restore of only those read "does not show the field yet"), and a
+  // related list's <fields> column of ANOTHER object satisfied it: both lists are in the pattern now, and the
+  // <relatedLists> blocks are cut out of the re-read text before it is tested.
   // Without a full name (never seen; Tooling always returns one) it stays the PATCH, re-read by its detail endpoint.
   function _layoutUndoStep(componentId, componentName, fullName, beforeMetadata, obj, field) {
     const describe = `Put "${componentName}" layout back the way it was before this fix`;
@@ -7159,8 +7207,13 @@ const FieldCleaner = (() => {
         describe,
         // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the readMetadata re-read below
         msg: { type: 'SF_METADATA_DEPLOY', zipBase64: buildLayoutZip(fullName, beforeMetadata) },
+        // verified-by: the same readMetadata re-read below — sftkHistoryUndo sends this only when the first is refused
+        retry: { when: 'ActionListContext|platformActionList|quickActionList|action list|quick action', flags: 'i',
+          say: 'Salesforce refused the layout on its action lists — deploying it again without them, as the fix and Restore points do',
+          msg: { type: 'SF_METADATA_DEPLOY', zipBase64: buildLayoutZip(fullName, beforeMetadata, { skip: new Set(['platformActionList', 'quickActionList']) }) } },
         verify: { msg: { type: 'SF_MD_READ', mdType: 'Layout', fullNames: [fullName] },
-          pattern: `<fields?>(?:${_rxEsc(obj)}\\.)?${_rxEsc(field)}</fields?>`, flags: 'i', retries: 3,
+          pattern: `<(fields?|multilineLayoutFields|relatedObjects)>(?:${_rxEsc(obj)}\\.)?${_rxEsc(field)}</\\1>`, flags: 'i', retries: 3,
+          strip: '<relatedLists>[\\s\\S]*?</relatedLists>',
           text: { ok: `"${componentName}": the layout shows ${field} again — verified by re-reading the org`,
                   bad: `"${componentName}": the deploy was accepted, but on re-read the layout does not show ${field} yet` } },
       };

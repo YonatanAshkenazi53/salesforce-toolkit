@@ -840,24 +840,66 @@ function sftkRunStopLine(why, objType, done, total, failed) {
 }
 let _runHeartbeat = null;
 
-chrome.runtime.onConnect.addListener(port => {
-  if (port.name !== 'sftk-run-progress') return;
-  // A second page connecting while a run already streams to a live page is a
-  // bystander (its own run will be refused, see _beginRun): it must not take
-  // the run's log over, and its Cancel or its closing must not stop a run it
-  // did not start (2026-11-14).
-  if (_runActive && _runPort) return;
-  _runPort = port;
+// Whose run it is (2026-11-15). The 2026-11-14 guard below only kept a page
+// that connects DURING a run from taking the port over; a port that connected
+// earlier kept listeners that stopped whatever run was on. The Deploy page and
+// the Seeder hold one port across several engine legs with page-side writes in
+// between, so another tab could start a run in such a gap and the first tab's
+// Pause, Cancel or closing then stopped it ("the page was closed"). Every live
+// port is kept here; a run is OWNED by the port of the page that asked for it
+// (_runClaimPort), and only the owner's Cancel / Pause / closing reaches it.
+const _runPorts = new Set();   // live progress ports, in connect order
+let _runOwnerPort = null;      // the port of the page that started the active run
+function _runSenderKey(sender) {
+  if (!sender) return '';
+  if (sender.documentId) return 'd:' + sender.documentId;
+  if (sender.tab && sender.tab.id != null) return 't:' + sender.tab.id + ':' + (sender.frameId || 0);
+  return '';
+}
+// Called by the message listener for every message that starts a run
+// (SFTK_RUN_MESSAGES), with its sender, just before the dispatcher reaches
+// _beginRun. A run already on keeps its port. When the
+// sender can be told apart, the run's port is that page's latest live port (or
+// none: a page that opened no port gets no progress and nobody else can stop
+// its run); when it cannot, the last port to connect, as before.
+const SFTK_RUN_MESSAGES = new Set(['SF_EXECUTE_PROFILE_TRANSFER', 'SF_EXECUTE_SEQUENCE', 'SFTK_WIPE_OBJECT']);
+function _runClaimPort(sender) {
+  if (_runActive) return;
+  const key = _runSenderKey(sender);
+  if (key) {
+    let mine = null;
+    for (const p of _runPorts) if (_runSenderKey(p.sender) === key) mine = p;
+    _runPort = mine;
+  }
+  _runOwnerPort = _runPort;
+}
+function _runWatchPort(port) {
+  _runPorts.add(port);
   port.onMessage.addListener(msg => {
+    if (!_runActive || _runOwnerPort !== port) return;   // not this page's run
     if (msg?.cmd === 'cancel') { _runCancelled = true; _runStopWhy = 'cancel'; }
     if (msg?.cmd === 'pause') { _runCancelled = true; _runStopWhy = 'pause'; }
   });
   port.onDisconnect.addListener(() => {
+    _runPorts.delete(port);
     if (_runPort === port) _runPort = null;
-    // The page that watched this run is gone (tab closed, reloaded, navigated):
+    if (_runOwnerPort !== port) return;
+    _runOwnerPort = null;
+    if (!_runActive) return;
+    // The page that started this run is gone (tab closed, reloaded, navigated):
     // stop after the batch in flight rather than writing on with no screen.
     if (_runHeartbeat && !_runCancelled) { _runCancelled = true; _runStopWhy = 'closed'; }
   });
+}
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== 'sftk-run-progress') return;
+  _runWatchPort(port);   // listens, but acts only for a run this port owns
+  // A second page connecting while a run already streams to a live page is a
+  // bystander (its own run will be refused, see _beginRun): it must not take
+  // the run's log over (2026-11-14).
+  if (_runActive && _runPort) return;
+  _runPort = port;
 });
 
 function postRunProgress(evt) {
@@ -1141,10 +1183,23 @@ function sftkVanillaPayloadRules(objType, payload) {
 // The duplicate-rule header for one write. __sftkRunDupBypassObjs (the ⏸ panel,
 // 2026-11-08) narrows the bypass to the objects the user ticked; null = every
 // object (the choice before the panel, and when the rules could not be listed).
-function _runDupHeaders(objType) {
+function _runDupHeaders(objType, dup) {
+  if (dup) return sftkDupHeadersExplicit(objType, dup);   // a page-side write states its own choice (below)
   if (!globalThis.__sftkRunDupBypass) return {};
   const objs = globalThis.__sftkRunDupBypassObjs;
   if (objs && objType && !objs.has(objType)) return {};
+  return { 'Sforce-Duplicate-Rule-Header': 'allowSave=true' };
+}
+// The same header from an EXPLICIT choice (2026-11-15). A Deploy-page run is
+// several engine legs plus page-side SF_COLLECTIONS_UPDATE writes made
+// between and after them (overwrite of drifted records, the child relink).
+// Since the run-scoped flag ends with each leg (2026-11-14), those updates
+// carry the user's choice in the message itself: dup = { bypass, objects } —
+// objects null = every object. Never read from the worker flag, so another
+// tab's run cannot lend its bypass to this write.
+function sftkDupHeadersExplicit(objType, dup) {
+  if (!dup || dup.bypass !== true) return {};
+  if (Array.isArray(dup.objects) && !(objType && dup.objects.includes(objType))) return {};
   return { 'Sforce-Duplicate-Rule-Header': 'allowSave=true' };
 }
 function _runDupBypassFor(objType) {
@@ -2330,6 +2385,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       let unconfirmed = 0;
       const unconfirmedSourceIds = [];   // [{ id, label, error }]
       let chunkThrew = '';                // the first thrown write call's message
+      let refusedN = 0;                   // records of calls Salesforce refused outright (see sendChunk's catch)
       let sentEnd = 0;                    // records [0, sentEnd) were sent
       // Fetched records this run did NOT prove are in the target: refused for
       // a reason other than a duplicate, unconfirmed, or never sent (cancel,
@@ -2478,6 +2534,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         return Array.isArray(res) ? res : [];
         } catch (e) {
           chunkThrew = chunkThrew || ((e && e.message) || String(e));
+          // A DEFINITE non-write (2026-11-15): a Collections call answered with a
+          // refusal before Salesforce saved anything. Never a Bulk job (several
+          // calls — a 401 on a later poll says nothing about rows the job already
+          // wrote, and a "Bulk job Failed" keeps what it processed), never a
+          // timeout or a 5xx (Salesforce may still have committed).
+          // Second review: nor a call that was SENT TWICE (e.sftkResent — the re-send after a 5xx, a proxy tab
+          // that errored): the refusal answers the last attempt only, an earlier one may have committed.
+          if (!useBulk && !(e && e.sftkResent) && /^(SESSION_EXPIRED|INVALID_SESSION_ID)\b|^HTTP (400|401|403)\b/.test((e && e.message) || String(e))) refusedN += Math.min(STEP, payloads.length - i);
           return sftkUnconfirmedRows(Math.min(STEP, payloads.length - i), `the write call failed (${(e && e.message) || e})`);
         }
       };
@@ -2671,7 +2735,16 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       for (let k = sentEnd; k < recs.length; k++) if (recs[k] && recs[k].Id) notInSync.add(recs[k].Id);
       if (unconfirmed || chunkThrew) {
         const unsent = Math.max(0, payloads.length - sentEnd);
-        errors.push(`${objType}: ${unconfirmed} record(s) NOT CONFIRMED written — ${chunkThrew ? `a write call failed (${chunkThrew})` : 'Salesforce gave no per-record answer for them'}. They may or may not be in the target, so they are not offered under "↻ Retry failed": check the target org before writing them again.${chunkThrew && unsent ? ` The object stopped there: ${unsent} later record(s) were not sent.` : ''}`);
+        // 2026-11-15: when EVERY unanswered record sat in a call Salesforce
+        // refused before saving anything (expired session, HTTP 400/401/403 on a
+        // Collections call), "may or may not be in the target" sent the user to
+        // look for records that cannot be there. Say what is true.
+        const stopped = chunkThrew && unsent ? ` The object stopped there: ${unsent} later record(s) were not sent.` : '';
+        if (chunkThrew && refusedN && refusedN === unconfirmed) {
+          errors.push(`${objType}: ${unconfirmed} record(s) NOT written — Salesforce refused the write call (${chunkThrew}) before saving anything. They are not listed under "↻ Retry failed"; fix the cause, then run again to write them.${stopped}`);
+        } else {
+          errors.push(`${objType}: ${unconfirmed} record(s) NOT CONFIRMED written — ${chunkThrew ? `a write call failed (${chunkThrew})` : 'Salesforce gave no per-record answer for them'}. They may or may not be in the target, so they are not offered under "↻ Retry failed": check the target org before writing them again.${stopped}`);
+        }
       }
       // PII MASKING v1 — the write disclosure: how many values this object's
       // payloads carried hashed / nulled / fixed. Present whenever the policy
@@ -2732,6 +2805,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           ? { upsertCreated: upsCreated, upsertUpdated: upsUpdated } : {}),
         ...(notProcessed ? { notProcessed } : {}),
         ...(unconfirmed ? { unconfirmed, unconfirmedSourceIds } : {}),   // 2026-11-14 — see the write loop
+        // 2026-11-15: the thrown call's own message, so the pages can still
+        // show the per-object failure and the "session expired" hint that
+        // summary.error gave before a throw stopped replacing the summary.
+        // writeRefused: every unanswered record sat in a call that was refused
+        // before anything was saved (see the line pushed above).
+        ...(chunkThrew ? { writeError: chunkThrew, ...(refusedN && refusedN === unconfirmed ? { writeRefused: true } : {}) } : {}),
         ...(piiRows ? { masked: piiRows.counts } : {}) };
       // B3 — one line for everything the aborted Bulk job did not confirm.
       // "not confirmed written" rather than "never attempted": when the job's
@@ -2819,8 +2898,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
                   `SELECT Id, ${keyField} FROM ${objType} WHERE ${keyField} IN (${lits})`, false);
                 tgtRows.push(...(q.records || []));
               }
-              const kp = sftkFileKeyPairs(recs, nodeIdMap, keyField, tgtRows);
-              for (const sId of Object.keys(kp.pairs)) if (notInSync.has(sId)) delete kp.pairs[sId];   // see leftover above
+              // notInSync is handed in (2026-11-15): the records left out above
+              // were still walked here and counted again as "no target match" /
+              // "ambiguous" — one record, two different explanations.
+              const kp = sftkFileKeyPairs(recs, nodeIdMap, keyField, tgtRows, notInSync);
               Object.assign(nodeIdMap, kp.pairs);
               const matched = Object.keys(kp.pairs).length;
               if (matched || kp.ambiguous || kp.unmatched) {
@@ -2938,6 +3019,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     } catch (e) {
       nodeSourceIds.set(node, []);  // prevent children from using a broken parent
       errors.push(`${objType}: ${e.message}`);
+      // 2026-11-15 (live check, network dropped): the object's live card stayed on "reading records…" after its
+      // read threw. The page's card closes on this, with the reason (sftk-run-progress.js 'nodeError').
+      postRunProgress({ phase: 'nodeError', obj: objType, message: String((e && e.message) || e) });
       summary[objType] = { created: 0, failed: 0, error: e.message };
       // Child-first children of THIS node may already be sitting in the target
       // unlinked — the connect step can't run without the parent. Say so.
@@ -3283,7 +3367,8 @@ function sftkFailureMeansInTarget(result) {
       || /\b(DUPLICATE_VALUE|DUPLICATES_DETECTED)\b/.test(String(e.message || ''))));
 }
 
-function sftkFileKeyPairs(recs, writtenMap, keyField, tgtRows) {
+// skip (a Set of source ids, optional): records that are neither paired nor counted.
+function sftkFileKeyPairs(recs, writtenMap, keyField, tgtRows, skip) {
   const byVal = new Map();
   for (const t of (tgtRows || [])) {
     const v = t && t[keyField];
@@ -3294,6 +3379,7 @@ function sftkFileKeyPairs(recs, writtenMap, keyField, tgtRows) {
   const pairs = {}; let ambiguous = 0, unmatched = 0;
   for (const r of (recs || [])) {
     if (!r || !r.Id || (writtenMap && writtenMap[r.Id])) continue;
+    if (skip && skip.has(r.Id)) continue;
     const v = r[keyField];
     const k = (v == null) ? '' : String(v);
     if (!k) { unmatched++; continue; }
@@ -3625,6 +3711,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // sendResponse wins the response race — answering here (even with an
   // "unknown type" error) would beat the real recipient to the channel.
   if (message?.type === 'TOOLKIT_PING' || message?.type === 'TOOLKIT_NAVIGATE') return;
+  // A run belongs to the page that asks for it (2026-11-15, see _runClaimPort).
+  // Claimed here, where the sender is known; the dispatcher reaches _beginRun
+  // in this same synchronous stretch, so nothing can connect in between.
+  if (SFTK_RUN_MESSAGES.has(message?.type)) _runClaimPort(sender);
   handleMessage(message).then(sendResponse).catch(err => {
     const resp = { error: err.message || String(err) };
     if (err.sfBody) resp.sfBody = err.sfBody;  // include raw SF 401 body for diagnostics
@@ -3794,19 +3884,32 @@ async function dispatchMessage(message) {
     case 'GET_ALL_SF_SESSIONS':
       return getAllSfSessions();
     case 'SF_COLLECTIONS_CREATE':
-      return sfCollectionsCreate(orgUrl, sid, message.records);
+      // 2026-11-15 (second review): a page-side create states its own duplicate-rule choice too, exactly like
+      // SF_COLLECTIONS_UPDATE below (absent = respect). It read the worker's run flag, so while ANOTHER tab's
+      // Bypass run was on, a Seeder or Flow Access insert went out with allowSave=true — a duplicate rule
+      // switched off behind a write the user never chose it for.
+      return sfCollectionsCreate(orgUrl, sid, message.records, {
+        bypass: message.dupBypass === true,
+        objects: Array.isArray(message.dupBypassObjects) ? message.dupBypassObjects : null });
     case 'SF_COLLECTIONS_DELETE':
       return sfCollectionsDelete(orgUrl, sid, message.ids);
     case 'SF_HARD_DELETE':
       return sfHardDelete(orgUrl, sid, message.ids);
     case 'SF_COLLECTIONS_UPDATE':
-      return sfCollectionsUpdate(orgUrl, sid, message.records);
+      // A page-side update always states its own duplicate-rule choice
+      // (dupBypass / dupBypassObjects, absent = respect) — see sftkDupHeadersExplicit.
+      return sfCollectionsUpdate(orgUrl, sid, message.records, {
+        bypass: message.dupBypass === true,
+        objects: Array.isArray(message.dupBypassObjects) ? message.dupBypassObjects : null });
     case 'SFTK_WIPE_OBJECT': {
       // Org Seeder — delete EVERY row of one object in the target org.
       // Read-only orgs are rejected by the write chokepoint; the view gates
       // this behind a typed confirmation with live counts; cancel between
       // chunks via the run port. mode: 'recycle' (default) | 'hard'.
-      if (!_beginRun('wipe')) return { error: SFTK_RUN_BUSY };
+      // busy: true (2026-11-15) — a refusal is not a run that failed midway:
+      // the pages show the line and record nothing (no History entry, no
+      // restore point, no roll-back offer for a request that wrote nothing).
+      if (!_beginRun('wipe')) return { error: SFTK_RUN_BUSY, busy: true };
       try {
         // PRODUCTION BELT (Seeder review wt02z57at, HIGH): hard delete is
         // disabled against production orgs at the ENGINE — no present or
@@ -3850,7 +3953,7 @@ async function dispatchMessage(message) {
       }
     }
     case 'SF_EXECUTE_PROFILE_TRANSFER': {
-      if (!_beginRun('transfer')) return { error: SFTK_RUN_BUSY, status: 'failed', summary: {}, errors: [SFTK_RUN_BUSY] };
+      if (!_beginRun('transfer')) return { error: SFTK_RUN_BUSY, busy: true, status: 'failed', summary: {}, errors: [SFTK_RUN_BUSY] };
       try {
         const ledger = message.runId ? _runLedger(String(message.runId)) : null;
         return await executeProfileTransfer(
@@ -3864,7 +3967,7 @@ async function dispatchMessage(message) {
     case 'SF_RUN_LEDGER_CLOSE':
       return _runLedgerClose(String(message.runId || ''));
     case 'SF_EXECUTE_SEQUENCE': {
-      if (!_beginRun('sequence')) return { error: SFTK_RUN_BUSY, status: 'failed', steps: [], errors: [SFTK_RUN_BUSY] };
+      if (!_beginRun('sequence')) return { error: SFTK_RUN_BUSY, busy: true, status: 'failed', steps: [], errors: [SFTK_RUN_BUSY] };
       try {
         return await executeProfileSequence(
           message.profiles,
@@ -3915,6 +4018,9 @@ async function sfFetch(url, options, retries = 1) {
       }
       throw e;
     }
+    // 2026-11-15 (second review): this answer belongs to the SECOND send — the first got a 5xx and may still
+    // have committed. Callers that tell "refused, nothing saved" from the status must know (sftkResentError).
+    try { res.sftkResent = true; } catch (_) { /* a response that cannot carry the mark */ }
   }
   return res;
 }
@@ -3936,7 +4042,9 @@ function authHeaders(sid) {
 // sfProxyFetch — routes any HTTP call through the user's live SF browser tab.
 // Supports GET, POST, PATCH, DELETE and an optional pre-serialised body string.
 // Returns { status, ok, body } (body is raw text) or null if no tab is usable.
-async function sfProxyFetch(orgUrl, targetUrl, method = 'GET', bodyStr = null) {
+// out (optional, 2026-11-15 second review): out.unsure is set when a tab attempt was SENT and came back as an
+// error (a fetch that failed mid-way, a blocked response) — that attempt may have reached Salesforce.
+async function sfProxyFetch(orgUrl, targetUrl, method = 'GET', bodyStr = null, out = null) {
   const SF_GLOBS = [
     'https://*.salesforce.com/*',
     'https://*.lightning.force.com/*',
@@ -4014,6 +4122,7 @@ async function sfProxyFetch(orgUrl, targetUrl, method = 'GET', bodyStr = null) {
       });
       const result = results?.[0]?.result;
       if (result && !result.error) return result;
+      if (out && result && result.error) out.unsure = true;
     } catch (_) {
       // Tab not injectable (e.g. chrome:// page) — try next
     }
@@ -4125,7 +4234,7 @@ async function sfFetchWithProxy(orgUrl, sid, url, fetchOptions = {}) {
     // existing caller destructures { ok, status, body } and ignores this.
     const headers = {};
     try { res.headers.forEach((v, k) => { headers[String(k).toLowerCase()] = v; }); } catch (_) {}
-    return { ok: res.ok, status: res.status, body: await res.text(), headers };
+    return { ok: res.ok, status: res.status, body: await res.text(), headers, ...(res.sftkResent ? { resent: true } : {}) };
   }
 
   // ── Tier 2: proxy via live SF tab ────────────────────────────────────────
@@ -4133,8 +4242,12 @@ async function sfFetchWithProxy(orgUrl, sid, url, fetchOptions = {}) {
   // Route the exact same call through the user's open Salesforce browser tab
   // using credentials:include so the browser attaches the tab's current session
   // cookies directly — no sid needed.
-  const proxy = await sfProxyFetch(orgUrl, url, method, bodyStr);
-  if (proxy && !proxy.error && proxy.status !== 401) return proxy;
+  // 2026-11-15 (second review): `resent` — the call went out more than once with an attempt that may have reached
+  // Salesforce (the Bearer leg's re-send after a 5xx, a tab fetch that errored). The Bearer 401 itself saved nothing.
+  const pOut = {};
+  const proxy = await sfProxyFetch(orgUrl, url, method, bodyStr, pOut);
+  const resent = !!res.sftkResent || !!pOut.unsure;
+  if (proxy && !proxy.error && proxy.status !== 401) return resent ? { ...proxy, resent: true } : proxy;
 
   // ── Tier 3: all paths failed ─────────────────────────────────────────────
   // Browser session is fully expired (both Bearer AND tab cookies are invalid).
@@ -4142,6 +4255,7 @@ async function sfFetchWithProxy(orgUrl, sid, url, fetchOptions = {}) {
   // the popup as soon as the user navigates in their Salesforce tab.
   const err = new Error('SESSION_EXPIRED');
   if (proxy?.body) err.sfBody = proxy.body.substring(0, 500);
+  if (resent) err.sftkResent = true;
   throw err;
 }
 
@@ -5033,12 +5147,12 @@ async function sfRelationshipQuery(orgUrl, sid, rootObject, rootWhere, childRels
 async function sfCollectionsUpsert(orgUrl, sid, objectType, extIdField, records) {
   const url = `${orgUrl}/services/data/${API_VERSION}/composite/sobjects/${objectType}/${extIdField}`;
   const bodyStr = JSON.stringify({ allOrNone: false, records });
-  const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
+  const { ok, status, body, resent } = await sfFetchWithProxy(orgUrl, sid, url, {
     method: 'PATCH',
     headers: _runDupHeaders(objectType),
     body: bodyStr
   });
-  if (!ok) throw new Error(sfErrorMsg(status, body, url));
+  if (!ok) throw sftkResentError(new Error(sfErrorMsg(status, body, url)), resent);   // see sfCollectionsCreate
   return JSON.parse(body);  // array of UpsertResult objects
 }
 
@@ -5726,16 +5840,28 @@ async function sftkCookieSessFor(url) {
   return null;
 }
 
-async function sfCollectionsCreate(orgUrl, sid, records) {
+// dup (2026-11-15, second review): { bypass, objects } — a page-side create's OWN duplicate-rule choice
+// (sftkDupHeadersExplicit); absent = the engine's call inside its run, which reads the run flag.
+async function sfCollectionsCreate(orgUrl, sid, records, dup) {
   const url = `${orgUrl}/services/data/${API_VERSION}/composite/sobjects`;
   const bodyStr = JSON.stringify({ allOrNone: false, records });
-  const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
+  const req = {
     method: 'POST',
     headers: _runDupHeaders(records && records[0] && records[0].attributes && records[0].attributes.type),
     body: bodyStr
-  });
-  if (!ok) throw new Error(sfErrorMsg(status, body, url));
+  };
+  // a page-side create never reads the run flag: its own choice, or none (respect)
+  if (dup) req.headers = sftkDupHeadersExplicit(records && records[0] && records[0].attributes && records[0].attributes.type, dup);
+  const { ok, status, body, resent } = await sfFetchWithProxy(orgUrl, sid, url, req);
+  if (!ok) throw sftkResentError(new Error(sfErrorMsg(status, body, url)), resent);
   return JSON.parse(body);  // array of SaveResult objects
+}
+// 2026-11-15 (second review): marks an error whose call was SENT MORE THAN ONCE (sfFetch's re-send after a 5xx,
+// a proxy tab attempt that errored mid-way). The last answer may be a clean refusal, but an earlier attempt may
+// have committed — so the engine never reports such rows as "NOT written — refused before saving anything".
+function sftkResentError(err, resent) {
+  if (resent) { try { err.sftkResent = true; } catch (_) { /* a frozen error: stays unmarked */ } }
+  return err;
 }
 
 // ---------------------------------------------------------------
@@ -5828,7 +5954,9 @@ async function sfEmptyRecycleBin(orgUrl, sid, ids) {
 // Transfer view to push source values onto drifted target records.
 // allOrNone:false. Returns array of SaveResult { id, success, errors[] }.
 // ---------------------------------------------------------------
-async function sfCollectionsUpdate(orgUrl, sid, records) {
+// dup (2026-11-15): absent = an engine-internal write inside a run (the run's
+// own flag decides); given = a page-side write, the explicit choice decides.
+async function sfCollectionsUpdate(orgUrl, sid, records, dup) {
   const recs = (records || []).filter(r => r && r.Id);
   if (!recs.length) return [];
   const results = [];
@@ -5838,7 +5966,7 @@ async function sfCollectionsUpdate(orgUrl, sid, records) {
     const bodyStr = JSON.stringify({ allOrNone: false, records: chunk });
     const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
       method: 'PATCH',
-      headers: _runDupHeaders(chunk && chunk[0] && chunk[0].attributes && chunk[0].attributes.type),
+      headers: _runDupHeaders(chunk && chunk[0] && chunk[0].attributes && chunk[0].attributes.type, dup),
       body: bodyStr
     });
     if (!ok) throw new Error(sfErrorMsg(status, body, url));

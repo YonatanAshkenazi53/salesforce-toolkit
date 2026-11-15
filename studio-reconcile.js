@@ -22,7 +22,12 @@ window.openReconcile = function(profileId, targetUrl) {
     if (_orgKey(targetUrl) === _orgKey(p.sourceOrg || '')) {
       showToast('Source and target must be two different orgs.', 'warning', 3500);
     } else {
+      const prevTgt = p.targetOrg;
       p.targetOrg = targetUrl;
+      // 2026-11-15: the owner fallback is a User Id of the old target — never carried to another org.
+      if (typeof sftkOwnerFallbackForTarget === 'function' && sftkOwnerFallbackForTarget(p, prevTgt)) {
+        showToast('Target changed — the owner fallback user belonged to the old target and was cleared. Pick one again in the deployment\'s owner settings.', 'warning', 7000);
+      }
       delete p.sourcePinned; delete p.targetOrgs; delete p._srcCrownMoved;
       try { storageSaveProfiles(); } catch (_) {}
     }
@@ -2197,6 +2202,112 @@ function sftkRecGuardedWrites(c, objType) {
   };
 }
 
+// ── What a stopped run says (2026-11-15) ───────────────────────────────────
+// Live check: a dry run with the network dropped ~10 s. The History entry told the truth; the page did not —
+// green checks on "0 of 5 would be written, 5 not reached" and "0 of 0 would be written", "Dry run complete",
+// and "🧪 dry run: 0 would be refused" next to ▶ Deploy. These three PURE functions are the page's words.
+//
+// One 🧪 result line of the run log. a = the engine's verdict counts for the object; expected = how many of it
+// were selected (0 = none, so "nothing to check" is the truth; undefined = some).
+function sftkProbeLine(obj, a, expected) {
+  a = a || {};
+  const n = k => Number(a[k]) || 0, f = v => Number(v).toLocaleString('en-US');
+  if (!n('probed')) {
+    return expected === 0
+      ? { icon: 'ℹ', cls: 'ds-prog-note', text: `${obj}: no insert selected — nothing to check` }
+      // selected, and Salesforce checked none of them: not a clean "0 of 0"
+      : { icon: '⚠', cls: 'ds-prog-warn', text: `${obj}: no record was checked` };
+  }
+  const text = `${obj}: ${f(n('wouldWrite'))} of ${f(n('probed'))} would be written${n('refused') ? `, ${f(n('refused'))} refused` : ''}${n('cascade') ? `, ${f(n('cascade'))} not checked (their parent would be refused)` : ''}${n('earlier') ? `, ${f(n('earlier'))} not checked (they point at a record an earlier step creates)` : ''}${n('unreached') ? `, ${f(n('unreached'))} not reached` : ''}${n('sampledOf') ? ` — a sample: the first ${f(n('probed'))} of ${f(n('sampledOf'))}` : ''}`;
+  if (n('refused')) return { icon: '⚠', cls: 'ds-prog-err', text };
+  // green only when every record in the transaction would be written
+  if (n('unreached') || n('cascade') || n('earlier') || n('wouldWrite') < n('probed')) return { icon: '⚠', cls: 'ds-prog-warn', text };
+  return { icon: '✅', cls: '', text };
+}
+// The verdict of a whole dry run, in words. pt = the summed counts; o.incomplete = the run stopped or broke
+// before every selected record got an answer; o.net = because the connection dropped.
+function sftkProbeVerdict(pt, o) {
+  pt = pt || {}; o = o || {};
+  const n = k => Number(pt[k]) || 0, f = v => Number(v).toLocaleString('en-US');
+  const incomplete = !!o.incomplete || n('unreached') > 0;
+  // o.selected (2026-11-15, second review): how many inserts were ticked — "no insert is selected" is only said
+  // when none was (or the caller did not say); with inserts ticked and none checked the truth is the other line
+  const verdict = !n('probed')
+    ? ((incomplete || Number(o.selected) > 0) ? 'no record was checked' : 'nothing was checked — no insert is selected')
+    : (n('refused') || n('cascade') || n('unreached'))
+      ? `${f(n('would'))} of ${f(n('probed'))} would be written — ${[n('refused') ? `${f(n('refused'))} refused` : '', n('cascade') ? `${f(n('cascade'))} not checked (their parent would be refused)` : '', n('unreached') ? `${f(n('unreached'))} not reached` : ''].filter(Boolean).join(', ')}`
+      : incomplete ? `${f(n('would'))} of the ${f(n('probed'))} record(s) checked would be written — the rest was not checked`
+      : `every one of the ${f(n('probed'))} record(s) would be written`;
+  const why = o.net ? ' The connection to Salesforce dropped — check your network, then run the dry run again.'
+    : incomplete ? ' A dry run that did not finish says nothing about the records it did not reach — run it again.' : '';
+  return { incomplete, head: incomplete ? 'Dry run stopped before it finished' : 'Dry run complete', verdict, why };
+}
+// The last line of a real run. o: { status, stoppedWhy, net, ok, fail, unconfirmed, canUndo, canContinue }.
+// A run that did not finish never says "Transfer complete", and it points at what History really offers for it.
+// PURE (2026-11-15, second review). What an engine leg (SF_EXECUTE_PROFILE_TRANSFER) answered:
+//   'busy' — refused because another Data Studio run is on: NOTHING was started (its summary is {} — truthy, so
+//            the "no summary" test alone read it as a run that inserted 0 with a green check);
+//   'none' — no answer at all (the worker died, "No response"): a failed call, never "0 written";
+//   'ok'   — a run that answered, whatever its outcome.
+function sftkRecLegAnswer(res) {
+  if (res && res.busy === true) return 'busy';
+  if (!res || (res.error && !res.summary)) return 'none';
+  return 'ok';
+}
+// PURE. Did this run do — or try — anything before a leg was refused 'busy'? A written / failed count, or a hard
+// error line of an earlier step (a delete that threw may have deleted). Nothing = the run never started: no
+// History entry, no restore point, no roll-back offer over the OTHER tab's writes.
+function sftkRecRunTouched(counts, childCounts, errors, isErr) {
+  const any = o => Object.values(o || {}).some(v => (typeof v === 'number' && v > 0) || v === true);
+  if (any(counts) || Object.values(childCounts || {}).some(any)) return true;
+  const hard = typeof isErr === 'function' ? isErr : () => true;
+  return (errors || []).some(e => hard(e));
+}
+// PURE. Did the run STOP on a dropped connection — the History mark that offers ▶ Continue? Only when an INSERT
+// leg lost it: those are the records History keeps as `selected` and ▶ Continue re-ticks. A pull, delete or update
+// step that lost the connection while the run went on is named in `legs` instead (the end line says which), and
+// the run reads "Finished with errors" — "Stopped … ▶ Continue re-ticks" was untrue for it.
+function sftkRecNetLegs(errors, isErr, isNet) {
+  const legs = []; let stopped = false;
+  for (const e of (errors || [])) {
+    const s = String(e == null ? '' : e);
+    if (!isErr(s) || !isNet(s)) continue;
+    const leg = /^(?:insert\b|Push failed|Insert\b)/.test(s) ? 'the insert'
+      : /^(?:pull\b|Pull failed)/i.test(s) ? 'the pull into the source'
+      : /^(?:delete\b|hard delete\b|purge\b)/i.test(s) ? 'the delete' : 'an update step';
+    if (leg === 'the insert') stopped = true;
+    if (!legs.includes(leg)) legs.push(leg);
+  }
+  return { stopped, legs };
+}
+// PURE. A dry-run engine call that FAILED without a verdict for any object (the source read was refused, the
+// session expired) checked nothing: the dry run is incomplete, never "complete: no insert is selected". A call
+// that failed because Salesforce REFUSED the records has their verdicts and is a finished dry run.
+function sftkProbeCallBroke(res) {
+  if (!res || res.busy === true) return true;
+  const checked = Object.values(res.summary || {}).some(s => s && s.probe && Number(s.probe.probed) > 0);
+  return String(res.status || 'failed') === 'failed' && !checked;
+}
+function sftkRunEndLine(o) {
+  o = o || {};
+  const f = v => Number(v || 0).toLocaleString('en-US');
+  if (o.stoppedWhy === 'pause') return { icon: '⏸', cls: '', text: 'Paused — the records not reached are still to deploy; ▶ Continue from History.' };
+  if (o.stoppedWhy === 'closed') return { icon: '⏸', cls: '', text: 'Stopped — the page was closed mid-run; ▶ Continue from History.' };
+  if (o.stoppedWhy && o.stoppedWhy !== 'network') return { icon: '⏸', cls: '', text: 'Cancelled — refreshing state…' };
+  if (o.status === 'success' && !o.net) return { icon: '✅', cls: '', text: 'Transfer complete — refreshing state…' };
+  const wrote = o.ok ? `${f(o.ok)} record(s) written` : 'nothing was confirmed written';
+  const bad = [o.fail ? `${f(o.fail)} failed` : '', o.unconfirmed ? `${f(o.unconfirmed)} not confirmed written (they may or may not be in the target)` : ''].filter(Boolean).join(', ');
+  const head = o.net ? 'Stopped — the connection to Salesforce dropped' : o.status === 'failed' ? 'The run did not complete' : 'Finished with errors';
+  const hist = o.canUndo ? 'History has this run with its restore point — ↩ Roll back there takes back what it wrote'
+    : (o.ok || o.unconfirmed) ? 'History has this run; it has no usable restore point, so check the target org for what was written'
+    : 'History has this run';
+  // netLegs (2026-11-15, second review): the connection dropped in a step the run went on from — named, not "Stopped"
+  const next = !o.net ? ((o.netLegs && o.netLegs.length) ? ` The connection to Salesforce dropped during ${o.netLegs.join(' and ')}; the other steps ran — scan again to see what is left.` : '')
+    : o.canContinue ? ' Once the connection is back, ▶ Continue from History re-ticks the records this run did not reach.'
+    : ' Once the connection is back, scan again — records that were not written stay listed to deploy.';
+  return { icon: o.status === 'failed' ? '❌' : '⚠', cls: o.status === 'failed' ? 'ds-prog-err' : 'ds-prog-warn', text: `${head}: ${wrote}${bad ? `, ${bad}` : ''}. ${hist}.${next}` };
+}
+
 // PURE. Is a run log line a real error (work not done), or a note? One
 // reading, shared with History's card: the friendly classifier decides; the
 // ℹ marker stays honoured on its own in case the classifier is not loaded.
@@ -2322,6 +2433,8 @@ async function runReconcile(profile, objType, buckets, opts) {
   // 🔁 duplicate rules bypassed per object (the ⏸ panel, 2026-11-08): opts.dupePause =
   // { objects, rules, kept } — listed in the same confirmation; the engine gets the objects.
   const _dp = opts && opts.dupePause && ((opts.dupePause.rules || []).length || (opts.dupePause.kept || []).length || opts.dupePause.objects === null) ? opts.dupePause : null;
+  // …and the same choice for this page's own updates in the target (overwrite, relink) — see sftkRecDupFields.
+  const _dupFields = sftkRecDupFields(profile, _dp);
   // 🧪 DRY RUN (1.1): the same run, but every insert goes to the engine in
   // probe mode — one composite transaction Salesforce rolls back — and the
   // other kinds of write (delete, overwrite, relink, pull) are named as not
@@ -2329,12 +2442,24 @@ async function runReconcile(profile, objType, buckets, opts) {
   const PROBE = !!(opts && opts.probe === true);
   window._sftkProbePaused = PROBE ? ((opts && opts.probePaused) || null) : null;
   const probeAgg = {};   // obj → merged verdict counts (History, toast)
-  const probeNote = (obj, sum) => {
+  // adds the object's counts up, and returns its run-log line { icon, cls, text } (sftkProbeLine, 2026-11-15)
+  const probeNote = (obj, sum, expected) => {
     const a = (sum && sum.probe) || {};
     const t = probeAgg[obj] = probeAgg[obj] || { probed: 0, wouldWrite: 0, refused: 0, cascade: 0, unreached: 0, earlier: 0, sampledOf: 0 };
     for (const k of Object.keys(t)) t[k] += Number(a[k]) || 0;
-    return `${obj}: ${(a.wouldWrite || 0).toLocaleString('en-US')} of ${(a.probed || 0).toLocaleString('en-US')} would be written${a.refused ? `, ${a.refused} refused` : ''}${a.cascade ? `, ${a.cascade} not checked (their parent would be refused)` : ''}${a.earlier ? `, ${a.earlier} not checked (they point at a record an earlier step creates)` : ''}${a.unreached ? `, ${a.unreached} not reached` : ''}${a.sampledOf ? ` — a sample: the first ${a.probed} of ${a.sampledOf.toLocaleString('en-US')}` : ''}`;
+    return sftkProbeLine(obj, a, expected);
   };
+  let probeBroke = false;     // an engine call of the dry run threw or stopped before its verdicts
+  // 2026-11-15 (second review): an engine leg refused because ANOTHER tab's run is on. Every later step is skipped
+  // (the page-side writes are not gated by the engine's one-run rule), and a run that had done nothing before it
+  // ends with no History entry and no restore point — see the BUSY block before step 5.
+  let busyLine = '';
+  const legCheck = res => {
+    const a = sftkRecLegAnswer(res);
+    if (a === 'busy') { busyLine = String((res && res.error) || 'Another Data Studio run is already in progress.'); throw Object.assign(new Error(busyLine), { sftkBusy: true }); }
+    if (a === 'none') throw new Error(String((res && res.error) || 'No response'));
+  };
+  let unconfirmedN = 0;       // records of a real run whose write call gave no answer
   const probeStatuses = [];   // one engine verdict per call
   // ⛔ RUN GATE (user 2026-08-10: "the recommendation to sync parents first
   // is not strong enough") — the advisor's probe already knows when the
@@ -2764,7 +2889,8 @@ async function runReconcile(profile, objType, buckets, opts) {
     if (!prog) return;
     const row = document.createElement('div');
     row.className = `ds-prog-row ${cls}`;
-    row.textContent = `${icon} ${msg}`;
+    // 2026-11-15: every line of this log says a dropped connection in words, never the browser's "Failed to fetch"
+    row.textContent = `${icon} ${typeof sftkNetworkWords === 'function' ? sftkNetworkWords(msg) : msg}`;
     prog.appendChild(row);
   };
   // a block of HTML (the refusal cards); the caller escapes what it puts in
@@ -2807,6 +2933,9 @@ async function runReconcile(profile, objType, buckets, opts) {
   // Stream the engine's per-batch progress into the reconcile log (also
   // keeps the worker alive across the multi-phase pipeline).
   const recPort = _openRunPort(sftkRunProgressHandler(prog));   // the live run view (sftk-run-progress.js)
+  // 2026-11-15: when this run is over — for ANY reason, also when the engine's own 'end' never arrived (the worker
+  // died, the port dropped) — every card still open is closed as stopped. No card stays on "reading records…".
+  const closeRunView = () => { try { if (typeof sftkRunProgressClose === 'function') sftkRunProgressClose(prog); } catch (_) { /* the log is gone */ } };
   // ⏸ Pause: the engine stops after the batch in flight (never mid-write); the
   // run's History entry says so and offers ▶ Continue. Closing the page does the
   // same — said here before anyone tries the tab's ✕ (user 2026-10-09).
@@ -3011,6 +3140,8 @@ async function runReconcile(profile, objType, buckets, opts) {
       // reverse direction consistently.
       pullProfile.sourceOrg = profile.targetOrg;
       pullProfile.targetOrg = profile.sourceOrg;
+      // 2026-11-15: this copy writes INTO the source org; the fallback user is a User Id of the target.
+      if (typeof sftkOwnerFallbackForTarget === 'function') sftkOwnerFallbackForTarget(pullProfile, profile.targetOrg);
       const res = await sendBg({
         // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
@@ -3018,14 +3149,19 @@ async function runReconcile(profile, objType, buckets, opts) {
         srcOrgUrl: tgtSess.orgUrl, srcSid: tgtSess.sid,   // read from TARGET
         tgtOrgUrl: srcSess.orgUrl, tgtSid: srcSess.sid    // write to SOURCE
       });
+      // 2026-11-15 (second review): the pull is an engine leg like the push — no answer at all ("No response") read
+      // "✅ Pulled 0 into source" and a pull-only run ended green; a BUSY refusal is not a pull of 0 either.
+      legCheck(res);
       if (res && res.stopped) stoppedWhy = res.stopped;
       const s = res.summary?.[objType] || {};
       counts.pulled       += (s.created || 0);
       counts.pulledFailed += (s.failed  || 0);
-      log(s.failed ? '⚠' : '✅', `Pulled ${s.created || 0}${s.failed ? `, ${s.failed} failed` : ''} into source`, s.failed ? 'ds-prog-err' : '');
+      const pUnc = sftkRunUnconfirmedInfo(s);
+      unconfirmedN += pUnc.n;
+      log((s.failed || pUnc.n) ? '⚠' : '✅', `Pulled ${s.created || 0}${s.failed ? `, ${s.failed} failed` : ''}${pUnc.note} into source`, (s.failed || pUnc.n) ? 'ds-prog-err' : '');
       (res.errors || []).forEach(e => allErrors.push(`pull: ${e}`));
       _recLogEngineLines(log, res.errors);
-    } catch (e) { allErrors.push(`Pull failed: ${e?.message || e}`); log('❌', `Pull failed: ${e?.message || e}`, 'ds-prog-err'); }
+    } catch (e) { if (!(e && e.sftkBusy)) { allErrors.push(`Pull failed: ${e?.message || e}`); log('❌', `Pull failed: ${e?.message || e}`, 'ds-prog-err'); } }
   }
 
   // ── 3. Push missing (insert) — delegate to the transfer engine ────────
@@ -3048,7 +3184,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   };
   const treePushIds = [...onePass.ins['']];
   const groupATotal = childActs.reduce((s, a) => s + a.groupA.length, 0);
-  if (treePushIds.length || groupATotal) {
+  if (!busyLine && (treePushIds.length || groupATotal)) {
     const autoN = treePushIds.length - pushIds.length;
     if (PROBE) log('🧪', `Checking ${treePushIds.length} ${objType}${autoN > 0 ? ` (${autoN} parent(s) auto-included)` : ''}${groupATotal ? ` + ${groupATotal} child record(s)` : ''} against ${orgLabel(profile.targetOrg)} — one transaction Salesforce rolls back…`);
     else log('⬆', `Pushing ${treePushIds.length} ${objType}${autoN > 0 ? ` (${autoN} parent(s) auto-included)` : ''}${groupATotal ? ` + ${groupATotal} child record(s)` : ''} to target…`);
@@ -3071,9 +3207,15 @@ async function runReconcile(profile, objType, buckets, opts) {
         srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
+      // 2026-11-15: no answer from the engine at all (the worker died, "No response") is a failed call, not
+      // "Inserted 0" with a green check. Second review: neither is a BUSY refusal (summary {}), see legCheck.
+      legCheck(res);
       if (res && res.stopped) stoppedWhy = res.stopped;
       if (PROBE) probeStatuses.push(res.status || 'failed');
+      if (PROBE && (res.errors || []).some(e => /🧪 dry run stopped:/.test(String(e)))) probeBroke = true;
       const s = res.summary?.[objType] || {};
+      // a dry-run call that failed with no verdict for its object checked nothing: incomplete, not "complete"
+      if (PROBE && sftkProbeCallBroke(res)) probeBroke = true;
       // M3c — remember the srcId→tgtId pairs this push just created (root
       // object). sftkLearnPairs no-ops for ephemeral profile ids; the guard
       // mirrors runTransfer's (reconcile always runs the profile's own pair,
@@ -3102,8 +3244,10 @@ async function runReconcile(profile, objType, buckets, opts) {
       takePii(objType, s, true);
       rootTargets.push(...(s.targetRecords || []));
       rootFailedInserts.push(...(s.failedSourceIds || []));
-      if (PROBE) log(s.failed ? '⚠' : '✅', `🧪 ${probeNote(objType, s)}`, s.failed ? 'ds-prog-err' : '');
-      else log(s.failed ? '⚠' : '✅', `${s.upsertUpdated ? `Upserted ${s.created || 0} ${objType} (${s.upsertCreated || 0} created, ${s.upsertUpdated} updated)` : `Inserted ${s.created || 0} ${objType}`}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
+      if (PROBE) { const pl = probeNote(objType, s, treePushIds.length); log(pl.icon, `🧪 ${pl.text}`, pl.cls); }
+      else { const unc = sftkRunUnconfirmedInfo(s);   // 2026-11-15: a thrown write call is not a green row
+        unconfirmedN += unc.n;
+        log((s.failed || unc.n || s.error) ? '⚠' : '✅', `${s.upsertUpdated ? `Upserted ${s.created || 0} ${objType} (${s.upsertCreated || 0} created, ${s.upsertUpdated} updated)` : `Inserted ${s.created || 0} ${objType}`}${s.failed ? `, ${s.failed} failed` : ''}${unc.note}`, (s.failed || unc.n || s.error) ? 'ds-prog-err' : ''); }
       const _seenRootObj = new Set();
       for (const a of childActs) {
         if (!a.groupA.length) continue;
@@ -3125,21 +3269,24 @@ async function runReconcile(profile, objType, buckets, opts) {
         if (cSum.failedSourceIds?.length) {
           childCounts[obj].failedSourceIds = (childCounts[obj].failedSourceIds || []).concat(cSum.failedSourceIds);
         }
-        if (PROBE) log('  ' + (cSum.failed ? '⚠' : '✅'), `🧪 ${probeNote(obj, cSum)}`, cSum.failed ? 'ds-prog-err' : '');
-        else log('  ' + (cSum.failed ? '⚠' : '✅'),
-          `${obj}: ${cSum.created || 0} created${cSum.connected ? `, ${cSum.connected} linked to parent` : ''}${cSum.connectOrphaned ? `, ${cSum.connectOrphaned} unlinked (parent failed)` : ''}${cSum.failed ? `, ${cSum.failed} failed` : ''}`,
-          cSum.failed ? 'ds-prog-err' : '');
+        if (PROBE) { const pl = probeNote(obj, cSum); log('  ' + pl.icon, `🧪 ${pl.text}`, pl.cls); }
+        else { const cUnc = sftkRunUnconfirmedInfo(cSum);
+          unconfirmedN += cUnc.n;
+          log('  ' + ((cSum.failed || cUnc.n || cSum.error) ? '⚠' : '✅'),
+            `${obj}: ${cSum.created || 0} created${cSum.connected ? `, ${cSum.connected} linked to parent` : ''}${cSum.connectOrphaned ? `, ${cSum.connectOrphaned} unlinked (parent failed)` : ''}${cSum.failed ? `, ${cSum.failed} failed` : ''}${cUnc.note}`,
+            (cSum.failed || cUnc.n || cSum.error) ? 'ds-prog-err' : ''); }
       }
       (res.errors || []).forEach(e => allErrors.push(`insert: ${e}`));
       await _recLogRefused(log, res.summary, PROBE, tgtSess);
       _recLogEngineLines(log, res.errors);
-    } catch (e) { allErrors.push(`Push failed: ${e?.message || e}`); log('❌', `Push failed: ${e?.message || e}`, 'ds-prog-err'); }
+    } catch (e) { probeBroke = PROBE; if (!(e && e.sftkBusy)) { allErrors.push(`Push failed: ${e?.message || e}`); log('❌', `${PROBE ? 'The dry run stopped' : 'Push failed'}: ${e?.message || e}`, 'ds-prog-err'); } }
   }
 
   // ── 3b. Group-B child inserts — parent already exists in target ───────
   // Child-rooted transfer with the link field seeded as a match bridge, so
   // each record attaches to its pre-existing parent at insert time.
   for (const a of childActs) {
+    if (busyLine) break;   // another tab's run is on: nothing more of this run starts
     if (!a.groupB.length) continue;
     const obj = a.node.objectType || a.node.childSObject;
     // R5 — the match bridge points at the node's ACTUAL parent: the root for
@@ -3172,6 +3319,8 @@ async function runReconcile(profile, objType, buckets, opts) {
       const bProfile = JSON.parse(JSON.stringify(profile));
       delete bProfile.lastScan;
       if (PROBE) bProfile.probe = true;
+      // 🔁 the same per-object duplicate-rule choice as the push leg (2026-11-15: this leg bypassed EVERY object)
+      if (_dp && Array.isArray(_dp.objects)) bProfile.dupBypassObjects = _dp.objects;
       bProfile.tree = {
         objectType: obj,
         where: '',
@@ -3192,9 +3341,12 @@ async function runReconcile(profile, objType, buckets, opts) {
         srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
+      legCheck(res);   // see the root push
       if (res && res.stopped) stoppedWhy = res.stopped;
       if (PROBE) probeStatuses.push(res.status || 'failed');
+      if (PROBE && (res.errors || []).some(e => /🧪 dry run stopped:/.test(String(e)))) probeBroke = true;
       const s2 = res.summary?.[obj] || {};
+      if (PROBE && sftkProbeCallBroke(res)) probeBroke = true;
       // Same upsert split as the root push — upsert-updates are not creates.
       if (s2.upsertCreated != null || s2.upsertUpdated != null) {
         bumpChild(obj, 'created', s2.upsertCreated || 0);
@@ -3211,8 +3363,10 @@ async function runReconcile(profile, objType, buckets, opts) {
       if (s2.failedSourceIds?.length) {
         childCounts[obj].failedSourceIds = (childCounts[obj].failedSourceIds || []).concat(s2.failedSourceIds);
       }
-      if (PROBE) log(s2.failed ? '⚠' : '✅', `🧪 ${probeNote(obj, s2)} (under parents already in the target)`, s2.failed ? 'ds-prog-err' : '');
-      else log(s2.failed ? '⚠' : '✅', `${obj}: ${s2.created || 0} created under existing parents${s2.failed ? `, ${s2.failed} failed` : ''}`, s2.failed ? 'ds-prog-err' : '');
+      if (PROBE) { const pl = probeNote(obj, s2, a.groupB.length); log(pl.icon, `🧪 ${pl.text} (under parents already in the target)`, pl.cls); }
+      else { const unc2 = sftkRunUnconfirmedInfo(s2);
+        unconfirmedN += unc2.n;
+        log((s2.failed || unc2.n || s2.error) ? '⚠' : '✅', `${obj}: ${s2.created || 0} created under existing parents${s2.failed ? `, ${s2.failed} failed` : ''}${unc2.note}`, (s2.failed || unc2.n || s2.error) ? 'ds-prog-err' : ''); }
       // Phase 4: the levels that rode this call.
       const _seenBObj = new Set([obj]);
       for (const rp of Object.keys(_bRides)) {
@@ -3226,13 +3380,15 @@ async function runReconcile(profile, objType, buckets, opts) {
         if (rs.targetRecords?.length) childCounts[rObj].targetRecords = (childCounts[rObj].targetRecords || []).concat(rs.targetRecords);
         if (rs.viaBulk) childCounts[rObj].viaBulk = true;
         if (rs.failedSourceIds?.length) childCounts[rObj].failedSourceIds = (childCounts[rObj].failedSourceIds || []).concat(rs.failedSourceIds);
-        if (PROBE) log('  ' + (rs.failed ? '⚠' : '✅'), `🧪 ${probeNote(rObj, rs)}`, rs.failed ? 'ds-prog-err' : '');
-        else log('  ' + (rs.failed ? '⚠' : '✅'), `${rObj}: ${rs.created || 0} created under the new ${obj}${rs.failed ? `, ${rs.failed} failed` : ''}`, rs.failed ? 'ds-prog-err' : '');
+        if (PROBE) { const pl = probeNote(rObj, rs); log('  ' + pl.icon, `🧪 ${pl.text}`, pl.cls); }
+        else { const rUnc = sftkRunUnconfirmedInfo(rs);
+          unconfirmedN += rUnc.n;
+          log('  ' + ((rs.failed || rUnc.n || rs.error) ? '⚠' : '✅'), `${rObj}: ${rs.created || 0} created under the new ${obj}${rs.failed ? `, ${rs.failed} failed` : ''}${rUnc.note}`, (rs.failed || rUnc.n || rs.error) ? 'ds-prog-err' : ''); }
       }
       (res.errors || []).forEach(e => allErrors.push(`insert ${obj}: ${e}`));
       await _recLogRefused(log, res.summary, PROBE, tgtSess);
       _recLogEngineLines(log, res.errors);
-    } catch (e) { allErrors.push(`Insert ${obj} failed: ${e?.message || e}`); log('❌', `Insert ${obj} failed: ${e?.message || e}`, 'ds-prog-err'); }
+    } catch (e) { probeBroke = PROBE; if (!(e && e.sftkBusy)) { allErrors.push(`Insert ${obj} failed: ${e?.message || e}`); log('❌', `${PROBE ? `The dry run of ${obj} stopped` : `Insert ${obj} failed`}: ${e?.message || e}`, 'ds-prog-err'); } }
   }
 
   // ── 3c. Relink — re-point existing children at the right parent ───────
@@ -3241,6 +3397,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   // parent still isn't in the target are SKIPPED — never nulled.
   for (const a of (PROBE ? [] : childActs)) {
     if (!a.sel.relink.size) continue;
+    if (busyLine) break;   // see legCheck: nothing more of this run starts
     const obj       = a.node.objectType || a.node.childSObject;
     const linkField = a.node.field;
     // R2 — master-detail links that aren't reparentable can't be PATCHed:
@@ -3385,7 +3542,7 @@ async function runReconcile(profile, objType, buckets, opts) {
           // history-by: the deployment's own History entry (rollback in studio-undo.js)
           const dw = await sftkWriteVerified({
             describe: `relink ${obj}`,
-            write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: slice }),
+            write: () => sendBg({ ..._dupFields, type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: slice }),
             verify: async (res) => {
               const okIds = (Array.isArray(res) ? res : []).filter(rr => rr.success).map(rr => rr.id);
               if (!okIds.length) return { ok: true, detail: [] };
@@ -3426,6 +3583,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   // rest of the run continues.
   for (const a of (PROBE ? [] : childActs)) {
     if (!a.ovwIds.length) continue;
+    if (busyLine) break;   // see legCheck
     const obj = a.node.objectType || a.node.childSObject;
     log('✏', `Updating ${a.ovwIds.length} drifted ${obj} in target…`);
     try {
@@ -3440,7 +3598,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         lookupOverrides: a.node.lookupOverrides || {},    // 🔗 hand-picks made on child rows
         valueOverrides: a.node.valueOverrides || {}      // ✏ typed values
       };
-      const result = await reconcileOverwrite(cProfile, obj, a.ovwIds, a.cs.changed || [], srcSess, tgtSess);
+      const result = await reconcileOverwrite(cProfile, obj, a.ovwIds, a.cs.changed || [], srcSess, tgtSess, _dupFields);
       bumpChild(obj, 'overwritten',     result.ok     || 0);
       bumpChild(obj, 'overwriteFailed', result.failed || 0);
       log(result.failed ? '⚠' : '✅', `${obj}: updated ${result.ok || 0}${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
@@ -3451,9 +3609,10 @@ async function runReconcile(profile, objType, buckets, opts) {
 
   // ── 4. Overwrite drift (update target with source values) ────────────
   if (!PROBE && ovwIds.length) {
-    log('✏', `Updating ${ovwIds.length} drifted record(s) in target…`);
-    try {
-      const result = await reconcileOverwrite(profile, objType, ovwIds, buckets.drift, srcSess, tgtSess);
+    // busyLine: another tab's run is on — this step does not start (see legCheck)
+    if (!busyLine) log('✏', `Updating ${ovwIds.length} drifted record(s) in target…`);
+    if (!busyLine) try {
+      const result = await reconcileOverwrite(profile, objType, ovwIds, buckets.drift, srcSess, tgtSess, _dupFields);
       counts.updated += (result.ok || 0); counts.updatedFailed += (result.failed || 0);
       rootTargets.push(...(result.updatedRecords || []));
       rootFailedUpdates.push(...(result.failedRecords || []));
@@ -3470,8 +3629,9 @@ async function runReconcile(profile, objType, buckets, opts) {
   // reconcileOverwrite "reads from source, patches target" becomes
   // "reads from target, patches source" without touching its internals.
   if (!PROBE && updSrcIds.length) {
-    log('←', `Updating ${updSrcIds.length} drifted record(s) in source with target values…`);
-    try {
+    // busyLine: another tab's run is on — this step does not start (see legCheck)
+    if (!busyLine) log('←', `Updating ${updSrcIds.length} drifted record(s) in source with target values…`);
+    if (!busyLine) try {
       const invProfile = JSON.parse(JSON.stringify(profile));
       const fm = invProfile.tree?.fieldMappings || {};
       const invFm = {};
@@ -3482,6 +3642,8 @@ async function runReconcile(profile, objType, buckets, opts) {
       invProfile.tree.fieldMappings = invFm;
       invProfile.sourceOrg = profile.targetOrg;
       invProfile.targetOrg = profile.sourceOrg;
+      // 2026-11-15: this copy writes INTO the source org; the fallback user is a User Id of the target.
+      if (typeof sftkOwnerFallbackForTarget === 'function') sftkOwnerFallbackForTarget(invProfile, profile.targetOrg);
       const sel = new Set(updSrcIds);
       const swappedBucket = (buckets.drift || [])
         .filter(r => sel.has(r.sourceId))
@@ -3514,6 +3676,27 @@ async function runReconcile(profile, objType, buckets, opts) {
     try { await opts.afterWrites(log); } catch (e) { log('⚠', `Switching the paused automation back on failed here — tried again when the run ends: ${e?.message || e}`, 'ds-prog-warn'); }
   }
 
+  // ⏳ BUSY (2026-11-15, second review): an engine leg was refused because another tab's run is on — the engine
+  // wrote nothing for it and every later step above was skipped. A run that had done nothing before that leg never
+  // started: no History entry, no restore point (its window would lie inside the OTHER run), no roll-back offer —
+  // the same ending as the Transfer and Sequence pages (sftkRunRefusedBusy). A run whose earlier steps (delete,
+  // pull) already wrote keeps its entry, with the refused step named as not started.
+  if (busyLine) {
+    if (!sftkRecRunTouched(counts, childCounts, allErrors, sftkRunLineIsError)) {
+      closeRunView();
+      await sftkRunRefusedBusy({ busy: true, error: busyLine }, { log, toast: showToast,
+        dropRestorePoint: () => (PROBE ? null : sftkUndoStoreDelete(runId)) });
+      window._sftkRunFieldChanges = [];
+      window._sftkRunActive = false;
+      eid('dsRunPauseBar')?.remove();
+      try { recPort?.disconnect(); } catch (_) {}
+      if (runBtn) runBtn.disabled = false;
+      return;
+    }
+    const notStarted = `Not started — the remaining steps of this run were skipped: ${busyLine}`;
+    allErrors.push(notStarted); log('⏳', notStarted, 'ds-prog-warn');
+  }
+
   // ── 5. Save to History so the run is visible later ───────────────────
   const childOk   = Object.values(childCounts).reduce((s, c) => s + c.created + c.relinked + (c.overwritten || 0) + (c.deleted || 0), 0);
   const childFail = Object.values(childCounts).reduce((s, c) => s + c.failed + c.connectFailed + c.relinkFailed + (c.overwriteFailed || 0) + (c.deleteFailed || 0), 0);
@@ -3533,9 +3716,20 @@ async function runReconcile(profile, objType, buckets, opts) {
   // every record would be written; a call that could not run is 'failed'.
   const probeTotals = Object.values(probeAgg).reduce((t, a) => ({ probed: t.probed + a.probed, would: t.would + a.wouldWrite, refused: t.refused + a.refused, cascade: t.cascade + a.cascade + (a.earlier || 0), unreached: t.unreached + a.unreached }), { probed: 0, would: 0, refused: 0, cascade: 0, unreached: 0 });
   const status   = (totalFail === 0 && hardErrs === 0) ? 'success' : (totalOk > 0 ? 'partial' : 'failed');
+  // 2026-11-15: did the connection drop? A hard error line the friendly classifier reads as a network failure.
+  const netStop = allErrors.some(e => sftkRunLineIsError(e) && typeof sftkIsNetworkError === 'function' && sftkIsNetworkError(e));
+  // …and a dry run that stopped or broke before every selected record got its answer is never 'success'
+  const probeIncomplete = PROBE && (probeBroke || netStop || !!stoppedWhy || probeTotals.unreached > 0);
+  const probeStatus = !probeStatuses.length ? 'success' : probeStatuses.every(x => x === 'success') ? 'success' : (probeTotals.would > 0 ? 'partial' : 'failed');
   const runStatus = PROBE
-    ? (!probeStatuses.length ? 'success' : probeStatuses.every(x => x === 'success') ? 'success' : (probeTotals.would > 0 ? 'partial' : 'failed'))
+    ? (probeIncomplete && probeStatus === 'success' ? (probeTotals.would > 0 ? 'partial' : 'failed') : probeStatus)
     : status;
+  // a real run the network stopped is marked so in History, which then offers ▶ Continue for it
+  // 2026-11-15 (second review): only when an INSERT leg lost the connection — a pull or update step that lost it
+  // while the run went on is named in the end line instead (sftkRecNetLegs); "stopped" was untrue for it.
+  const netLegs = sftkRecNetLegs(allErrors, sftkRunLineIsError, e => typeof sftkIsNetworkError === 'function' && sftkIsNetworkError(e));
+  const netStopRun = netStop && netLegs.stopped;
+  if (!PROBE && !stoppedWhy && netStopRun && runStatus !== 'success') stoppedWhy = 'network';
   // ↩ end-of-run boundary from Salesforce's own clock (studio-undo.js) —
   // PER ORG: the target's last write says nothing about when the SOURCE was
   // written (pull / ← update is the run's last phase, into the other org).
@@ -3609,24 +3803,32 @@ async function runReconcile(profile, objType, buckets, opts) {
 
   if (PROBE) {
     const pt = probeTotals;
-    const verdict = !pt.probed ? 'nothing was checked — no insert is selected'
-      : (pt.refused || pt.cascade || pt.unreached)
-        ? `${pt.would.toLocaleString('en-US')} of ${pt.probed.toLocaleString('en-US')} would be written — ${pt.refused ? `${pt.refused} refused` : ''}${pt.cascade ? `${pt.refused ? ', ' : ''}${pt.cascade} not checked (their parent would be refused)` : ''}${pt.unreached ? `${(pt.refused || pt.cascade) ? ', ' : ''}${pt.unreached} not reached` : ''}`
-        : `every one of the ${pt.probed.toLocaleString('en-US')} record(s) would be written`;
-    log(runStatus === 'success' ? '✅' : runStatus === 'partial' ? '⚠' : '❌', `🧪 Dry run complete: ${verdict}. Nothing was written${stoppedWhy ? ' — stopped before every object was checked' : ''}.`, runStatus === 'success' ? '' : 'ds-prog-err');
-    _recRunVerdictTop(prog, runStatus, `🧪 Dry run: ${verdict}. Nothing was written.`);
+    // 2026-11-15: a dry run that stopped says so — in the log, at the top, in the toast and next to ▶ Deploy
+    const pv = sftkProbeVerdict(pt, { incomplete: probeIncomplete, net: netStop, selected: treePushIds.length + groupATotal + childActs.reduce((t, a) => t + a.groupB.length, 0) });
+    const verdict = pv.verdict;
+    closeRunView();
+    log(runStatus === 'success' ? '✅' : runStatus === 'partial' ? '⚠' : '❌', `🧪 ${pv.head}: ${verdict}. Nothing was written${stoppedWhy ? ' — stopped before every object was checked' : ''}.${pv.why}`, runStatus === 'success' ? '' : 'ds-prog-err');
+    _recRunVerdictTop(prog, runStatus, `🧪 ${pv.incomplete ? pv.head : 'Dry run'}: ${verdict}. Nothing was written.${pv.why}`);
     window._sftkRunActive = false;
     eid('dsRunPauseBar')?.remove();
-    showToast(`🧪 Dry run: ${verdict}`, runStatus === 'success' ? 'success' : runStatus === 'partial' ? 'warning' : 'error', 7000);
+    showToast(`🧪 ${pv.incomplete ? pv.head : 'Dry run'}: ${verdict}`, runStatus === 'success' ? 'success' : runStatus === 'partial' ? 'warning' : 'error', 7000);
     // the action bar says it next to ▶ Deploy, for as long as the selection is the one checked
-    window._sftkProbeLast = { key: sftkProbeSelKey(profile.id, _recSel, _recChildSel), status: runStatus, totals: pt, at: Date.now() };
+    window._sftkProbeLast = { key: sftkProbeSelKey(profile.id, _recSel, _recChildSel), status: runStatus, totals: pt, at: Date.now(), ...(pv.incomplete ? { incomplete: true } : {}), ...(netStop ? { net: true } : {}) };
     try { recPort?.disconnect(); } catch (_) {}
     // the selections stay — the point of a dry run is the ▶ Deploy that follows
     renderReconcile();
     return;
   }
-  log(stoppedWhy ? '⏸' : '✅', stoppedWhy === 'pause' ? 'Paused — the records not reached are still to deploy; ▶ Continue from History.' : stoppedWhy === 'closed' ? 'Stopped — the page was closed mid-run; ▶ Continue from History.' : stoppedWhy ? 'Cancelled — refreshing state…' : `Transfer complete — refreshing state…`);
-  _recRunVerdictTop(prog, runStatus, null);
+  // 2026-11-15: a run that did not finish (a dropped connection, a call that threw) never says "Transfer complete";
+  // its last line and the top of the log say what was written and what History offers for it — as it really does:
+  // ↩ Roll back from this entry's own restore-point state, ▶ Continue when History will show that button.
+  closeRunView();
+  const _endEntry = _history[_history.length - 1];
+  const _undoSt = (_endEntry && _endEntry.id === runId && typeof sftkUndoCardState === 'function') ? sftkUndoCardState(_endEntry) : { show: false };
+  const endLine = sftkRunEndLine({ status: runStatus, stoppedWhy, net: netStopRun && runStatus !== 'success', netLegs: netStopRun ? [] : netLegs.legs, ok: totalOk, fail: totalFail, unconfirmed: unconfirmedN,
+    canUndo: !!(_undoSt.show && !_undoSt.disabled), canContinue: !profile.ephemeral && _profiles.some(x => x.id === profile.id) });
+  log(endLine.icon, endLine.text, endLine.cls);
+  _recRunVerdictTop(prog, runStatus, (runStatus !== 'success' && (!stoppedWhy || stoppedWhy === 'network')) ? `${endLine.icon} ${endLine.text}` : null);
   window._sftkRunActive = false;
   eid('dsRunPauseBar')?.remove();
   // The run is in History from here on, and what follows still reads both orgs and then clears every selection. A
@@ -3675,6 +3877,9 @@ async function runReconcile(profile, objType, buckets, opts) {
   // entries for non-zero success counts, so empty + failures = nothing landed.
   if (!toastParts.length && totalFail) {
     showToast(`Nothing was written — all ${totalFail} action(s) failed. The run log above has the first error per record; fix the cause and run again.`, 'error', 9000);
+  } else if (runStatus !== 'success' && (!stoppedWhy || stoppedWhy === 'network') && (netStopRun || !totalFail)) {
+    // 2026-11-15: a call that threw fails no record, so this read "Transfer: no actions" in green
+    showToast(endLine.text, runStatus === 'failed' ? 'error' : 'warning', 10000);
   } else {
     showToast(toastMsg, totalFail ? 'warning' : 'success', 4500);
   }
@@ -4126,7 +4331,21 @@ async function reconcileStampPairs(p, scan) {
     failed ? 'warning' : 'success', 8000);
 }
 
-async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcSess, tgtSess) {
+// 🔁 The duplicate-rule choice of a run, as the fields a page-side
+// SF_COLLECTIONS_UPDATE carries (2026-11-15). The engine's bypass flag ends
+// with each engine leg, so the run's own overwrite and relink writes — made
+// by this page between and after the legs — were sent without the header
+// although the confirmation says "bypassed for this run's writes". dp is the
+// ⏸ panel's per-object choice (objects: [] | null = every object).
+function sftkRecDupFields(profile, dp) {
+  if (!(profile && profile.duplicateRules === 'bypass')) return {};
+  return { dupBypass: true, dupBypassObjects: (dp && Array.isArray(dp.objects)) ? dp.objects : null };
+}
+
+// dupFields: sftkRecDupFields(...) for a write into the run's TARGET; absent
+// for the reverse-drift write into the source (the bypass is confirmed for the
+// target only).
+async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcSess, tgtSess, dupFields) {
   // Map sourceId → targetId from the drift bucket.
   const srcToTgt = new Map();
   for (const r of driftBucket) { if (r.sourceId && r.targetId) srcToTgt.set(r.sourceId, r.targetId); }
@@ -4558,7 +4777,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // ones — the merged answer stays index-aligned with `payloads` for the chunks that were accepted (they run in order).
   const dw = await sftkReconcileChunkedWrite(payloads, (part) => sftkWriteVerified({
     describe: `${objType} overwrite`,
-    write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: part }),
+    write: () => sendBg({ ...(dupFields || {}), type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: part }),
     verify: async (r) => {
       const arr0 = Array.isArray(r) ? r : [];
       const okById = new Map();
@@ -4891,7 +5110,9 @@ function sftkParentStepState(g, vd) {
   if (g && g.srcCount === 0) return 'notneeded';
   if (g && g.empty) return 'empty';
   if (!vd) return 'unknown';
-  return (!vd.missing && !vd.changed) ? 'done' : 'behind';
+  // 2026-11-15: ambiguous keys are not 'done' — the Builder chip and the journey banner already said
+  // "lookups are refused until resolved" for the verdict this page showed as "✓ in sync".
+  return (!vd.missing && !vd.changed && !vd.ambiguous) ? 'done' : 'behind';
 }
 
 // Which objects OUTSIDE this deployment does `objType` point at, and does the
@@ -5252,13 +5473,13 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     const stepHtml = (s, i) => {
       const isNext = i === nextIdx;
       const status = s.done
-        ? `<span class="ds-psync ds-psync-ok" title="Last ${esc(s.refObj)} scan on this org pair found nothing missing and nothing changed.">✓ in sync${s.vd ? ` · ${esc(timeAgo(s.vd.at))}` : ''}</span> <button class="ds-btn ds-btn-xs" data-recgap="${esc(s.refObj)}" title="Re-scan ${esc(s.refObj)} if the orgs changed since.">↻</button>`
+        ? `<span class="ds-psync ds-psync-ok" title="Last ${esc(s.refObj)} scan on this org pair found nothing missing, nothing changed and no ambiguous key.">✓ in sync${s.vd ? ` · ${esc(timeAgo(s.vd.at))}` : ''}</span> <button class="ds-btn ds-btn-xs" data-recgap="${esc(s.refObj)}" title="Re-scan ${esc(s.refObj)} if the orgs changed since.">↻</button>`
         : s.empty
           ? `<span class="ds-psync ds-psync-bad">missing from target entirely${s.required ? ` · ${esc(objType)}.${esc(s.field)} is REQUIRED` : ''}</span> <button class="ds-btn ds-btn-xs ds-btn-primary" data-recgap="${esc(s.refObj)}" title="Creates a ready-made ${esc(s.refObj)} deployment on this org pair (match by Name) and opens it here — push it, come back, run this one.">➕ Deploy ${esc(s.refObj)}</button>`
         : s.checking
           ? `<span class="ds-lkp-hint">⏳ checking alignment…</span>`
           : s.vd
-            ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span> <button class="ds-btn ds-btn-xs${isNext ? ' ds-btn-primary' : ''}" data-recgap="${esc(s.refObj)}" title="Opens the ${esc(s.refObj)} Transfer with this work waiting — fix, come back, continue down the list.">⚖ Open &amp; fix</button>`
+            ? `<span class="ds-psync ds-psync-bad">${esc(sftkDeployBehindText(s.vd))} · ${esc(timeAgo(s.vd.at))}</span> <button class="ds-btn ds-btn-xs${isNext ? ' ds-btn-primary' : ''}" data-recgap="${esc(s.refObj)}" title="Opens the ${esc(s.refObj)} Transfer with this work waiting — fix, come back, continue down the list.">⚖ Open &amp; fix</button>`
             : `<span class="ds-lkp-hint">couldn't check automatically</span> <button class="ds-btn ds-btn-xs" data-recgap="${esc(s.refObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens its Transfer.">🔍 Compare &amp; fix</button>`;
       return `<div class="ds-ordstep${s.done ? ' ds-ordstep-done' : ''}${isNext ? ' ds-ordstep-next' : ''}">
         <span class="ds-ordstep-num">${i + 1}</span>

@@ -316,8 +316,9 @@ async function runOrgCompare() {
   // Errors count as drift too: a red row means we could NOT prove the orgs
   // match, so the run isn't a clean 'success'.
   const finished = _orgCompareState.results || [];
-  const anyDrift = finished.some(r =>
-    r.error || (!r.skipped && (((r.missing || 0) > 0) || ((r.extras || 0) > 0))));
+  // 2026-11-15: a row that only has blank-key records ("cannot tell") is not
+  // proof of a match either, so it keeps the run off 'success' as well.
+  const anyDrift = finished.some(r => ['error', 'drifted', 'unverified'].includes(sftkOcRowStatus(r)));
   _history.push({
     id:          genId('run'),
     kind:        'compare',
@@ -334,7 +335,8 @@ async function runOrgCompare() {
     status:      anyDrift ? 'partial' : 'success',
     summary:     {},
     // what was compared, for 🧾 Activity (2026-10-31): read-only, so no counts of writes
-    compare:     { objects: finished.length, drifted: finished.filter(r => r.error || (!r.skipped && (((r.missing || 0) > 0) || ((r.extras || 0) > 0)))).length, errors: finished.filter(r => r.error).length },
+    compare:     { objects: finished.length, drifted: finished.filter(r => ['error', 'drifted'].includes(sftkOcRowStatus(r))).length, errors: finished.filter(r => r.error).length,
+      unverified: finished.filter(r => sftkOcRowStatus(r) === 'unverified').length },
     errors:      []
   });
   await storageSaveHistory();
@@ -466,9 +468,16 @@ async function _ocCompareOneObject(objName, srcSess, tgtSess) {
 // sharing a Name overwrote each other and blank Names were dropped — three
 // source 'John Smith' against one in the target read Source 1 / Target 1 /
 // 100% clean. Now each key carries a count: per key, min(src, tgt) match and
-// the surplus on either side is missing / only-in-target. A record with a blank
-// key can't be proven present on the other side, so it counts as missing
-// (source) or only-in-target (target) — never as clean — and the row says why.
+// the surplus on either side is missing / only-in-target.
+// 2026-11-15: a record with a blank key cannot be matched at all, so nothing is
+// known about it. Counting it as missing / only-in-target (the 11-14 version)
+// asserted absences nobody checked: two identical orgs with 10 keyed and 990
+// blank External Ids read "990 missing, 990 only in target, 1%, drifted".
+// Blanks now stay OUT of missing / extras and out of the percentage; they are
+// reported on their own (srcBlank / tgtBlank / unmatchable + the note) and the
+// row reads "cannot tell" (sftkOcRowStatus) — never clean, never drifted.
+// When no record on either side has a key, matchPct is null: there is no
+// percentage to state.
 function sftkOcCountByKey(srcRecords, tgtRecords, key) {
   const tally = recs => {
     const byKey = new Map(); let blank = 0;
@@ -481,7 +490,7 @@ function sftkOcCountByKey(srcRecords, tgtRecords, key) {
     return { byKey, blank };
   };
   const S = tally(srcRecords), T = tally(tgtRecords);
-  let matched = 0, missing = S.blank, extras = T.blank, dupKeys = 0;
+  let matched = 0, missing = 0, extras = 0, dupKeys = 0;
   for (const [k, sn] of S.byKey) {
     const tn = T.byKey.get(k) || 0;
     matched += Math.min(sn, tn);
@@ -494,21 +503,37 @@ function sftkOcCountByKey(srcRecords, tgtRecords, key) {
     if (!sn && tn > 1) dupKeys++;
   }
   const blanks = S.blank + T.blank;
+  const keyed = S.byKey.size + T.byKey.size;
   const pct = sftkOcMatchPct(matched, missing, extras);
   const notes = [];
   if (dupKeys) notes.push(`${dupKeys} ${key} value${dupKeys === 1 ? ' is' : 's are'} shared by more than one record, matched by count`);
-  if (blanks) notes.push(`${blanks} record${blanks === 1 ? ' has' : 's have'} a blank ${key} and cannot be matched`);
+  if (blanks) notes.push(`${blanks} record${blanks === 1 ? ' has' : 's have'} a blank ${key} and cannot be matched — not counted as missing or only in target; the % covers records with a ${key} only`);
   return {
     srcCount:   srcRecords.length,
     tgtCount:   tgtRecords.length,
     matched, missing, extras,
-    dupKeys, srcBlank: S.blank, tgtBlank: T.blank,
+    dupKeys, srcBlank: S.blank, tgtBlank: T.blank, unmatchable: blanks,
     note:       notes.join('; '),
     matchField: key,
-    matchPct:   pct
+    matchPct:   (blanks && !keyed) ? null : pct
   };
 }
 if (typeof globalThis !== 'undefined') globalThis.sftkOcCountByKey = sftkOcCountByKey;
+
+// PURE. What one finished result row may be called (2026-11-15) — the single
+// rule behind the banner, the History entry and the CSV, which each had their
+// own "missing or extras → drifted, else clean". 'unverified' = no keyed
+// difference was found, but some records have a blank key and could not be
+// compared: not clean (nothing proves it) and not drifted (nothing shows it).
+function sftkOcRowStatus(r) {
+  if (!r || r.status === 'pending') return 'pending';
+  if (r.error) return 'error';
+  if (r.skipped) return 'skipped';
+  if ((r.missing || 0) > 0 || (r.extras || 0) > 0) return 'drifted';
+  if ((r.srcBlank || 0) > 0 || (r.tgtBlank || 0) > 0) return 'unverified';
+  return 'clean';
+}
+if (typeof globalThis !== 'undefined') globalThis.sftkOcRowStatus = sftkOcRowStatus;
 
 function _ocRenderResults() {
   const el = eid('dsOCResults');
@@ -535,8 +560,9 @@ function _ocRenderResults() {
   // misleading half-count).
   let banner = '';
   if (!pend.length && !_orgCompareState.running) {
-    const clean = done.filter(r => !r.missing && !r.extras).length;
-    const drift = done.length - clean;
+    const clean = done.filter(r => sftkOcRowStatus(r) === 'clean').length;
+    const drift = done.filter(r => sftkOcRowStatus(r) === 'drifted').length;
+    const cannotTell = done.length - clean - drift;   // blank keys only — see sftkOcRowStatus
     banner = `
       <div class="ds-oc-banner">
         <strong>${rows.length} object${rows.length === 1 ? '' : 's'} compared</strong>
@@ -544,6 +570,8 @@ function _ocRenderResults() {
         <span class="ds-oc-clean">✓ ${clean} clean</span>
         <span class="ds-oc-dot">·</span>
         <span class="${drift ? 'ds-oc-drift' : 'ds-oc-dot'}">△ ${drift} drifted</span>
+        ${cannotTell ? `<span class="ds-oc-dot">·</span>
+        <span class="ds-oc-drift" title="Records with a blank match field cannot be compared — these objects are neither proven clean nor shown to differ">? ${cannotTell} cannot tell</span>` : ''}
         ${errs.length ? `<span class="ds-oc-dot">·</span>
         <span class="ds-oc-drift">⚠ ${errs.length} error${errs.length === 1 ? '' : 's'}</span>` : ''}
         <span class="ds-oc-dot">·</span>
@@ -571,14 +599,17 @@ function _ocRenderResults() {
           return `<tr><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-err" title="${esc(fe.raw)}">⚠ ${esc(fe.message)}${fe.hint ? ` <span style="opacity:.75">— ${esc(fe.hint)}</span>` : ''}</td></tr>`;
         }
         if (r.skipped) return `<tr class="ds-oc-skipped"><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-skip">— ${esc(r.reason || 'Skipped.')}</td></tr>`;
-        return `<tr class="ds-oc-row ${colorFor(r.matchPct)}">
+        // A "cannot tell" row is never painted green, whatever its keyed %.
+        const unver = sftkOcRowStatus(r) === 'unverified';
+        const blankN = (r.srcBlank || 0) + (r.tgtBlank || 0);
+        return `<tr class="ds-oc-row ${unver ? 'ds-oc-yellow' : colorFor(r.matchPct)}">
           <td>${esc(r.name)} <span class="ds-oc-row-mf">by ${esc(r.matchField)}</span>${r.note ? ` <span class="ds-oc-row-mf" title="${esc(r.note)}">⚠ ${esc(r.note)}</span>` : ''}</td>
           <td>${r.srcCount.toLocaleString('en-US')}</td>
           <td>${r.tgtCount.toLocaleString('en-US')}</td>
           <td>${r.matched.toLocaleString('en-US')}</td>
           <td>${r.missing ? `<strong>${r.missing.toLocaleString('en-US')}</strong>` : '0'}</td>
           <td>${r.extras  ? `<strong>${r.extras.toLocaleString('en-US')}</strong>`  : '0'}</td>
-          <td class="ds-oc-pct"><strong>${r.matchPct}%</strong></td>
+          <td class="ds-oc-pct"><strong>${r.matchPct == null ? '—' : `${r.matchPct}%`}</strong>${blankN ? ` <span class="ds-oc-row-mf" title="${esc(`${(r.srcBlank || 0).toLocaleString('en-US')} source and ${(r.tgtBlank || 0).toLocaleString('en-US')} target record(s) have a blank ${r.matchField} and were not compared`)}">${unver ? 'cannot tell' : 'keyed only'}</span>` : ''}</td>
           <td style="white-space:nowrap">
             <button class="ds-btn ds-btn-xs ds-btn-primary" data-oc-reconcile="${esc(r.name)}">🚀 Deploy</button>
             <button class="ds-btn ds-btn-xs" data-oc-deploy="${esc(r.name)}" data-oc-mf="${esc(r.matchField || '')}"
@@ -632,16 +663,16 @@ function _ocExportCsv() {
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const header = ['object', 'status', 'matchField', 'sourceCount', 'targetCount',
-                  'matched', 'missingInTarget', 'onlyInTarget', 'matchPct', 'detail'];
+                  'matched', 'missingInTarget', 'onlyInTarget', 'blankKeySource', 'blankKeyTarget', 'matchPct', 'detail'];
   const body = rows.map(r => {
-    const status = r.error ? 'error'
-                 : r.skipped ? 'skipped'
-                 : ((r.missing || r.extras) ? 'drifted' : 'clean');
+    // 2026-11-15: blank-key rows are 'cannot tell' and carry their own columns.
+    const st = sftkOcRowStatus(r);
+    const status = st === 'unverified' ? 'cannot tell' : st;
     const detail = r.error ? r.error : (r.skipped ? (r.reason || 'Skipped.') : (r.note || ''));
     return [
       r.name, status, r.matchField || '',
       r.srcCount ?? '', r.tgtCount ?? '',
-      r.matched ?? '', r.missing ?? '', r.extras ?? '', r.matchPct ?? '',
+      r.matched ?? '', r.missing ?? '', r.extras ?? '', r.srcBlank ?? '', r.tgtBlank ?? '', r.matchPct ?? '',
       detail
     ].map(cell).join(',');
   }).join('\r\n');

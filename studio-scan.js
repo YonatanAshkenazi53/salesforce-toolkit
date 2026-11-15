@@ -1973,6 +1973,14 @@ async function scanReconcileChild(profile, pathKey) {
   return res;
 }
 
+// PURE. The sync-map verdict of one finished scan. 2026-11-15: ambiguous is part of it — this deposit
+// left it out, and the map is newest-wins, so a run's own rescan erased the count another caller had
+// recorded and the parent read "in sync" again while lookups to it were still refused.
+function sftkScanSyncVerdict(res) {
+  const n = k => ((res && res[k]) || []).length;
+  return { missing: n('missingInTarget'), changed: n('changed'), extra: n('onlyInTarget'), ambiguous: n('ambiguous'), at: res && res.runAt };
+}
+
 // Run the diff scan for the given profileId, write the result back to the
 // profile, persist, refresh whatever UI is open. Returns the result object
 // so the caller can show a toast / error / counts inline.
@@ -2041,12 +2049,7 @@ async function refreshProfileDiff(profileId) {
   // the ring tile keeps its own non-ephemeral path.
   try {
     if (res.status === 'success' && res.objectType && typeof sftkParentSyncPut === 'function') {
-      sftkParentSyncPut(profile.sourceOrg, profile.targetOrg, res.objectType, {
-        missing: (res.missingInTarget || []).length,
-        changed: (res.changed || []).length,
-        extra:   (res.onlyInTarget || []).length,
-        at: res.runAt,
-      });
+      sftkParentSyncPut(profile.sourceOrg, profile.targetOrg, res.objectType, sftkScanSyncVerdict(res));
     }
     if (!profile.ephemeral && typeof sftkRingTileFromScan === 'function') {
       sftkRingTileFromScan(profile);

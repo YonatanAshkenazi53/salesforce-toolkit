@@ -86,7 +86,9 @@ function sftkHistoryNote(j, result, describe) {
 function _sftkHistNormalizeUndo(undo) {
   if (undo && Array.isArray(undo.steps) && undo.steps.length) {
     const steps = undo.steps.filter(s => s && typeof s === 'object' && s.msg && typeof s.msg.type === 'string')
-      .map(s => ({ describe: String(s.describe || s.msg.type), msg: s.msg, verify: s.verify || null, orgUrl: s.orgUrl || '' }));
+      // retry (2026-11-15): a step's second message for a named refusal (see sftkHistoryUndo) is kept with the step
+      .map(s => ({ describe: String(s.describe || s.msg.type), msg: s.msg, verify: s.verify || null, orgUrl: s.orgUrl || '',
+        ...(s.retry && s.retry.when && s.retry.msg && typeof s.retry.msg.type === 'string' ? { retry: s.retry } : {}) }));
     if (steps.length) return { steps, note: undo.note ? String(undo.note) : '' };
     return { none: 'the undo steps were empty — a bug in the tool, please report it' };
   }
@@ -187,6 +189,7 @@ function sftkToolUndoState(entry) {
 //   pattern: a regular expression (source + flags) matched against the answer's
 //            TEXT — for a read that answers text, not JSON (SOAP readMetadata
 //            through `msg`, 2026-11-04: a report type has no SOQL and no REST path)
+//   strip:   with pattern — a regular expression (source) whose matches are cut out of the text first
 //   text:    { ok, bad } — the sentences for both outcomes (optional)
 function _sftkHistPick(obj, path) {
   let v = obj;
@@ -202,7 +205,13 @@ function sftkUndoVerifyEval(spec, answer) {
   if (!answer || answer.error) return { ok: false, text: `could not re-read the org${answer && answer.error ? ` (${answer.error})` : ''} — treat this as unverified` };
   if (s.pattern) {
     let ok = false;
-    try { ok = new RegExp(String(s.pattern), String(s.flags || '')).test(String(answer.text == null ? '' : answer.text)); } catch (_) { ok = false; }
+    // strip (2026-11-15): a part of the text the pattern must NOT be satisfied by, cut out first — a layout's
+    // <relatedLists> name ANOTHER object's columns, so a same-named column there is no evidence of the restore.
+    try {
+      let txt = String(answer.text == null ? '' : answer.text);
+      if (s.strip) txt = txt.replace(new RegExp(String(s.strip), 'gi'), '');
+      ok = new RegExp(String(s.pattern), String(s.flags || '')).test(txt);
+    } catch (_) { ok = false; }
     return { ok, text: ok ? (t.ok || '') : (t.bad || 'accepted by Salesforce, but the org still shows the old state') };
   }
   let v = _sftkHistPick(answer, s.pick || 'records');
@@ -285,7 +294,24 @@ async function sftkHistoryUndo(entryId, opts) {
     if (!stepOrg) { sftkHistoryNote(j, { ok: false, accepted: false, verified: false, text: `${step.describe}: not logged in to ${step.orgUrl}` }, step.describe); log(`❌ ${step.describe}: not logged in to ${step.orgUrl}`); continue; }
     const r = await sftkWriteVerified({
       describe: step.describe,
-      write: () => send({ ...step.msg, orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, _suppressError: true, _silentError: true }),
+      // step.retry (2026-11-15): { when, flags?, msg, say? } — a second message sent when the first is refused with
+      // an error that matches `when`. A layout undo needs it: Salesforce often refuses a layout deploy on its action
+      // lists, where the fix's own fallback and Restore points deploy again without them — the undo sent one deploy
+      // and was refused where both of those went through. Both attempts are verified by the step's one re-read below.
+      write: async () => {
+        const sendStep = m => send({ ...m, orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, _suppressError: true, _silentError: true });
+        const first = await sendStep(step.msg);
+        const rt = step.retry;
+        const err = first && (first.error || first.success === false) ? String(first.error || first.errorMessage || first.message || '') : '';
+        if (!err || !rt || !rt.msg || !rt.when) return first;
+        let hit = false;
+        try { hit = new RegExp(String(rt.when), String(rt.flags || 'i')).test(err); } catch (_) { hit = false; }
+        if (!hit) return first;
+        log(`… ${step.describe}: ${rt.say || 'refused as sent — trying the step\'s second way'}`);
+        const second = await sendStep(rt.msg);
+        // accepted or refused, the second answer stands; with no answer at all the first refusal is what is said
+        return second && (second.error || second.success === false) ? second : (second || first);
+      },
       verify: step.verify && (step.verify.query || step.verify.path || step.verify.msg) ? async () => {
         const vs = step.verify;
         const read = () => (vs.msg

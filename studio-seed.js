@@ -1488,7 +1488,7 @@ async function sftkSeedRun(what, objs, targets) {
             // status is the truth (same lie the reconcile card once told).
             const dead = result.status && result.status !== 'success';
             line((s.failed || dead) ? (dead && !(s.created || 0) ? '❌' : '⚠') : '✅',
-              `${orgLabel(t)} · ${label}: ${s.created || 0} written${arm}${s.failed ? `, ${s.failed} failed` : ''}${dead ? ` — run ${result.status}, see History` : ''}`);
+              `${orgLabel(t)} · ${label}: ${s.created || 0} written${arm}${s.failed ? `, ${s.failed} failed` : ''}${sftkRunUnconfirmedInfo(s).note}${dead ? ` — run ${result.status}, see History` : ''}`);
             return prof;
           };
           for (const o of order) {

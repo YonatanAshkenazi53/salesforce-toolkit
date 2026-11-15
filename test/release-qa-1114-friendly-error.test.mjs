@@ -40,7 +40,9 @@ describe('2. network and API-limit errors get their own plain message', () => {
     expect(fe.message).toBe('No connection to Salesforce');
     expect(fe.hint).toMatch(/network.*Retry/);
   });
-  it.each(['HTTP 403: TotalRequests Limit exceeded.', 'REQUEST_LIMIT_EXCEEDED: TotalRequests Limit exceeded.', 'scan: account: REQUEST_LIMIT_EXCEEDED'])('%s → api-limit', raw => {
+  // 2026-11-15: the bare code 'scan: account: REQUEST_LIMIT_EXCEEDED' was pinned to the daily text here; the code
+  // also stands for the concurrent limits, so it now has a neutral text — test/regress-1115-mdapi.test.mjs.
+  it.each(['HTTP 403: TotalRequests Limit exceeded.', 'REQUEST_LIMIT_EXCEEDED: TotalRequests Limit exceeded.'])('%s → api-limit', raw => {
     const fe = sftkFriendlyError(raw);
     expect(fe.type).toBe('api-limit');
     expect(fe.message).toMatch(/daily API calls/);
@@ -69,20 +71,23 @@ function popupHarness() {
   return { handleApiError: fn, els, connectRow, label };
 }
 
-describe('2. popup: network / API limit offer Retry only, never the Connect form', () => {
-  it.each(['Failed to fetch', 'HTTP 403: TotalRequests Limit exceeded.'])('%s hides Connect and Reload Extension, labels Retry', raw => {
+// 2026-11-15: 'Failed to fetch' was pinned here as hiding the Connect form; a dead org address fails the same way and
+// the form is its way out, so a network error keeps it — test/regress-1115-mdapi.test.mjs.
+describe('2. popup: an API limit offers Retry only, never the Connect form', () => {
+  it.each(['HTTP 403: TotalRequests Limit exceeded.'])('%s hides Connect and Reload Extension, labels Retry', raw => {
     const h = popupHarness();
     h.handleApiError(raw);
     expect(h.els.sessionError.style.display).toBe('');
     expect(h.connectRow.style.display).toBe('none');
     expect(h.els.reloadExtBtn.style.display).toBe('none');
     expect(h.label.textContent).toBe('Retry');
-    expect(h.els.sessionErrorMsg.textContent).not.toMatch(/^Failed to fetch$|^HTTP 403/);
+    expect(h.els.sessionErrorMsg.textContent).not.toMatch(/^HTTP 403/);
     expect(h.els.sessionErrorMsg.title).toBe(raw);   // the raw text stays reachable
   });
-  it('any other error brings the Connect form and Auto-detect back after a network error', () => {
+  it('any other error brings the Connect form and Auto-detect back after an API-limit error', () => {
     const h = popupHarness();
-    h.handleApiError('Failed to fetch');
+    h.handleApiError('HTTP 403: TotalRequests Limit exceeded.');
+    expect(h.connectRow.style.display).toBe('none');
     h.handleApiError('Some other failure');
     expect(h.connectRow.style.display).toBe('');
     expect(h.els.reloadExtBtn.style.display).toBe('');

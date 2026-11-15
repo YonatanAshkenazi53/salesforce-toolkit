@@ -84,6 +84,7 @@ export default async function (h) {
     }
     return;
   }
+  const tried = new Set();
   const fixBtns = await h.eval(`[...document.querySelectorAll('.fc-fix-btn')].map(b => (b.dataset.type || '?') + ':' + (b.dataset.name || b.dataset.id) + (b.disabled ? '(off)' : ''))`);
   h.log('fix buttons:', JSON.stringify(fixBtns));
   // the flow first
@@ -93,6 +94,8 @@ export default async function (h) {
   if (!flowBtn) h.log('no flow fix button for', flowSel, '— straight to the other fixes / the delete');
   else {
   h.log('flow button:', await h.eval(`(() => { const b = document.querySelector(${JSON.stringify(flowSel)}); return b.dataset.name + ' (' + b.closest('.fc-item')?.innerText.replace(/\\s+/g, ' ').slice(0, 80) + ')'; })()`));
+  // 2026-11-15: the button pressed here is remembered, or the loop below presses the SAME refused button again — its refusal replaces the one on the page, no new error and no dialog appear, and the wait timed out
+  tried.add(await h.eval(`(() => { const b = document.querySelector(${JSON.stringify(flowSel)}); return b.dataset.type + ':' + (b.dataset.name || b.dataset.id) + ':' + (b.dataset.way || ''); })()`));
   await h.eval(`document.querySelector(${JSON.stringify(flowSel)}).click()`);
   // since 2026-10-06 a way that cannot work is refused BEFORE the dialog (an inline error, no confirmation)
   await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('.fc-inline-error, .fc-item-err, [class*=inline-err]')", 90000, 500);
@@ -116,7 +119,6 @@ export default async function (h) {
   // any other fix buttons (permission set etc.). QA 2026-10-06: a flow whose
   // "keeps running" way is refused (an element would be left empty) is pressed
   // again with 🗑 Delete versions · flow off, never the same button twice.
-  const tried = new Set();
   for (let i = 0; i < (process.env.ONLY_FLOW === '1' ? 0 : 6); i++) {   // ONLY_FLOW=1: the flow fix alone, so UNDO=1 undoes it
     const pick = await h.eval(`(() => {
       const tried = new Set(${JSON.stringify([...tried])});

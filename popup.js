@@ -3613,9 +3613,13 @@ function showScanProgress(show, text, onCancel) {
   }
 }
 
-// opts.retryOnly (2026-11-14, QA): a dropped network or the org's daily API
-// limit is not a session problem — the Connect form and Reload Extension
-// would send the user to reconnect for nothing, so only a Retry is offered.
+// opts.retryOnly (2026-11-14, QA): an API limit of the org is not a session
+// problem — the Connect form and Reload Extension would send the user to
+// reconnect for nothing, so only a Retry is offered.
+// opts.retry (2026-11-15): a failed fetch is a dropped network OR a dead org
+// address (deleted sandbox, renamed My Domain) — the two cannot be told apart,
+// and the Connect form is the way out of the second, so it stays; only the
+// button reads Retry.
 function showSessionError(msg, rawDetail, opts) {
   const retryOnly = !!(opts && opts.retryOnly);
   const connectRow = document.getElementById('orgUrlInput')?.closest('.session-error-row');
@@ -3624,7 +3628,7 @@ function showSessionError(msg, rawDetail, opts) {
   if (reloadBtn) reloadBtn.style.display = retryOnly ? 'none' : '';
   const retryBtnEl = document.getElementById('retryBtn');
   const retryLabel = retryBtnEl && [...retryBtnEl.childNodes].reverse().find(n => n.nodeType === 3);
-  if (retryLabel) retryLabel.textContent = retryOnly ? 'Retry' : 'Auto-detect';
+  if (retryLabel) retryLabel.textContent = (retryOnly || (opts && opts.retry)) ? 'Retry' : 'Auto-detect';
   const msgEl = document.getElementById('sessionErrorMsg');
   msgEl.textContent = msg;
   // Keep the raw API error reachable for copy-paste / support without surfacing it
@@ -3705,7 +3709,7 @@ function handleApiError(errMsg) {
   } else {
     const fe = sftkFriendlyError(errMsg);
     showSessionError(fe.message + (fe.hint ? ' — ' + fe.hint : ''), String(errMsg),
-      { retryOnly: fe.type === 'network' || fe.type === 'api-limit' });
+      { retryOnly: fe.type === 'api-limit' || fe.type === 'api-busy', retry: fe.type === 'network' });
   }
 }
 

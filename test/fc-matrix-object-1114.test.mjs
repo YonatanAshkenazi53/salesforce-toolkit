@@ -128,9 +128,13 @@ describe('FieldSet', () => {
     const before = '<fullName>Account.SFTK_Live_FS</fullName><description>SFTK live demo</description>' + row(F) + '<label>SFTK Live FS</label>';
     removed(rm('FieldSet', before), before, '<fullName>Account.SFTK_Live_FS</fullName><description>SFTK live demo</description><label>SFTK Live FS</label>');
   });
-  it('✂ several mentions: displayed and available, both spellings — all go in one pass; a longer name and a path through another object stay', () => {
-    const others = row('SFTK_Live_Blk__c_Old__c') + row(`Parent.${F}`);   // not this field: a longer name, and the PARENT account's field (a path)
-    const before = head + row(F, 'availableFields') + '<description>SFTK live demo</description>' + row('Name') + row(`Account.${F}`) + others + row(`account.${F.toLowerCase()}`) + '<label>SFTK Live FS</label>';
+  // 2026-11-15 (second review): this test pinned a defect — it kept `Parent.<field>` in an ACCOUNT field set as
+  // "the parent account's field, not this one". Parent on Account is a self-lookup: that entry names this very
+  // field (Salesforce refuses the field's delete while it is listed), so ✂ left it behind and still said done.
+  // It now goes with the others (test/regress-1115-refix.test.mjs); a path through ANOTHER object (Owner.) stays.
+  it('✂ several mentions: displayed and available, both spellings, and the self-lookup path — all go in one pass; a longer name and a path through another object stay', () => {
+    const others = row('SFTK_Live_Blk__c_Old__c') + row(`Owner.${F}`);   // not this field: a longer name, and the owner USER's field (a path)
+    const before = head + row(F, 'availableFields') + '<description>SFTK live demo</description>' + row('Name') + row(`Account.${F}`) + row(`Parent.${F}`) + others + row(`account.${F.toLowerCase()}`) + '<label>SFTK Live FS</label>';
     const r = rm('FieldSet', before);
     expect(r.refused).toBeNull();
     expect(r.xml).toBe(head + '<description>SFTK live demo</description>' + row('Name') + others + '<label>SFTK Live FS</label>');

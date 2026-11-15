@@ -38,7 +38,7 @@ function sftkFeedCounts(e) {
   if (e.kind === 'compare') {
     const c = e.compare || {};
     if (c.objects == null) return 'read-only — nothing written';
-    return `${c.objects} object${c.objects === 1 ? '' : 's'} compared · ${c.drifted || 0} drifted${c.errors ? ` · ${c.errors} could not be read` : ''} — read-only`;
+    return `${c.objects} object${c.objects === 1 ? '' : 's'} compared · ${c.drifted || 0} drifted${c.unverified ? ` · ${c.unverified} cannot tell (blank match field)` : ''}${c.errors ? ` · ${c.errors} could not be read` : ''} — read-only`;
   }
   let ins = 0, upd = 0, del = 0, fail = 0;
   for (const s of Object.values(e.summary || {})) {

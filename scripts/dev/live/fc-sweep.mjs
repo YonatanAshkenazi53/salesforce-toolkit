@@ -12,7 +12,8 @@ async function pick(h, inputSel, dropSel, api) {
   await h.eval(`(() => { const it = document.querySelector('${dropSel} .fc-dd-item[data-api="${api}"]'); it.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); return true; })()`);
   await h.sleep(800);
 }
-const txt = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
+// 2026-11-15: the sweep lives inside the folded 'Look further than the index' block — innerText of a closed <details> is empty, so open every one above the element first
+const txt = async (h, sel, n = 2500) => (await h.eval(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); for (let d = e && e.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true; return (e && e.innerText) || ''; })()`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 const setDark = async (h, on) => { await h.eval(`document.body.classList.toggle('sftk-dark', ${on ? 'true' : 'false'}); document.body.classList.remove('sftk-oled'); true`); await h.sleep(on ? 900 : 400); };
 const shot = async (h, name) => {
   await h.eval(`document.querySelector('#fcOrgSweep')?.scrollIntoView({ block: 'start' })`); await h.sleep(300);
@@ -64,4 +65,7 @@ export default async function (h) {
   h.log('pills:', await txt(h, '#fcOrgSweep .fc-sweep-sum', 400));
   h.log('notes:', JSON.stringify(await h.eval(`[...document.querySelectorAll('#fcOrgSweep .fc-sweep-why')].map(e => e.innerText).filter(t => /^ℹ/.test(t))`)));
   await shot(h, 'sweep-3-result');
+  // what the scan's own list says after the sweep (the blockers it added, with their names)
+  h.log('RESULTS after the sweep:', (await txt(h, '#fcResults', 9000)).slice(0, 5000));
+  h.log('DELETE ZONE:', await txt(h, '#fcDeleteZone', 1500));
 }

@@ -351,6 +351,10 @@ function _sftkUndoVerdictHtml(ctx) {
   if (refused.length) {
     return `<div class="ds-rec-card ds-rec-card-bad"><div class="ds-rec-card-line">❌ <strong>Nothing could be rolled back</strong> — ${refused.length} object(s) could not be read (${esc(refused.map(r => r.objType).join(', '))}); nothing was compared, nothing is written.</div></div>`;
   }
+  // 2026-11-15: Kept parents with no tick box are still the run's records in
+  // the org — say so and say what unlocks them, never "matches the restore point".
+  const keptOnly = sftkUndoKeptOnlyText(ctx.plan);
+  if (keptOnly) return `<div class="ds-rec-card ds-rec-card-warn"><div class="ds-rec-card-line">⚠ <strong>Nothing can be rolled back right now</strong> — ${esc(keptOnly)}</div></div>`;
   return '<div class="ds-rec-card"><div class="ds-rec-card-line"><strong>Nothing to roll back</strong> — every object that was read matches the restore point (nothing created since it that the run could have made, nothing overwritten). Nothing is written.</div></div>';
 }
 
@@ -608,7 +612,9 @@ async function sftkUndoExecute(ctx, picks, io) {
   // disables its only rollback button while the rest of the run's inserts and
   // overwrites are still in the org. Measured against the plan, not the picks.
   const coverage = sftkUndoPickCoverage(plan, work);
-  const leftNote = coverage.left ? ` — ${coverage.left.toLocaleString('en-US')} of ${coverage.planned.toLocaleString('en-US')} record(s) left in place${coverage.kept ? ` (${coverage.kept.toLocaleString('en-US')} kept)` : ''}` : '';
+  // 2026-11-15: the note names the kept-for-later-children part on its own —
+  // those have no tick box, so "roll back again" alone does not reach them.
+  const leftNote = coverage.left ? ` — ${coverage.left.toLocaleString('en-US')} of ${coverage.planned.toLocaleString('en-US')} record(s) left in place${coverage.kept ? ` (${coverage.kept.toLocaleString('en-US')} kept${coverage.keptForChildren ? `, ${coverage.keptForChildren.toLocaleString('en-US')} of them until the records added under them are removed` : ''})` : ''}` : '';
 
   // The rollback's own History entry — written on success AND on a failure
   // half-way, so what happened is never lost.
@@ -742,7 +748,7 @@ async function sftkUndoExecute(ctx, picks, io) {
     log(status === 'success' ? '🏁' : '⚠', status === 'success'
       ? `Rollback complete — everything it acted on is verified; recorded in History.${tail}`
       : verified === 'success'
-      ? `Rollback verified for everything it acted on, but ${coverage.left.toLocaleString('en-US')} of ${coverage.planned.toLocaleString('en-US')} record(s) in the plan were not picked${coverage.kept ? ` or were kept (${coverage.kept.toLocaleString('en-US')} kept)` : ''} and still hold the run's changes — recorded in History as partial; ↩ Roll back stays available for the rest.${tail}`
+      ? `Rollback verified for everything it acted on, and recorded in History as partial. ${sftkUndoLeftText(coverage)}${tail}`
       : `Rollback finished with status "${status}" — see the lines above. It is recorded in History; ↩ Roll back stays available to try again once the refusal is sorted.${tail}`, status === 'success' ? '' : 'ds-prog-warn');
     showToast(status === 'success' ? (gone ? '✅ Rollback complete and verified — see the note about deleted records' : '✅ Rollback complete and verified') : `⚠ Rollback ${status} — see the page`, status === 'success' ? 'success' : 'warning', 6000);
     progress({ phase: 'end' });

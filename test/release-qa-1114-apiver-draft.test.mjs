@@ -90,6 +90,9 @@ describe('avVerifyAndActivate never takes a pre-existing Draft for a new version
   it('the undo builder names an overwritten flow and never queues a delete for it', () => {
     const apply = DEP.slice(DEP.indexOf('async function applyApiVerChange('), DEP.indexOf('function buildReportObject('));
     expect(apply).toMatch(/if \(v && v\.overwroteExisting\) \{ undoSkipped\.push\(c\.apiName\); continue; \}/);
-    expect(apply).toContain('prevLatest: j.latestVersion == null ? null : Number(j.latestVersion)');
+    // 2026-11-15: this line pinned prevLatest to the SCAN's latestVersion — a value that can never differ from
+    // prevVersion for an active flow, so the guard above could not fire. It now comes from an Apply-time read
+    // (sftkApiVerApplyCheck); the whole Apply is run in test/regress-1115-flows-debug-health.test.mjs.
+    expect(apply).toContain('prevLatest: fresh.prevLatest,');
   });
 });

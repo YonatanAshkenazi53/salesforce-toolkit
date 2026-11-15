@@ -151,7 +151,9 @@ describe('sftkFileKeyPairs — key pairing for unwritten records', () => {
     expect(src).toMatch(/node\.includeFiles === true && recs\.length/);
     // Leftovers = fetched minus written; paired via sftkFileKeyPairs.
     expect(src).toMatch(/const leftover = recs\.filter\(r => r\?\.Id && !nodeIdMap\[r\.Id\]\)/);
-    expect(src).toMatch(/sftkFileKeyPairs\(recs, nodeIdMap, keyField, tgtRows\)/);
+    // 2026-11-15: the records left out of the pass (notInSync) are handed in, so
+    // they are neither paired nor counted a second time (regress-1115-engine).
+    expect(src).toMatch(/sftkFileKeyPairs\(recs, nodeIdMap, keyField, tgtRows, notInSync\)/);
     // PII and composite keys fail CLOSED with a note, never silently.
     expect(src).toMatch(/PII masking is active, so matching them by raw key values is unsafe/);
     expect(src).toMatch(/composite match keys aren't supported for the files pass yet/);

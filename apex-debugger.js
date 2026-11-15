@@ -128,6 +128,25 @@ function sftkDbgSoqlDateTime(v) {
   return new Date(t).toISOString().replace(/\.\d+Z$/, 'Z');
 }
 
+// 2026-11-15 (review of f0334a0): the values a taken-over (foreign) trace flag
+// had before Start Trace re-pointed it lived only in the popup's memory. The
+// popup closes on focus loss, so the next Start found the flag already on a
+// Toolkit level, took it for its own, and Stop / undo DELETED the colleague's
+// flag after all. The record is kept in chrome.storage.local per org + flag
+// Id and read back when the flag is found on a Toolkit level.
+// PURE: the storage key of one flag's record.
+function sftkDbgPriorKey(orgKey, flagId) {
+  return `${String(orgKey || '')}|${String(flagId || '')}`;
+}
+// PURE: is a stored record still worth putting back? Only a complete one
+// whose own expiry is still ahead — past it the original flag captured
+// nothing anyway, so there is nothing left to restore.
+function sftkDbgPriorLive(rec, nowMs) {
+  if (!rec || typeof rec !== 'object' || !rec.DebugLevelId || !rec.ExpirationDate) return false;
+  const t = Date.parse(String(rec.ExpirationDate).replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
+  return Number.isFinite(t) && t > nowMs;
+}
+
 const ApexDebugger = (() => {
   'use strict';
 
@@ -296,6 +315,37 @@ const ApexDebugger = (() => {
       _customProfiles = Array.isArray(d.adbg_custom_profiles) ? d.adbg_custom_profiles : [];
     } catch (_) { _customProfiles = []; }
   }
+  // 2026-11-15: the taken-over trace flag records (see sftkDbgPriorKey).
+  // One small map under one key; a storage failure reads as "no record" —
+  // then Start falls back to what the org itself shows.
+  const TF_PRIOR_KEY = 'adbg_tf_prior';
+  async function _tfPriorMap() {
+    try {
+      const d = await chrome.storage.local.get(TF_PRIOR_KEY);
+      const m = d && d[TF_PRIOR_KEY];
+      return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+    } catch (_) { return {}; }
+  }
+  async function _tfPriorLoad(flagId) {
+    const rec = (await _tfPriorMap())[sftkDbgPriorKey(_orgKeyOf(_orgUrl), flagId)];
+    return sftkDbgPriorLive(rec, Date.now())
+      ? { DebugLevelId: rec.DebugLevelId, StartDate: rec.StartDate || null, ExpirationDate: rec.ExpirationDate } : null;
+  }
+  // rec = null removes the flag's record. Records past their own expiry are
+  // dropped on every write, so the map cannot grow for good.
+  async function _tfPriorSave(flagId, rec) {
+    try {
+      const m = await _tfPriorMap();
+      const now = Date.now();
+      Object.keys(m).forEach(k => { if (!sftkDbgPriorLive(m[k], now)) delete m[k]; });
+      const key = sftkDbgPriorKey(_orgKeyOf(_orgUrl), flagId);
+      if (rec) m[key] = { DebugLevelId: rec.DebugLevelId, StartDate: rec.StartDate || null, ExpirationDate: rec.ExpirationDate };
+      else delete m[key];
+      await chrome.storage.local.set({ [TF_PRIOR_KEY]: m });
+      return true;
+    } catch (_) { return false; }
+  }
+
   async function _saveCustomProfiles() {
     try { await chrome.storage.local.set({ adbg_custom_profiles: _customProfiles }); } catch (_) {}
   }
@@ -536,6 +586,19 @@ const ApexDebugger = (() => {
   const XRAW_BUDGET      = 32 * 1048576;   // characters kept across all cached bodies
   let _xRawChars      = 0;
   let _xScanned       = new Set();
+  // 2026-11-15 (review of f0334a0): the budget was never given back — a
+  // deleted or rotated-out log kept its body and its share of XRAW_BUDGET
+  // until an org switch, so after 32M characters no live log was cached any
+  // more. A deleted log releases its body; a reloaded list drops the rest.
+  function _xRawDrop(id) {
+    if (!(id in _xRawCache)) return;
+    _xRawChars = Math.max(0, _xRawChars - String(_xRawCache[id] || '').length);
+    delete _xRawCache[id];
+  }
+  function _xRawPrune() {
+    const live = new Set(_logs.map(l => l && l.Id));
+    Object.keys(_xRawCache).forEach(id => { if (!live.has(id)) _xRawDrop(id); });
+  }
 
   let _pollTimer   = null;
   let _cdTimer     = null;  // countdown timer
@@ -1069,15 +1132,31 @@ const ApexDebugger = (() => {
         // (SFTK_…) is ours to delete; a level that cannot be read counts as
         // foreign — restoring is the safe direction.
         const ex = existing.records[0];
+        // 2026-11-15 (second review): a level whose name could NOT be read
+        // (the query errored, no row) is only GUESSED foreign. When a record
+        // of this flag is already stored — an earlier Start took it over, so
+        // the flag now carries a Toolkit level and Toolkit dates — that guess
+        // overwrote the colleague's stored values with the Toolkit's own, and
+        // Stop "put back" the Toolkit level. The stored record wins unless
+        // the level name was really read and is not a Toolkit level.
+        const stored = await _tfPriorLoad(ex.Id);
         let prior = null;
         if (ex.DebugLevelId && ex.DebugLevelId !== debugLevelId) {
           const lv = await _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
             query: `SELECT DeveloperName FROM DebugLevel WHERE Id = '${ex.DebugLevelId}'` });
-          const dn = lv && !lv.error && lv.records && lv.records[0] && lv.records[0].DeveloperName;
+          const row = lv && !lv.error && lv.records && lv.records[0];
+          const dn = row && row.DeveloperName;
           if (!sftkDbgIsToolkitLevel(dn)) {
-            prior = { DebugLevelId: ex.DebugLevelId, StartDate: ex.StartDate || null, ExpirationDate: ex.ExpirationDate };
+            if (dn || !stored) prior = { DebugLevelId: ex.DebugLevelId, StartDate: ex.StartDate || null, ExpirationDate: ex.ExpirationDate };
           }
         }
+        // 2026-11-15: keep the foreign values where a closed popup cannot
+        // lose them — written BEFORE the PATCH, so a popup that closes right
+        // after it still knows. A flag found on a Toolkit level may be one an
+        // earlier Start (another popup lifetime) took over: its record is
+        // read back, so Stop and the undo still put it back.
+        if (prior) await _tfPriorSave(ex.Id, prior);
+        else prior = stored;
         // Extend existing flag. QA 2026-07-26: the result MUST be checked —
         // an ignored PATCH failure (expired session, bad DebugLevelId) used
         // to fake a live 60-minute countdown while the org captured nothing.
@@ -1193,6 +1272,12 @@ const ApexDebugger = (() => {
       // Release QA 2026-11-14: work on a local handle — an org switch during
       // the request resets _traceFlag under us.
       const tf = _traceFlag;
+      // 2026-11-15: what the re-read after a REFUSED write showed — true (the
+      // row is there), false (no row), null (the read did not answer). The
+      // failure sentence below is built from this, not from dWr.verified:
+      // a refused write never reaches verify, so "verified" was false even
+      // when the org had just been read and showed the flag.
+      let seen = null;
       // Visual state while the TraceFlag delete is in flight.
       const stopping = document.getElementById('adbgStopBtn');
       if (stopping) { stopping.disabled = true; stopping.textContent = 'Stopping…'; }
@@ -1226,13 +1311,19 @@ const ApexDebugger = (() => {
             : await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: tf.Id });
           if (r && r.error) {
             const chk = await readFlag();
-            if (chk && !chk.error && Array.isArray(chk.records) && chk.records.length === 0) return { alreadyGone: true };
+            if (chk && !chk.error && Array.isArray(chk.records)) {
+              seen = chk.records.length > 0;
+              if (!seen) return { alreadyGone: true };
+            }
           }
           return r;
         },
         verify: async r => {
           const chk = await readFlag();
-          if (!chk || chk.error) return { ok: false, text: null };
+          // 2026-11-15: a re-read that did not answer is NOT "the org shows
+          // the old state" — throwing leaves the write unverified, which is
+          // what happened ({ ok:false } read as "STILL ACTIVE", unread).
+          if (!chk || chk.error) throw new Error(String((chk && chk.error) || 'no answer'));
           const recs = chk.records || [];
           if (!recs.length) {
             return { ok: true, detail: 'gone',
@@ -1246,6 +1337,10 @@ const ApexDebugger = (() => {
       });
       await sftkHistoryEnd(journal, { undo: { none: 'stopping a trace is undone by starting a new one from the tool — the same TraceFlag row cannot be recreated' } });
       if (stopping) { stopping.disabled = false; stopping.textContent = 'Stop'; }
+      // 2026-11-15: the flag is gone or back on its own level — its
+      // taken-over record has done its job. (Skipped after an org switch:
+      // the record's key is built from the current org's URL.)
+      if (dWr.ok && _traceFlag === tf) await _tfPriorSave(tf.Id, null);
       if (_traceFlag !== tf) return;   // the org was switched meanwhile — that reset owns the UI now
       if (!dWr.ok) {
         const fe = sftkFriendlyError((dWr.raw && dWr.raw.error) || dWr.text || 'not confirmed stopped on re-read');
@@ -1258,8 +1353,9 @@ const ApexDebugger = (() => {
         if (Date.parse(tf.ExpirationDate) <= Date.now()) {
           note = { msg: `The trace expired${until ? ` at ${until}` : ''} and captures nothing now, but its TraceFlag could not be ${restore ? 'put back' : 'removed'}: ${fe.message}. Check it in Setup > Debug Logs.`, type: 'error' };
         } else {
-          // Only a re-read that answered can say the flag is still there.
-          const state = dWr.verified ? 'the flag is STILL ACTIVE in the org' : 'the org could not be re-read, so the flag may still be active';
+          // Only a re-read that answered can say the flag is still there:
+          // the one after a refused write (seen), or verify's own.
+          const state = (seen === true || (dWr.verified && !dWr.ok)) ? 'the flag is STILL ACTIVE in the org' : 'the org could not be re-read, so the flag may still be active';
           _renderStatus(`Couldn't stop the trace: ${fe.message} — ${state}${until ? ` until ${until}` : ''}. Fix the session (open the org tab) and click Stop again.`, 'error');
           _startCountdown();   // keep showing the truth: it may still be running
           _startPolling();
@@ -1408,6 +1504,7 @@ const ApexDebugger = (() => {
       return;
     }
     _logs = res.records || [];
+    _xRawPrune();   // 2026-11-15: bodies of logs no longer listed give their budget back
     // QA 2026-07-26: checked ids can outlive their rows (deleted elsewhere,
     // fallen past the cap) — prune so the Delete button can't claim
     // selections that no longer exist in the list.
@@ -1577,6 +1674,7 @@ const ApexDebugger = (() => {
     if (_xSearchRunning) { _xSearchCancel = true; return; }
     if (!_logs.length)   { return; }
 
+    _xRawPrune();   // 2026-11-15: e.g. a body a worker cached after its log was deleted
     _xSearchQuery   = query;
     _xSearchHits    = new Map();
     _xScanned       = new Set();
@@ -3442,6 +3540,7 @@ const ApexDebugger = (() => {
     _checked.delete(id);
     _newIds.delete(id);
     delete _bodyCache[id];
+    _xRawDrop(id);
     if (_selLogId === id) {
       _selLogId = null;
       const d = document.getElementById('adbgDetail');
@@ -3488,6 +3587,7 @@ const ApexDebugger = (() => {
         _checked.delete(id);
         _newIds.delete(id);
         delete _bodyCache[id];
+        _xRawDrop(id);
         if (_selLogId === id) {
           _selLogId = null;
           const d = document.getElementById('adbgDetail');
@@ -3542,6 +3642,7 @@ const ApexDebugger = (() => {
         _checked.delete(id);
         _newIds.delete(id);
         delete _bodyCache[id];
+        _xRawDrop(id);
         if (_selLogId === id) _selLogId = null;
       }
     });
@@ -3687,6 +3788,13 @@ const ApexDebugger = (() => {
     stopTrace: _stopTrace, deleteLogs: _deleteApexLogsVerified,
     setTrace: (tf, u) => { _traceFlag = tf; _traceUser = u || null; },
     trace: () => _traceFlag, timers: () => ({ countdown: _cdTimer, poll: _pollTimer }),
-    setSession: (orgUrl, sid) => { _orgUrl = orgUrl; _sid = sid; } };
+    setSession: (orgUrl, sid) => { _orgUrl = orgUrl; _sid = sid; },
+    // 2026-11-15: Start Trace, the cross-log search and the delete paths were
+    // only ever checked as source text — the regression tests run them.
+    startTrace: _startTrace, setUser: (u) => { _selUser = u; },
+    search: _searchAcrossLogs, deleteLog: _deleteLog, deleteSelected: _deleteSelected, deleteAll: _deleteAll,
+    check: (ids) => { _checked.clear(); (ids || []).forEach(id => _checked.add(id)); },
+    logs: () => _logs, xHits: () => _xSearchHits,
+    xCache: () => ({ ids: Object.keys(_xRawCache), chars: _xRawChars, perLogMax: XRAW_PER_LOG_MAX, budget: XRAW_BUDGET }) };
   return { init, updateSession, _test };
 })();

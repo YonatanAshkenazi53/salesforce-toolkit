@@ -329,12 +329,17 @@ body {
 /* 2026-11-14: at 1280x720 with 150% scaling (853 CSS px) the brand name
    wrapped to three lines and touched the top edge of the 52px bar. The brand
    may now shrink (min-width:0) and the name stays on one line, cut with an
-   ellipsis, so the bar keeps its height on any screen and zoom. */
+   ellipsis, so the bar keeps its height on any screen and zoom.
+   2026-11-15: the floor was 0, and with a tool open (Home, the org chip and
+   History in the action row, which cannot shrink) the brand box collapsed to
+   0 px: the 28px logo overflowed it and the What's New button was laid out on
+   top of the logo. The floor is now the logo's own width, so the brand gives
+   up the name first and never the logo's box; only the name is cut. */
 .app-brand {
   display: flex;
   align-items: center;
   gap: var(--sp-5);
-  min-width: 0;
+  min-width: 28px;
   flex: 0 1 auto;
   margin-right: var(--sp-5);
 }
@@ -583,6 +588,21 @@ body {
 .app-topbar #sftkDarkToggle { width: 28px; padding: 0; }
 /* Report a problem (sftk-report.js) — icon-only, a square like What's New beside it. */
 .app-topbar .sftk-report-btn { width: 28px; padding: 0; }
+
+/* 2026-11-15 (second review): the brand's 28px floor keeps the logo's box, but the action row cannot shrink,
+   so with a tool open (Home and the org chip in the row: about 758px, 850px with the tool's History button) the
+   row's last buttons ran past the right edge of Chrome's 800px popup and were clipped by #app. Below the width
+   where the whole row fits, the four fixed destinations give up their LABEL and stay as 28px icon squares (the
+   title / aria-label still name them); the org chip, the tool's History count and Debug keep theirs. Only with a
+   tool open — the home page's row is 500px and fits. The label is the button's own text node, so it is taken out
+   with font-size 0; the icon is a px-sized box and is not affected. #homeBtn is shown by clearing its inline
+   display, so "a tool is open" is read from that. */
+@media (max-width: 847px) {
+  .app-topbar-actions:has(#homeBtn:not([style*="display:none"]):not([style*="display: none"])) :is(#homeBtn, #sftkFeedBtn, #dataStudioBtn, #sftkTermsBtn) { width: 28px; padding: 0; gap: 0; font-size: 0; }
+}
+@media (max-width: 939px) {
+  .app-topbar-actions:has(#homeBtn:not([style*="display:none"]):not([style*="display: none"])):has(#sftkThBtn:not([style*="display:none"]):not([style*="display: none"])) :is(#homeBtn, #sftkFeedBtn, #dataStudioBtn, #sftkTermsBtn) { width: 28px; padding: 0; gap: 0; font-size: 0; }
+}
 
 /* The bar spends no accent on itself — the one brand-filled control on the
    home page is the Data Studio card, and two of them competed. */

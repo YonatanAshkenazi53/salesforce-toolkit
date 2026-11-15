@@ -660,11 +660,15 @@ const FlowPermissions = (() => {
   // was taken by Salesforce as the whole set — it wiped the set's description
   // and field permissions on npc, and on a packaged set it made a new
   // unmanaged copy. Inserting the access rows changes only the access.
-  // Returns { created: [{ key, id }], refused: { key: reason } } and never
-  // throws: rows made before a later chunk fails must still reach the undo.
+  // Returns { created: [{ key, id }], refused: { key: reason }, duplicate:
+  // { key: true } } and never throws: rows made before a later chunk fails
+  // must still reach the undo. `duplicate` (2026-11-15) marks the refusals
+  // that only say the grant is already there, so doAssign re-reads the org
+  // instead of calling a grant that exists a failure.
   async function insertFlowAccess(pairs) {
     const created = [];
     const refused = {};
+    const duplicate = {};
     for (let i = 0; i < pairs.length; i += 200) {
       const chunk = pairs.slice(i, i + 200);
       const records = chunk.map(p => ({ attributes: { type: 'SetupEntityAccess' }, ParentId: p.psId, SetupEntityId: p.flowId }));
@@ -680,10 +684,14 @@ const FlowPermissions = (() => {
       chunk.forEach((p, j) => {
         const r = res[j];
         if (r && r.success && r.id) created.push({ key: p.key, id: r.id });
-        else refused[p.key] = (r && r.errors && r.errors.map(e => e.message || e.statusCode).join('; ')) || 'not accepted';
+        else {
+          const errs = (r && Array.isArray(r.errors)) ? r.errors : [];
+          refused[p.key] = errs.map(e => e.message || e.statusCode).join('; ') || 'not accepted';
+          if (errs.length && errs.every(e => /DUPLICATE_VALUE/i.test(String(e.statusCode || '')) || /duplicate value/i.test(String(e.message || '')))) duplicate[p.key] = true;
+        }
       });
     }
-    return { created, refused };
+    return { created, refused, duplicate };
   }
 
   // The verify's own read (2026-11-14). It used to call loadData(), which
@@ -713,22 +721,66 @@ const FlowPermissions = (() => {
     const btn     = document.getElementById('fpAssignBtn');
     const summary = document.getElementById('fpActionSummary');
     if (btn) btn.disabled = true;
+    const n = v => Number(v).toLocaleString('en-US');
+    const pairName = p => `${p.flow.MasterLabel || p.flow.DeveloperName || p.flow.Id} → ${p.ps.Label || p.ps.Name || p.ps.Id}`;
+    const closeBtn = '<div class="modal-footer"><button class="btn btn-secondary" id="modalCancel">Close</button></div>';
+    const show = html => { showModal(html + closeBtn); document.getElementById('modalCancel').addEventListener('click', closeModal); };
+    const settle = () => { if (btn) btn.textContent = '🔑 Assign'; if (summary) summary.textContent = ''; updateActionBar(); };
 
-    if (summary) summary.innerHTML = sftkCatSm(`Granting flow access to ${permSets.length} permission set(s)…`);
+    if (summary) summary.innerHTML = sftkCatSm(`Reading the current flow access of ${n(permSets.length)} permission set(s)…`);
 
-    // History (sftk-history.js): one journal for this Assign click. Snapshot
-    // which (flow, permission set) pairs ALREADY had a grant before the
-    // change — those are not inserted again, and the undo never removes them.
-    const journal = sftkHistoryBegin({ tool: 'Flow Access', title: `🔑 Flow access: ${flows.length} flow(s) → ${permSets.length} permission set(s)`, orgUrl: _orgUrl });
+    // Which (flow, permission set) pairs ALREADY have a grant: those are not
+    // inserted again, and the undo never removes them. 2026-11-15: asked of
+    // the ORG, right here. The module's _accessMap is only as fresh as the
+    // last load — after a History undo or a change in Setup it still listed a
+    // grant that was gone, the pair was skipped, nothing was sent, and the
+    // result said Salesforce had accepted it. A read that fails writes nothing.
     const before = new Set();
-    for (const f of flows) for (const g of (_accessMap[f.Id] || [])) if (permSets.some(ps => ps.Id === g.permSetId)) before.add(`${f.Id}|${g.permSetId}`);
+    try {
+      for (const k of Object.keys(sftkFlowAccessCheck(flows, permSets, await readFlowAccessRows(flows, permSets)).present)) before.add(k);
+    } catch (e) {
+      settle();
+      const raw = `The current flow access could not be read, so nothing was written: ${(e && e.message) || String(e)}`;
+      show(`
+        <div class="modal-header modal-warn">
+          <span class="modal-icon">⚠️</span>
+          <h2>Nothing was written</h2>
+        </div>
+        <div class="modal-body">
+          <p style="word-break:break-word">${esc(raw)}</p>
+        </div>`);
+      return;
+    }
     const pairs = [];
     for (const f of flows) for (const ps of permSets) {
       const key = `${f.Id}|${ps.Id}`;
       if (!before.has(key)) pairs.push({ key, flowId: f.Id, psId: ps.Id, flow: f, ps });
     }
     const pairByKey = new Map(pairs.map(p => [p.key, p]));
-    let ins = { created: [], refused: {} };
+    const alreadyHtml = `
+        <div class="modal-header" style="color:var(--active-color)">
+          <span class="modal-icon">✅</span>
+          <h2>Already granted — nothing to do</h2>
+        </div>
+        <div class="modal-body">
+          <p>Every selected flow is already granted to the selected permission set${permSets.length !== 1 ? 's' : ''}. Nothing was written.</p>
+        </div>`;
+
+    // 2026-11-15: nothing to insert is said as that — no write, no History
+    // entry. It used to go through sftkWriteVerified as an "accepted" write.
+    if (!pairs.length) {
+      await loadData();
+      settle();
+      show(alreadyHtml);
+      return;
+    }
+
+    if (summary) summary.innerHTML = sftkCatSm(`Granting flow access to ${n(permSets.length)} permission set(s)…`);
+
+    // History (sftk-history.js): one journal for this Assign click.
+    const journal = sftkHistoryBegin({ tool: 'Flow Access', title: `🔑 Flow access: ${flows.length} flow(s) → ${permSets.length} permission set(s)`, orgUrl: _orgUrl });
+    let ins = { created: [], refused: {}, duplicate: {} };
+    let check = null;   // the verify's own re-read, kept for the per-pair result below
     let wr;
     try {
     // confirmed-by: onAssign's showConfirmModal (the only caller of doAssign)
@@ -741,18 +793,24 @@ const FlowPermissions = (() => {
       write: async () => {
         ins = await insertFlowAccess(pairs);
         const refusedKeys = Object.keys(ins.refused);
-        // Nothing created and something refused = a refusal, said with Salesforce's reason.
-        if (!ins.created.length && refusedKeys.length) return { error: ins.refused[refusedKeys[0]] };
+        // Nothing created and something refused = a refusal, said with
+        // Salesforce's reason. Not when a refusal is "duplicate value"
+        // (2026-11-15): someone granted the pair since the read above, so the
+        // org may already be as asked — the re-read below decides, not us.
+        if (!ins.created.length && refusedKeys.length && !refusedKeys.some(k => ins.duplicate && ins.duplicate[k])) return { error: ins.refused[refusedKeys[0]] };
         return ins;
       },
       verify: async () => {
-        const check = sftkFlowAccessCheck(flows, permSets, await readFlowAccessRows(flows, permSets));
+        check = sftkFlowAccessCheck(flows, permSets, await readFlowAccessRows(flows, permSets));
         // A pair Salesforce refused carries its reason; the rest of a partial insert stays visible.
         const detail = check.missing.map((m, i) => {
           const why = ins.refused[check.missingKeys[i]];
           return why ? `${m} (${why})` : m;
         });
-        return { ok: check.ok, detail, text: null };
+        // History hears the true count, not "accepted" for rows that were refused.
+        const text = check.ok ? null
+          : `flow access: ${n(pairs.length - pairs.filter(p => !(p.key in check.present)).length)} of ${n(pairs.length)} grant(s) are in the org after re-reading — not granted: ${detail.slice(0, 5).join('; ')}${detail.length > 5 ? '…' : ''}`;
+        return { ok: check.ok, detail, text };
       },
     });
     } finally {
@@ -777,69 +835,81 @@ const FlowPermissions = (() => {
       await sftkHistoryEnd(journal, { undo: steps.length ? { steps } : { none: 'this run created no flow access, so there is nothing to undo' } });
     }
     await loadData();   // refresh the table; the verdict above comes from its own read, not from this one
+    settle();
 
-    if (btn) btn.textContent = '🔑 Assign';
-    if (summary) summary.textContent = '';
-
-    // ✅ only when the re-read shows every pair. A re-read that failed is said
-    // as unverified (wr.text), never as "grants missing" (2026-11-14).
-    const missing = Array.isArray(wr.detail) ? wr.detail : [];
-    const deployErr = !wr.accepted
-      ? ((wr.raw && (wr.raw.error || wr.raw.errorMessage)) || 'the flow access was not granted')
+    // ── The result, per pair (2026-11-15) ──────────────────────
+    // The insert is allOrNone:false, so some pairs can be made while others
+    // are refused. The old all-or-nothing summary said "0 assigned" whenever
+    // anything failed, with grants sitting in the org. A re-read that failed
+    // is said as unverified (wr.text), never as "grants missing" (2026-11-14).
+    const unverifiedNote = !wr.accepted
+      ? null
       : !wr.verified
         ? wr.text
-        : (!wr.ok
-            ? `accepted, but the org does not show ${missing.length} expected grant(s) after re-reading: ${missing.slice(0, 5).join('; ')}${missing.length > 5 ? '…' : ''}`
-            : null);
-    const errors    = deployErr
-      ? [{ label: 'Flow access', fe: sftkFriendlyError(deployErr), raw: deployErr }]
-      : [];
-    const successes = deployErr ? [] : flows;
+        : null;
+    const createdKeys = new Set(ins.created.map(c => c.key));
+    const made = [];          // created by this run (and seen in the org when it was re-read)
+    const failed = [];        // [{ p, why }]
+    let alreadyThere = 0;     // in the org, but not made by this run (granted elsewhere meanwhile)
+    for (const p of pairs) {
+      if (wr.verified && check) {
+        if (p.key in check.present) { if (createdKeys.has(p.key)) made.push(p); else alreadyThere++; }
+        else failed.push({ p, why: ins.refused[p.key] || 'Salesforce accepted it, but the org does not show this grant after re-reading' });
+      } else if (createdKeys.has(p.key)) made.push(p);
+      else failed.push({ p, why: ins.refused[p.key] || (wr.raw && (wr.raw.error || wr.raw.errorMessage)) || 'the flow access was not granted' });
+    }
+    const inPlace = before.size + alreadyThere;
+    const undoLine = ins.created.length
+      ? `<p style="margin-top:8px;font-size:11px">↩ Undo in History removes the ${n(ins.created.length)} grant${ins.created.length !== 1 ? 's' : ''} this run created.</p>`
+      : '';
 
-    // Show result
-    if (errors.length === 0) {
-      showModal(`
+    // ✅ only when the re-read shows every pair.
+    if (wr.ok && !made.length) { show(alreadyHtml); return; }   // every refusal was "already there", and the re-read agrees
+    if (wr.ok) {
+      show(`
         <div class="modal-header" style="color:var(--active-color)">
           <span class="modal-icon">✅</span>
-          <h2>${successes.length} Flow${successes.length !== 1 ? 's' : ''} Assigned</h2>
+          <h2>${n(flows.length)} Flow${flows.length !== 1 ? 's' : ''} Assigned</h2>
         </div>
         <div class="modal-body">
           <p style="margin-bottom:8px">
-            Assigned to <strong>${permSets.length} permission set${permSets.length !== 1 ? 's' : ''}</strong>.
+            Assigned to <strong>${n(permSets.length)} permission set${permSets.length !== 1 ? 's' : ''}</strong> —
+            ${n(made.length)} grant${made.length !== 1 ? 's' : ''} made${inPlace ? `, ${n(inPlace)} already in place` : ''}.
           </p>
           <ul class="modal-list" style="font-size:11px">
-            ${successes.map(f => `<li>${esc(f.MasterLabel)}</li>`).join('')}
+            ${flows.map(f => `<li>${esc(f.MasterLabel)}</li>`).join('')}
           </ul>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" id="modalCancel">Close</button>
-        </div>
-      `);
-      document.getElementById('modalCancel').addEventListener('click', closeModal);
-    } else {
-      const errHtml = errors.map(e =>
-        `<li style="word-break:break-word" title="${esc(e.raw)}"><strong>${esc(e.label)}</strong>: ${esc(e.fe.message + (e.fe.hint ? ' — ' + e.fe.hint : ''))}</li>`
-      ).join('');
-      const okHtml = successes.map(f => `<li>${esc(f.MasterLabel)}</li>`).join('');
-      showModal(`
+        </div>`);
+      return;
+    }
+    const SHOWN = 50;   // a 200-pair run must not grow the dialog without end
+    const more = list => (list.length > SHOWN ? `<li>…and ${n(list.length - SHOWN)} more</li>` : '');
+    const okHtml = made.slice(0, SHOWN).map(p => `<li>${esc(pairName(p))}</li>`).join('') + more(made);
+    const errHtml = failed.slice(0, SHOWN).map(({ p, why }) => {
+      const fe = sftkFriendlyError(why);
+      return `<li style="word-break:break-word" title="${esc(why)}"><strong>${esc(pairName(p))}</strong>: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}</li>`;
+    }).join('') + more(failed);
+    const head = unverifiedNote
+      ? `${n(made.length)} grant${made.length !== 1 ? 's' : ''} created — not confirmed`
+      : `${n(made.length)} of ${n(pairs.length)} grant${pairs.length !== 1 ? 's' : ''} made`;
+    show(`
         <div class="modal-header modal-warn">
           <span class="modal-icon">⚠️</span>
-          <h2>${successes.length} assigned, ${errors.length} failed</h2>
+          <h2>${head}</h2>
         </div>
         <div class="modal-body">
-          ${successes.length > 0
-            ? `<p style="margin-bottom:4px;font-weight:700">Assigned:</p>
+          ${unverifiedNote ? `<p style="margin-bottom:8px;word-break:break-word">${esc(unverifiedNote)}</p>` : ''}
+          ${made.length > 0
+            ? `<p style="margin-bottom:4px;font-weight:700">${unverifiedNote ? 'Created (not confirmed)' : 'Assigned'}:</p>
                <ul class="modal-list" style="font-size:11px">${okHtml}</ul>`
             : ''}
-          <p style="margin:8px 0 4px;font-weight:700;color:var(--danger)">Failed:</p>
-          <ul class="modal-list" style="font-size:11px">${errHtml}</ul>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" id="modalCancel">Close</button>
-        </div>
-      `);
-      document.getElementById('modalCancel').addEventListener('click', closeModal);
-    }
+          ${failed.length > 0
+            ? `<p style="margin:8px 0 4px;font-weight:700;color:var(--danger)">Failed:</p>
+               <ul class="modal-list" style="font-size:11px">${errHtml}</ul>`
+            : ''}
+          ${inPlace ? `<p style="margin-top:8px;font-size:11px">${n(inPlace)} selected grant${inPlace !== 1 ? 's were' : ' was'} already in place.</p>` : ''}
+          ${undoLine}
+        </div>`);
   }
 
   // ── UI helpers ───────────────────────────────────────────────

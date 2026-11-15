@@ -246,7 +246,10 @@ function renderBuilder() {
     if (_editingProfile.sourceOrg && _editingProfile.targetOrg &&
         _orgKey(_editingProfile.targetOrg) === _orgKey(_editingProfile.sourceOrg)) {
       showToast(`${orgLabel(_editingProfile.sourceOrg)} is the source now — cleared it as the default target.`, 'info', 4500);
+      const prevTgt = _editingProfile.targetOrg;
       _editingProfile.targetOrg = '';
+      // 2026-11-15: no target any more — its fallback user goes with it (the next target is another org).
+      if (sftkOwnerFallbackForTarget(_editingProfile, prevTgt)) _ownerFallbackSelectReset();
     }
     renderBuilder();         // repaint the target list without the new source
     _bldLoadRootObjects();   // the root-object list comes from the source org

@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { extractFunctions } from './extract.mjs';
 
-const F = extractFunctions('lightning-pages.js', ['lpSessionRetryOk', 'lpCloneNameTaken'], { 'sftk-org-identity.js': ['sftkOrgKey'] });
+const F = extractFunctions('lightning-pages.js', ['lpSessionRetryOk', 'lpCloneNameTaken', 'lpPageIsPackaged'], { 'sftk-org-identity.js': ['sftkOrgKey'] });
 const SRC = readFileSync(new URL('../lightning-pages.js', import.meta.url), 'utf8');
 const inner = (name) => {
   const i = SRC.indexOf(`function ${name}(`);
@@ -66,6 +66,8 @@ describe('2+3. Clone Page refuses an API name that is already taken', () => {
     expect(q).toBeLessThan(deploy);
     expect(d.indexOf('sftkHistoryBegin')).toBeGreaterThan(q);
     expect(d).toMatch(/if \(!taken \|\| taken\.error\) throw new Error\(/);
-    expect(d).toMatch(/if \(\(taken\.records \|\| \[\]\)\.length\) throw new Error\('DUPLICATE_DEVELOPER_NAME'\)/);
+    // 2026-11-15: was `(taken.records || []).length`, which pinned a defect — an installed package's page of the
+    // same name refused a free API name. The hit is judged by lpCloneNameTaken (run in test/regress-1115-perms-pages).
+    expect(d).toMatch(/if \(lpCloneNameTaken\(taken\.records, newApiName\)\) throw new Error\('DUPLICATE_DEVELOPER_NAME'\)/);
   });
 });

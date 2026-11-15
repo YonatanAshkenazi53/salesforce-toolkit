@@ -316,8 +316,13 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
   if (!p) return;
   const src = _ringActiveSource();
   if (!src) return;
+  const prevTgt = p.targetOrg;
   p.sourceOrg = src;
   p.targetOrg = tgtUrl;
+  // 2026-11-15: the owner fallback is a User Id of the old target — never carried to another org.
+  if (typeof sftkOwnerFallbackForTarget === 'function' && sftkOwnerFallbackForTarget(p, prevTgt)) {
+    showToast('Target changed — the owner fallback user belonged to the old target and was cleared. Pick one again in the deployment\'s owner settings.', 'warning', 7000);
+  }
   delete p.sourcePinned; delete p.targetOrgs; delete p._srcCrownMoved;   // old ring fields, retired
   try { await storageSaveProfiles(); } catch (_) {}
   window.openReconcile(p.id);

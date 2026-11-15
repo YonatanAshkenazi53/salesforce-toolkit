@@ -17,6 +17,9 @@ const cliTree = () => ({
 const ONLINE = { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 };
 const OFFLINE = { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 };
 
+// 2026-11-15: when a run ends the page repaints and the log moves from #dsRecProgress into the folded '📜 Last run on this page' block —
+// innerText of a closed <details> is empty, so open it and read the log from wherever it is now
+const runLog = h => h.eval(`(() => { const live = document.querySelector('#dsRecProgress'); if (live && live.innerText.trim()) return live.innerText; const d = document.querySelector('.ds-dep-lastlog'); if (!d) return ''; d.open = true; return (d.querySelector('.ds-rec-progress') || d).innerText || ''; })()`);
 export default async function (h) {
   await h.login('npc'); await h.login('npc2');
   await h.studio(''); await h.watchErrors();
@@ -63,21 +66,21 @@ export default async function (h) {
   await h.click('#dsRecProbeBtn'); await h.sleep(1500);
   h.log('clicked:', await h.eval(`(() => { const b = document.querySelector('#sftkConfirmGo'); if (b && !b.disabled) { b.click(); return b.textContent.trim(); } return null; })()`));
   await h.sleep(Number(process.env.DROP_AFTER || 3000));
-  h.log('run log when the network drops:', flat(await h.text('#dsRecProgress'), 500));
+  h.log('run log when the network drops:', flat(await runLog(h), 500));
   await net(OFFLINE, 'OFFLINE');
   await h.sleep(Number(process.env.DROP_MS || 10000));
-  h.log('run log while offline:', flat(await h.text('#dsRecProgress'), 900));
+  h.log('run log while offline:', flat(await runLog(h), 900));
   await h.shot(h.shots + '/dryrun-netdrop-offline.png');
   await net(ONLINE, 'online');
   let ended = false;
   for (let i = 0; i < 300; i++) { if (await h.eval(`_history.length > ${histBefore}`)) { ended = true; break; } await h.sleep(1000); }
   await h.sleep(2000);
-  const log = flat(await h.text('#dsRecProgress'), 7000);
+  const log = flat(await runLog(h), 7000);
   h.log('RUN LOG:', log);
   h.log('toasts:', flat(await h.eval(`[...document.querySelectorAll('.ds-toast')].map(t => t.innerText).join(' || ')`), 600));
   await h.eval(`(() => { const el = document.querySelector('.ds-dep-actionbar'); if (el) el.scrollIntoView({ block: 'center' }); return true; })()`); await h.sleep(400);
   h.log('ACTION BAR:', flat(await h.text('.ds-dep-actionbar'), 900));
-  await h.eval(`(() => { const el = document.querySelector('#dsRecProgress'); if (el) el.scrollIntoView({ block: 'start' }); return true; })()`); await h.sleep(400);
+  await h.eval(`(() => { const el = document.querySelector('.ds-dep-lastlog') || document.querySelector('#dsRecProgress'); if (el) el.scrollIntoView({ block: 'start' }); return true; })()`); await h.sleep(400);
   await h.shot(h.shots + '/dryrun-netdrop-after.png');
   const entry = ended ? JSON.parse(await h.eval(`JSON.stringify(_history[_history.length - 1], (k, v) => k === 'errors' ? v.slice(0, 12) : (k === 'selected' ? undefined : v))`)) : null;
   h.log('ended with a History entry:', ended, '| status:', entry && entry.status, '| probe totals:', entry && entry.probe ? JSON.stringify({ probed: entry.probe.probed, would: entry.probe.would, refused: entry.probe.refused, cascade: entry.probe.cascade, unreached: entry.probe.unreached, error: entry.probe.error }) : 'none');

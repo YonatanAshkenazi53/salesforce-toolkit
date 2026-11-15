@@ -799,6 +799,9 @@ function buildTransferProfile() {
   // error messages) reflects the orgs actually used this run.
   if (_transferOrgOverride.src) clone.sourceOrg = _transferOrgOverride.src;
   if (_transferOrgOverride.tgt) clone.targetOrg = _transferOrgOverride.tgt;
+  // 2026-11-15: a run against another target must not carry the saved target's fallback user (a User Id
+  // of that org). Only this run's copy loses it; the dry run then says no fallback is picked.
+  if (typeof sftkOwnerFallbackForTarget === 'function') sftkOwnerFallbackForTarget(clone, _transferProfile.targetOrg);
   return clone;
 }
 
@@ -889,7 +892,7 @@ function updateTransferPreview(counts = null) {
 // that ignores that (SELECT COUNT() FROM Contact with no filter) reports the
 // whole table — "I picked two records and it said 18" (user 2026-09-14).
 //   node:   { objectType|childSObject, field, recordIds?, where? }
-//   parent: null for the root, else { obj, where, semiJoin } from the parent's own count
+//   parent: null for the root, else { obj, where, semiJoin, unscoped } from the parent's own count
 // Returns { where, semiJoin, unscoped }. `unscoped` = SOQL cannot express the
 // scope (a grandchild under a filtered parent — semi-joins do not nest), so
 // the number must be shown as an upper bound, never as the count.
@@ -898,8 +901,23 @@ function sftkChildCountWhere(node, parent) {
   const own = ids.length
     ? `Id IN (${ids.map(id => `'${String(id).replace(/'/g, "\\'")}'`).join(',')})`
     : ((node && node.where) || null);
+  // 2026-11-15: a parent whose own count is only an upper bound cannot scope
+  // its children — everything under it is an upper bound too. Without this a
+  // node under an unscoped parent with no filter read as an exact count of
+  // the whole table.
+  if (parent && parent.unscoped) return { where: own, semiJoin: false, unscoped: true };
   if (!parent || !parent.where) return { where: own, semiJoin: false, unscoped: false };
   if (!node || !node.field || parent.semiJoin) return { where: own, semiJoin: false, unscoped: true };
+  // 2026-11-15: two more shapes SOQL refuses as a semi-join (MALFORMED_QUERY),
+  // which turned a dry run of a deployment the engine runs fine into "source
+  // query failed": a child of the SAME object as its parent (Account under
+  // Account via ParentId, Contact.ReportsTo, Case.ParentId — "the inner and
+  // outer selects should not be on the same object type"), and a parent whose
+  // own WHERE already holds a subquery (semi-joins do not nest). Both fall
+  // back to the node's own filter, said as an upper bound.
+  const childObj = String(node.childSObject || node.objectType || '').toLowerCase();
+  if (childObj && childObj === String(parent.obj || '').toLowerCase()) return { where: own, semiJoin: false, unscoped: true };
+  if (/\(\s*SELECT\b/i.test(String(parent.where))) return { where: own, semiJoin: false, unscoped: true };
   const scope = `${node.field} IN (SELECT Id FROM ${parent.obj} WHERE ${parent.where})`;
   return { where: own ? `(${own}) AND ${scope}` : scope, semiJoin: true, unscoped: false };
 }
@@ -943,7 +961,7 @@ async function previewTransfer() {
       query: `SELECT COUNT() FROM ${obj}${where ? ' WHERE ' + where : ''}`
     });
     const count    = res.error ? null : (res.totalSize ?? 0);
-    const children = await Promise.all((node.children || []).map(c => countNode(c, { obj, where: cw.where, semiJoin: cw.semiJoin })));
+    const children = await Promise.all((node.children || []).map(c => countNode(c, { obj, where: cw.where, semiJoin: cw.semiJoin, unscoped: cw.unscoped })));
     return { obj, count, unscoped: cw.unscoped, children };
   }
 
@@ -1714,7 +1732,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
       }
     }
 
-    for (const c of (node.children || [])) await dryRunNode(c, { obj, where: cw.where, semiJoin: cw.semiJoin });
+    for (const c of (node.children || [])) await dryRunNode(c, { obj, where: cw.where, semiJoin: cw.semiJoin, unscoped: cw.unscoped });
   }
 
   // Owner-mapping sanity: matching without a fallback is allowed but easy
@@ -2030,15 +2048,26 @@ async function runTransfer() {
   });
 
   try { runPort?.disconnect(); } catch (_) {}
+  // 2026-11-15: the run is over, whatever the engine managed to send — no card stays reading or writing
+  try { if (typeof sftkRunProgressClose === 'function') sftkRunProgressClose(eid('dsTrProgLog')); } catch (_) { /* the log is gone */ }
   eid('dsTrCancelBtn')?.remove();
   if (result?.cancelled) {
     logRow('✋', 'Run cancelled — everything written before the cancel stays in the target; the partial result is recorded in History.', 'ds-prog-warn');
     showToast('Transfer cancelled — partial results recorded', 'warning', 5000);
   }
 
+  // Refused because another run is on (2026-11-15): nothing was written, so
+  // no History entry, no restore point and no roll-back offer — see sftkRunRefusedBusy.
+  if (await sftkRunRefusedBusy(result, { log: logRow, toast: showToast, dropRestorePoint: () => sftkUndoStoreDelete(runId) })) {
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  // 2026-11-15: a dropped connection is said in words on this page too, never as the browser's "Failed to fetch"
+  const netWords = m => (typeof sftkNetworkWords === 'function' ? sftkNetworkWords(m) : String(m));
   if (result.error) {
-    logRow('❌', result.error, 'ds-prog-err');
-    showToast('Transfer failed: ' + result.error, 'error', 6000);
+    logRow('❌', netWords(result.error), 'ds-prog-err');
+    showToast('Transfer failed: ' + netWords(result.error), 'error', 6000);
     // ↩ the engine may have written before it died — the run is recorded with
     // its restore point so ↩ Roll back in History can still reach it.
     if (undoStub.status !== 'none') {
@@ -2060,9 +2089,12 @@ async function runTransfer() {
   // Log per-object results
   let anySessionExpired = false;
   for (const [obj, s] of Object.entries(result.summary || {})) {
-    const isExpired = /SESSION_EXPIRED|session.*expired|INVALID_SESSION/i.test(s.error || '');
+    // A thrown write call (2026-11-15): counted as unconfirmed with its message
+    // in writeError — still a failure row, and still the session hint.
+    const unc = sftkRunUnconfirmedInfo(s);
+    const isExpired = unc.expired;
     if (isExpired) anySessionExpired = true;
-    const icon = s.error ? '❌' : ((s.failed > 0 || s.connectFailed || s.connectOrphaned) ? '⚠' : '✅');
+    const icon = s.error ? '❌' : ((s.failed > 0 || unc.n || s.connectFailed || s.connectOrphaned) ? '⚠' : '✅');
     // Child-first link outcomes (only present on child-first nodes)
     const linkInfo =
       `${s.connected ? `, ${s.connected} linked to parent` : ''}` +
@@ -2076,9 +2108,9 @@ async function runTransfer() {
     const msg  = s.error
       ? (isExpired
           ? `${obj}: Session expired — the Salesforce session ended during the transfer`
-          : `${obj}: ${s.error}`)
-      : `${obj}: ${s.created} created${s.failed > 0 ? `, ${s.failed} failed` : ''}${npInfo}${linkInfo}${bulkInfo}`;
-    logRow(icon, msg, s.error || s.failed || s.connectFailed ? 'ds-prog-err' : '');
+          : `${obj}: ${netWords(s.error)}`)
+      : `${obj}: ${s.created} created${s.failed > 0 ? `, ${s.failed} failed` : ''}${unc.note}${npInfo}${linkInfo}${bulkInfo}${!s.error && isExpired ? ' — the Salesforce session ended during the transfer' : ''}`;
+    logRow(icon, msg, s.error || s.failed || unc.n || s.connectFailed ? 'ds-prog-err' : '');
     // Fields skipped because the target org can't accept them (non-fatal).
     if (s.skippedFields && s.skippedFields.length) {
       logRow('ℹ️',
@@ -2088,9 +2120,19 @@ async function runTransfer() {
     }
   }
 
-  (result.errors || []).forEach(e => logRow('❌', e, 'ds-prog-err'));
+  (result.errors || []).forEach(e => logRow('❌', netWords(e), 'ds-prog-err'));
 
   const total = Object.values(result.summary || {}).reduce((n,s)=>n+(s.created||0),0);
+  // 2026-11-15: a run the network stopped is not "Done". It says the connection dropped, and where the run and
+  // its restore point are (the History entry below carries the restore point whenever one was taken).
+  const netStopped = result.status !== 'success' && typeof sftkIsNetworkError === 'function'
+    && [...(result.errors || []), ...Object.values(result.summary || {}).map(s => (s && (s.error || s.writeError)) || '')]
+      .some(e => e && !/(^|: )ℹ /.test(String(e)) && sftkIsNetworkError(e));
+  if (netStopped) {
+    logRow(result.status === 'failed' ? '❌' : '⚠',
+      `Stopped — the connection to Salesforce dropped: ${total.toLocaleString('en-US')} record(s) confirmed written. The run is recorded in History${undoStub.status !== 'none' ? ' with its restore point — ↩ Roll back there takes back what was written' : ''}.${total ? ' Running it again as it is would insert the records already written a second time, unless the write mode is Upsert.' : ''}`,
+      'ds-prog-err');
+  } else
   logRow(result.status === 'success' ? '✅' : '⚠',
     `Done — ${total} records transferred · Status: ${result.status}`);
 
@@ -2129,6 +2171,7 @@ async function runTransfer() {
   showToast(
     result.status === 'success'
       ? `✅ ${total} records transferred successfully`
+      : netStopped ? `⚠️ Transfer stopped — the connection to Salesforce dropped. ${total.toLocaleString('en-US')} record(s) confirmed written; History has the run.`
       : `⚠️ Transfer finished with warnings — ${total} records`,
     result.status === 'success' ? 'success' : 'warning',
     5000

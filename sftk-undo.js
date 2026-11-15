@@ -638,22 +638,73 @@ function sftkUndoPickCoverage(plan, work) {
     if (!w || !w.item) continue;
     actedBy.set(w.item, new Set([...(w.created || []), ...((w.changed || []).map(c => c && c.id))]));
   }
-  let planned = 0, acted = 0, kept = 0;
+  // 2026-11-15: kept ids come in two kinds and the page treats them
+  // differently. Parents kept because a child object could not be READ
+  // (item.cascadeUnknown) carry a "delete anyway" tick box; parents kept
+  // because someone added records under them after the run have NO tick box —
+  // the only way to roll them back is to remove those records first. Both
+  // stay "left in place" (the run's records are still in the org), but they
+  // are counted apart so every message can say what is true for each.
+  let planned = 0, acted = 0, kept = 0, keptForChildren = 0;
   for (const it of (plan || [])) {
     if (!it || it.refused) continue;
     const did = actedBy.get(it) || new Set();
     const ids = [...((it.scoped && it.scoped.created) || []), ...(((it.scoped && it.scoped.changed) || []).map(c => c && c.id))];
     const keptIds = it.keptIds || [];
+    const forceable = !!(it.cascadeUnknown && it.cascadeUnknown.length);
     planned += ids.length + keptIds.length;
     for (const id of ids) if (did.has(id)) acted++;
-    for (const id of keptIds) { if (did.has(id)) acted++; else kept++; }
+    for (const id of keptIds) { if (did.has(id)) acted++; else { kept++; if (!forceable) keptForChildren++; } }
   }
   const left = planned - acted;
-  return { planned, acted, left, kept, complete: left === 0 };
+  return { planned, acted, left, kept, keptForChildren, complete: left === 0 };
+}
+
+// PURE. The sentence that says what a rollback left in place and what the
+// user can do about each part (2026-11-15). The old single line promised
+// "Roll back stays available for the rest" for every kept record, which is
+// untrue for parents kept for records added under them: they have no tick
+// box, so a second attempt offers nothing until those records are removed.
+// Returns '' when nothing was left.
+function sftkUndoLeftText(coverage) {
+  const c = coverage || {};
+  const left = Number(c.left) || 0;
+  if (!left) return '';
+  const n = v => Number(v || 0).toLocaleString('en-US');
+  const keptAll = Math.min(Number(c.kept) || 0, left);
+  const forChildren = Math.min(Number(c.keptForChildren) || 0, keptAll);
+  const forceable = keptAll - forChildren;
+  const unpicked = left - keptAll;
+  const parts = [];
+  if (unpicked) parts.push(`${n(unpicked)} not picked — ↩ Roll back stays available in History for them`);
+  if (forceable) parts.push(`${n(forceable)} kept because what hangs under them could not be checked — roll back again and tick "delete anyway" under 🛡 Kept to include them`);
+  if (forChildren) parts.push(`${n(forChildren)} kept because records were added under them after the run — a rollback offers them again only once those records are removed`);
+  return `${n(left)} of ${n(c.planned)} record(s) in the plan still hold the run's changes: ${parts.join('; ')}.`;
+}
+
+// PURE. The plan-page line for a plan that has nothing to tick but still
+// holds Kept parents (2026-11-15). The page used to say "Nothing to roll back
+// — every object that was read matches the restore point", which is false
+// while records the run created are still in the org, and contradicted the
+// History card's "Roll back again". Returns '' when no item keeps anything.
+function sftkUndoKeptOnlyText(plan) {
+  const parts = []; let total = 0;
+  for (const it of (plan || [])) {
+    if (!it || it.refused) continue;
+    const k = (it.keptIds || []).length;
+    if (!k) continue;
+    total += k;
+    const under = (it.cascadeNotes || []).join(', ');
+    parts.push(`${k.toLocaleString('en-US')} ${it.objType || 'record(s)'}${under ? ` (under them: ${under})` : ''}`);
+  }
+  if (!total) return '';
+  return `${total.toLocaleString('en-US')} record(s) the run created are still in the org and are kept, because records were added under them after the run and would be deleted with them: ${parts.join('; ')}. Remove those records in the org and open the rollback again to delete the kept ones. Nothing is written.`;
 }
 
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkUndoPickCoverage      = sftkUndoPickCoverage;
+  globalThis.sftkUndoLeftText          = sftkUndoLeftText;
+  globalThis.sftkUndoKeptOnlyText      = sftkUndoKeptOnlyText;
   globalThis.sftkUndoMaxRows           = sftkUndoMaxRows;
   globalThis.sftkUndoBinQuery          = sftkUndoBinQuery;
   globalThis.sftkUndoBinAge            = sftkUndoBinAge;

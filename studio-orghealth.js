@@ -231,12 +231,39 @@ function sftkOhAppIndex(listRes, reads) {
   }
   return { ok: true, error: '', names };
 }
-// PURE. How many app assignments name page `devName` (a packaged app may write
-// it as ns__Name — the Lightning Pages tool's own matching).
-function sftkOhAppCount(index, devName) {
+// PURE. How many app assignments name the page `devName` in namespace `ns`
+// ('' / null = the org's own page).
+// 2026-11-15 (review of f0334a0): the match was "the name, or anything ending
+// in __name", on the DeveloperName alone — so the org's own unused page X was
+// called assigned whenever an app named a PACKAGED page pkg__X (and the card
+// could end on the good tone), and a packaged page X borrowed the assignment
+// of the org's own X. A page is named by its full name only: X for the org's
+// own, ns__X for a namespaced one. A bare X is taken for a namespaced page
+// only when the org has no page of its own called X (`localSameName` false) —
+// a namespaced dev org may write its own pages without the prefix.
+// 2026-11-15 (second review): "the org has its own page of this name" was
+// read from pages with an EMPTY NamespacePrefix — in a namespaced dev /
+// packaging org every own page carries the org's prefix, so the set was empty
+// and an installed package's pkg__X borrowed the bare-name assignment of the
+// org's own myns__X. A page is the org's own unless it has a NamespacePrefix
+// AND its ManageableState starts with "installed" (lightning-pages.js
+// lpPageIsPackaged, the same rule). sftkOhLocalSameName: does the org have an
+// own page of this DeveloperName OTHER than the page itself?
+function sftkOhPageIsPackaged(p) {
+  return !!(p && p.NamespacePrefix && /^installed/i.test(String(p.ManageableState || '')));
+}
+function sftkOhLocalSameName(pages, page) {
+  const d = String((page && page.DeveloperName) || '').toLowerCase();
+  if (!d) return false;
+  return (pages || []).some(q => q && q !== page && !sftkOhPageIsPackaged(q) && String(q.DeveloperName || '').toLowerCase() === d);
+}
+function sftkOhAppCount(index, devName, ns, localSameName) {
   const d = String(devName || '').toLowerCase();
   if (!d || !index || !Array.isArray(index.names)) return 0;
-  return index.names.filter(c => c === d || c.endsWith(`__${d}`)).length;
+  const n = String(ns || '').toLowerCase();
+  if (!n) return index.names.filter(c => c === d).length;
+  const full = `${n}__${d}`;
+  return index.names.filter(c => c === full || (c === d && !localSameName)).length;
 }
 
 // PURE. One Lightning page → 'assigned' | 'unassigned' | 'unread' | 'notjudged'.
@@ -520,9 +547,11 @@ const OH_CARDS = [
     calls: () => '2 + 1 per 10 pages + 1 per 10 Lightning apps + 1 per 200 custom objects + 1 per 5 objects with record pages',
     async run(sess) {
       const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: true, _silentError: true,
-        query: 'SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState FROM FlexiPage ORDER BY MasterLabel' });
+        // NamespacePrefix (2026-11-15): an app names a page by its full name, see sftkOhAppCount
+        query: 'SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState,NamespacePrefix FROM FlexiPage ORDER BY MasterLabel' });
       const problem = sftkOhReadProblem(q);
       if (problem) throw new Error(problem);
+      const allPages = q.records || [];   // every page, utility bars included — a name is taken by any of them
       const all = (q.records || []).filter(p => p.Type !== 'UtilityBar');   // utility bars are out of the Lightning Pages tool
       const pages = all.filter(p => !OH_PAGES_NOT_JUDGED.has(p.Type));
       const notJudged = all.length - pages.length;
@@ -565,7 +594,8 @@ const OH_CARDS = [
           probe = sftkOhPageDescribeVerdict(body, x.page.Id, (x.m && x.m.FullName) || x.page.DeveloperName, all);
         }
         const st = sftkOhPageState({ metaOk: x.ok, metaError: x.error, needsProbe,
-          assignments: sftkOhAppCount(appIndex, x.page.DeveloperName), appsOk: appIndex.ok, appsError: appIndex.error, probe });
+          assignments: sftkOhAppCount(appIndex, x.page.DeveloperName, x.page.NamespacePrefix, sftkOhLocalSameName(allPages, x.page)),
+          appsOk: appIndex.ok, appsError: appIndex.error, probe });
         return { label: x.page.MasterLabel || x.page.DeveloperName, devName: x.page.DeveloperName || '', type: x.page.Type, object: api || (x.raw ? '(object not named)' : ''),
           managed: (x.page.ManageableState || 'unmanaged') !== 'unmanaged', state: st.state, why: st.why };
       });

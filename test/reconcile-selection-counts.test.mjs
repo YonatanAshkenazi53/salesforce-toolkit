@@ -55,7 +55,8 @@ describe('counting a tree the way the engine reads it', () => {
     expect(sftkCountBreakdown({ obj: 'Account', count: null, children: [] })).toBe('? Account');
   });
   it('previewTransfer threads the parent scope into every child count, and the confirm shows the breakdown', () => {
-    expect(TR).toContain("countNode(c, { obj, where: cw.where, semiJoin: cw.semiJoin })");
+    // 2026-11-15: the parent scope now also carries `unscoped`, so everything under an upper-bound node is one too.
+    expect(TR).toContain("countNode(c, { obj, where: cw.where, semiJoin: cw.semiJoin, unscoped: cw.unscoped })");
     expect(TR).toContain('const counts = await countNode(runProfile.tree, null);');
     expect(TR).toContain('_trLastTotalIsBound = bound;');
     expect(TR).toContain('By object: ${esc(breakdown)}');

@@ -34,9 +34,14 @@ describe('Org Compare counts records, not distinct keys', () => {
     expect(r.srcCount).toBe(4);
     expect(r.tgtCount).toBe(1);
     expect(r.matched).toBe(1);
-    expect(r.missing).toBe(3);
+    // 2026-11-15: this pinned the blank Name as a 3rd "missing" record (25%).
+    // A blank key cannot be matched, so nothing is known about it: it is
+    // reported on its own (srcBlank + the note) and stays out of missing and
+    // of the percentage. The two surplus John Smiths are still drift.
+    expect(r.missing).toBe(2);
+    expect(r.srcBlank).toBe(1);
     expect(r.extras).toBe(0);
-    expect(r.matchPct).toBe(25);
+    expect(r.matchPct).toBe(33);
     expect(r.matchField).toBe('Name');
     expect(r.note).toMatch(/shared by more than one record/);
     expect(r.note).toMatch(/blank Name/);
@@ -49,12 +54,13 @@ describe('Org Compare counts records, not distinct keys', () => {
     expect(r).toMatchObject({ srcCount: 2, tgtCount: 2, matched: 2, missing: 0, extras: 0, matchPct: 100, note: '' });
   });
 
-  it('surplus duplicates in the target are only-in-target; blank target keys too', () => {
+  it('surplus duplicates in the target are only-in-target; a blank target key is counted on its own', () => {
     const { count } = build(async () => ({}));
     const r = count([{ Name: 'A' }], [{ Name: 'A' }, { Name: 'A' }, { Name: '' }, { Name: 'B' }, { Name: 'B' }], 'Name');
     expect(r.matched).toBe(1);
     expect(r.missing).toBe(0);
-    expect(r.extras).toBe(4);
+    // 2026-11-15: was 4 — the blank-key record was asserted as only-in-target.
+    expect(r.extras).toBe(3);
     expect(r.dupKeys).toBe(2);
     expect(r.tgtBlank).toBe(1);
   });

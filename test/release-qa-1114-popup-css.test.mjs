@@ -89,7 +89,15 @@ describe('Toolkit topbar brand stays on one line at narrow widths (QA 2026-11-14
     expect(last('.app-brand-name', 'text-overflow')).toBe('ellipsis');
     expect(last('.app-brand-name', 'min-width')).toBe('0');
   });
+  // 2026-11-15: this pinned `min-width: 0`, which is the value that let the
+  // brand collapse to 0 px under an open tool (the logo ended up beneath the
+  // What's New button). What it means to say: the brand may shrink below its
+  // content, down to a fixed floor no wider than the logo. The layout itself
+  // is checked in regress-1115-css.test.mjs.
   it('the brand container may shrink below its content width', () => {
-    expect(last('.app-brand', 'min-width')).toBe('0');
+    const floor = last('.app-brand', 'min-width');
+    expect(floor).toMatch(/^(0|\d+px)$/);                        // a fixed floor, never auto / min-content
+    expect(parseFloat(floor)).toBeLessThanOrEqual(parseFloat(last('.app-logo', 'width')));
+    expect(last('.app-brand', 'flex')).toMatch(/^\d+ [1-9]\d* /);   // flex-shrink is not 0
   });
 });

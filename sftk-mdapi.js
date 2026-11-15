@@ -805,10 +805,14 @@ function _sftkMdFieldIs(v, objApi, fieldApi) {
 // Activity.Region__c refused a Task rule's bare Region__c with a false "Task's same-named field" (2026-11-14 review 5).
 // One way only: cleaning Task.Region__c does not make an Event component its own. Not a relationship hop, so it is
 // not in sftk-relmap.js's map; field-cleaner.js may call it as a page global (popup.html loads this file before it).
+// PersonAccount is Account's own the same one way (2026-11-15): a Person Account compact layout / field set is stored
+// under the PersonAccount prefix and holds Account's fields by bare name — the list-type host guard refused it with a
+// false "PersonAccount's same-named field". Page layouts already read it so (field-cleaner.js LAYOUT_PREFIX_OBJECT).
+// The prefix is from the Metadata API's naming, not checked against a live org.
 function sftkMdIsOwnObj(compObj, objApi) {
   const c = String(compObj == null ? '' : compObj).trim().toLowerCase(), o = String(objApi == null ? '' : objApi).trim().toLowerCase();
   if (!c || !o) return false;
-  return c === o || (o === 'activity' && (c === 'task' || c === 'event'));
+  return c === o || (o === 'activity' && (c === 'task' || c === 'event')) || (o === 'account' && c === 'personaccount');
 }
 // "Account.Old__c" → "Account.New__c", "Old__c" → "New__c": the spelling is kept.
 function _sftkMdRenameVal(v, newField) {
@@ -1059,14 +1063,16 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   const verb = nf ? `now ${nf}` : 'removed';
   // a criteria-like element whose <child> names the field: dropped or renamed; skip(body) true = not this object's
   // field whatever its name (a filter line on another <table>, 2026-11-14)
-  const items = (src, tag, child, skip) => {
+  // is(v): the caller's own "is this value the field" rule, where the plain one is not enough (a field set of another
+  // object, 2026-11-15)
+  const items = (src, tag, child, skip, is) => {
     let n = 0;
     const r = _sftkMdWalk(src, tag, body => {
       if (skip && skip(body)) return 'keep';
       const el = sftkMdFindElement(body, child, 0);
       if (!el) return 'keep';
       const v = sftkMdUnescape(body.slice(el.bodyStart, el.bodyEnd));
-      if (!_sftkMdFieldIs(v, objApi, fieldApi)) return 'keep';
+      if (!(is ? is(v) : _sftkMdFieldIs(v, objApi, fieldApi))) return 'keep';
       n++;
       return nf ? { body: body.slice(0, el.bodyStart) + sftkMdEscape(_sftkMdRenameVal(v, nf)) + body.slice(el.bodyEnd) } : 'drop';
     });
@@ -1131,8 +1137,14 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   // ApprovalProcess and QuickAction. A path written Account.Region__c from another object's component may well be this
   // field, so that one is refused as "cannot tell" (unsure), never as "nothing to edit". Host not known = unchanged.
   const reEsc = t => String(t || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // A CUSTOM field picked on Task or Event is Activity's field, and the sibling's too (Salesforce defines it once, on
+  // Activity): with Task picked, an Event view's bare Region__c was refused as "Event's same-named field", which is
+  // untrue (2026-11-15). Only for these list types — a rule's formula still reads its object one way — and only for
+  // __c: Task.Subject and Event.Subject are two fields.
+  const _act = v => /^(task|event|activity)$/i.test(String(v || '').trim());
+  const listOwn = sameObj || (/__c$/i.test(String(fieldApi || '')) && _act(host) && _act(objApi));
   const notOwn = (n, what) => {
-    if (!host || sameObj || !n) return false;
+    if (!host || listOwn || !n) return false;
     if (new RegExp(`>\\s*${reEsc(objApi)}\\.${reEsc(fieldApi)}\\s*<`, 'i').test(before)) {
       cannotTell(`the ${host} ${what} names ${objApi}.${fieldApi} as a path from ${host}, and whether that reaches this field cannot be told here — edit it in Setup`);
     } else {
@@ -1336,11 +1348,30 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       break;
     }
     case 'FieldSet': {
-      let n = 0;
-      for (const tag of ['displayedFields', 'availableFields']) { const r = items(xml, tag, 'field'); xml = r.xml; n += r.n; }
-      if (notOwn(n, 'field set')) break;
+      // A field set of ANOTHER object: its bare Region__c is that object's own field and stays; a spanning entry
+      // (Account.Region__c in a Contact field set) is this field when its hops, walked from the field set's object by
+      // the shared resolver (sftk-relmap.js), end on objApi — the host guard refused that as "cannot tell" where it
+      // was edited before (2026-11-15). A hop the resolver cannot tell (Lookup__r, What / Who) refuses the whole edit
+      // as unsure. Only here: a list view's column names are not relationship paths, a compact layout has none.
+      // 2026-11-15 (second review): the object's OWN field set goes through the same resolver — its bare name is
+      // this field, and a self-lookup entry (Parent.Region__c in an Account field set) is too; the plain test left
+      // that entry in place while the edit was reported done.
+      const other = !!host && !listOwn, f = String(fieldApi || '').toLowerCase();
+      let n = 0, bare = 0, dim = null, fx = xml;
+      const is = !host ? null : v => {
+        const segs = String(v == null ? '' : v).trim().toLowerCase().split('.');
+        if (!f || segs.pop() !== f) return false;
+        if (!segs.length) { if (!other) return true; bare++; return false; }
+        const r = sftkRelWalk(host, segs);
+        if (r.kind) { dim = dim || r.kind; return false; }
+        return sftkMdIsOwnObj(r.obj, objApi);
+      };
+      for (const tag of ['displayedFields', 'availableFields']) { const r = items(fx, tag, 'field', null, is); fx = r.xml; n += r.n; }
+      if (dim) { cannotTell(`the ${host} field set names a field of this name through ${dim === 'custom' ? 'a custom lookup (Lookup__r.Field__c), and which object that lookup reaches' : 'a lookup that can reach any object, and whose field that is'} cannot be told here — edit it in Setup`); break; }
+      if (!n && bare) { refuse(`a ${host} field set holds ${host}’s fields, not this one — its ${fieldApi} is ${host}’s same-named field, so there is nothing of this field to edit`); break; }
       if (!n) { refuse('the field set does not list the field — edit it in Setup'); break; }
-      how.push(`field set: the field ${nf ? verb : 'taken out'}`);
+      xml = fx;
+      how.push(`field set: the field ${nf ? verb : 'taken out'}${bare ? ` (${host}’s own ${fieldApi} is left as it is)` : ''}`);
       break;
     }
     case 'AssignmentRule':

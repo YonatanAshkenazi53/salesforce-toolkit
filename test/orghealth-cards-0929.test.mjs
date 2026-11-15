@@ -158,7 +158,8 @@ describe('pages — Lightning pages assigned to nobody', () => {
   });
   it('the card ports the tool’s reads: FlexiPage list, batched metadata, entity names, cache-busted describes', () => {
     expect(SRC).toContain("id: 'pages'");
-    expect(SRC).toContain('SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState FROM FlexiPage ORDER BY MasterLabel');
+    // 2026-11-15: the list also reads NamespacePrefix (an app names a page by its full name).
+    expect(SRC).toContain('SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState,NamespacePrefix FROM FlexiPage ORDER BY MasterLabel');
     expect(SRC).toContain('services/data/v62.0/tooling/sobjects/FlexiPage/${encodeURIComponent(p.Id)}');
     expect(SRC).toContain('SELECT DurableId, QualifiedApiName FROM EntityDefinition WHERE DurableId IN');
     expect(SRC).toContain('services/data/v62.0/sobjects/${encodeURIComponent(o)}/describe/?_=${bust}');

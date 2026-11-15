@@ -3938,6 +3938,31 @@ const DependencyMap = (() => {
         continue;
       }
 
+      // 1b — 2026-11-15 (review of f0334a0): read the versions of these
+      // flows AS THEY ARE NOW. The plan comes from the scan, and a Draft
+      // saved since then would be overwritten in place by the deploy, taken
+      // for the new version, activated, and deleted by Undo. One Tooling
+      // query per 100 definitions; a read that fails refuses the org.
+      const recOf = it => ((it && it.ok && it.body && typeof it.body === 'object') ? it.body : null);
+      const defIds = [...new Set(items.map(it => { const b = recOf(it); return b && b.DefinitionId; })
+        .filter(d => /^[a-zA-Z0-9]{15,18}$/.test(String(d || ''))))];
+      const verNow = []; let verErr = null;
+      for (let i = 0; i < defIds.length && !verErr; i += 100) {
+        const q = await depBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: org.orgUrl, sid: org.sid, _silentError: true,
+          query: `SELECT Id, VersionNumber, Status, DefinitionId FROM Flow WHERE DefinitionId IN (${defIds.slice(i, i + 100).map(d => `'${d}'`).join(',')})` });
+        if (!q || q.error) verErr = String((q && q.error) || 'no response');
+        // 2026-11-15 (second review): SF_QUERY_ALL never errors on a short read — it answers the rows it got plus
+        // `incomplete`. A read that lost the row of a Draft saved since the scan would pass the check below and the
+        // deploy would overwrite that Draft. A short read is an unreadable one: refusing is the safe side.
+        else if (q.incomplete) verErr = `the read came back incomplete (${Number(q.incomplete.got || 0).toLocaleString('en-US')} of ${Number(q.incomplete.expected || 0).toLocaleString('en-US')} rows)`;
+        else verNow.push(...(q.records || []));
+      }
+      if (verErr) {
+        orgsFailed++;
+        say('❌', `${org.label}: the flows' current versions could not be re-read (${verErr}), so a Draft saved since the scan cannot be ruled out — nothing changed here.`);
+        continue;
+      }
+
       // 2 — set the version on each, refusing the whole org if any one of
       // them cannot be read. A package missing a flow would silently leave
       // that flow behind while reporting success for the rest.
@@ -3952,6 +3977,10 @@ const DependencyMap = (() => {
         const rec = (it && it.ok && it.body && typeof it.body === 'object') ? it.body : null;
         const meta = rec && rec.Metadata;
         if (!meta) { bad = `${j.apiName} could not be read`; break; }
+        // 2026-11-15: the version being re-saved must still be the flow's
+        // latest (sftkApiVerApplyCheck) — else the whole package is refused.
+        const fresh = sftkApiVerApplyCheck(j.apiName, rec, verNow);
+        if (!fresh.ok) { bad = fresh.why; break; }
         const set = sftkFlowSetApiVersion(meta, target);
         if (set.error) { bad = `${j.apiName}: ${set.error}`; break; }
         const fullName = (rec.FullName || rec.fullName || j.apiName);
@@ -3960,12 +3989,14 @@ const DependencyMap = (() => {
         members.push(fullName);
         changed.push({ apiName: j.apiName, from: set.from, to: set.to, status: j.status,
           wasActive: (rec.Status || j.status) === 'Active', prevVersion: Number(rec.VersionNumber) || 0,
-          // 2026-11-14: the flow's latest version number at scan time, so a
-          // pre-existing Draft overwritten in place is never taken for new.
-          prevLatest: j.latestVersion == null ? null : Number(j.latestVersion),
+          // 2026-11-14: the flow's latest version number, so a pre-existing
+          // Draft overwritten in place is never taken for new. 2026-11-15:
+          // from the Apply-time read above, not the scan (j.latestVersion) —
+          // the scan's value could never differ from prevVersion here.
+          prevLatest: fresh.prevLatest,
           defId: rec.DefinitionId || null });
       }
-      if (bad) { orgsFailed++; say('❌', `${org.label}: ${bad} — nothing changed in this org.`); continue; }
+      if (bad) { orgsFailed++; say('❌', `${org.label}: ${bad} — this package is all-or-nothing, so nothing changed in this org. Press ↻ Rescan before trying again.`); continue; }
 
       // 3 — ONE package, ONE deploy, for this whole org.
       try {

@@ -191,17 +191,39 @@ function deleteSequence(seqId) {
 // The confirmation before a sequence writes. Resolves true only when the
 // acknowledgement box is ticked and ▶ Run sequence is pressed (and, for a
 // production target, its name was typed). Cancel / close → false.
+// PURE (2026-11-15, second review). The profiles a sequence SENDS to the engine. A sequence has its own target org
+// and ran every saved profile unchanged — so a profile's owner fallback user, a User Id read from the PROFILE's
+// own target, was written as OwnerId into the SEQUENCE's target (refused as an invalid cross-reference, or another
+// user when Ids collide). Each step goes as a deep clone pointed at the sequence's target, with a fallback of
+// another org cleared (sftkOwnerFallbackForTarget — the Builder / Deploy / ring rule). The saved profiles are
+// never touched.  → { run: clones, cleared: [profile names whose fallback was cleared for this run] }
+function sftkSeqRunProfiles(profiles, seq) {
+  const run = [], cleared = [];
+  for (const p of (profiles || [])) {
+    const c = JSON.parse(JSON.stringify(p));
+    c.targetOrg = seq && seq.targetOrg;
+    if (typeof sftkOwnerFallbackForTarget === 'function' && sftkOwnerFallbackForTarget(c, p.targetOrg)) cleared.push(String(p.name || p.id || 'a step'));
+    run.push(c);
+  }
+  return { run, cleared };
+}
+
 function _seqConfirmRun(seq, profiles, tgtSess) {
   // The one confirmation (sftk-confirm.js, campaign 3 phase 2): the steps as
   // items, the stakes, the acknowledgement box, and — when the target is a
   // production org or guarded as one — the org's name typed in a second step.
   const tgtLabel = orgLabel(seq.targetOrg);
+  // the steps whose owner fallback user belongs to another org than this sequence's target: said before the run
+  const noFallback = sftkSeqRunProfiles(profiles, seq).cleared;
+  const fbNote = noFallback.length
+    ? ` <br>👤 Owner fallback not used for ${noFallback.map(n => `<strong>${esc(n)}</strong>`).join(', ')}: its fallback user was picked from another target org, so owners with no match in <strong>${esc(tgtLabel)}</strong> get no fallback in this run.`
+    : '';
   return (async () => {
     const gate = await sftkOrgWriteGate(seq.targetOrg, _orgs);
     return sftkConfirmDestructive({
       title: `▶ Run “${seq.name}” — ${profiles.length} step(s) into ${tgtLabel}`,
       items: profiles.map(p => ({ label: p.name, sub: `${p.tree?.objectType || '?'}${(p.tree?.children || []).length ? ` +${(p.tree.children || []).length} child object(s)` : ''} · ${p.upsert?.field ? `upsert on ${p.upsert.field}` : 'insert'}` })),
-      revOverride: { html: `⚠ A sequence takes <strong>no per-record selection</strong>: every record each deployment matches is written into <strong>${esc(tgtLabel)}</strong>, step after step. Records a step already wrote stay written if a later step fails. ↩ Roll back in History removes what this run inserted.`, needsCheckbox: true },
+      revOverride: { html: `⚠ A sequence takes <strong>no per-record selection</strong>: every record each deployment matches is written into <strong>${esc(tgtLabel)}</strong>, step after step. Records a step already wrote stay written if a later step fails. ↩ Roll back in History removes what this run inserted.${fbNote}`, needsCheckbox: true },
       icon: '▶',
       confirmLabel: '▶ Run sequence',
       production: gate.production ? { label: gate.label || tgtLabel } : null,
@@ -300,7 +322,8 @@ async function runSequence(seqId) {
   const result = await sendBg({
     // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
     type:      'SF_EXECUTE_SEQUENCE',
-    profiles,
+    // clones pointed at THIS sequence's target, a fallback owner of another org cleared (sftkSeqRunProfiles)
+    profiles:  sftkSeqRunProfiles(profiles, seq).run,
     srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
     tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
   });
@@ -310,6 +333,12 @@ async function runSequence(seqId) {
   const body = eid('seqRunBody');
   const closeBtn = eid('seqRunClose');
   if (closeBtn) { closeBtn.disabled = false; closeBtn.textContent = 'Close'; closeBtn.addEventListener('click', closeModal); }
+
+  // Refused because another run is on (2026-11-15): nothing was written, so
+  // no History entry and no restore point — see sftkRunRefusedBusy.
+  if (await sftkRunRefusedBusy(result, {
+    log: (icon, msg) => { if (body) body.innerHTML = `<div class="ds-prog-row ds-prog-warn">${esc(icon)} ${esc(msg)}</div>`; },
+    toast: showToast, dropRestorePoint: () => sftkUndoStoreDelete(seqRunId) })) return;
 
   if (result?.error) {
     if (body) body.innerHTML = `<div class="ds-prog-err">❌ ${esc(result.error)}</div>`;
@@ -336,7 +365,7 @@ async function runSequence(seqId) {
     grandTotal += created;
     const icon = step.status === 'success' ? '✅' : (created > 0 ? '⚠' : '❌');
     const objLines = Object.entries(step.summary || {}).map(([obj, s]) =>
-      `<div class="ds-seq-run-obj">${esc(obj)}: ${s.created || 0} created${s.failed ? `, ${s.failed} failed` : ''}${s.connected ? `, ${s.connected} linked` : ''}${s.connectFailed ? `, ${s.connectFailed} link failed` : ''}${s.error ? ` — ${esc(s.error)}` : ''}</div>`
+      `<div class="ds-seq-run-obj">${esc(obj)}: ${s.created || 0} created${s.failed ? `, ${s.failed} failed` : ''}${esc(sftkRunUnconfirmedInfo(s).note)}${s.connected ? `, ${s.connected} linked` : ''}${s.connectFailed ? `, ${s.connectFailed} link failed` : ''}${s.error ? ` — ${esc(s.error)}` : ''}</div>`
     ).join('');
     const errLines = (step.errors || []).slice(0, 6).map(e => `<div class="ds-prog-err">${esc(e)}</div>`).join('');
     return `<div class="ds-seq-run-step">

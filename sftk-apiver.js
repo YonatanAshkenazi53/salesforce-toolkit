@@ -257,7 +257,36 @@ function sftkApiVerPlan(target, orgs, cells) {
   return out;
 }
 
+// 2026-11-15 (review of f0334a0): the Apply-time check. The plan is built
+// from the SCAN, which can be any age — a Draft saved in Flow Builder after
+// it is the latest inactive version, the one a deploy overwrites in place
+// (then it was activated as "new" and Undo deleted it). So just before the
+// package is built the flow's versions are read again, and the version being
+// re-saved must still be the flow's LATEST. rec = the Tooling Flow record the
+// plan re-saves; records = Tooling Flow rows { DefinitionId, VersionNumber,
+// Status } read now. Unreadable counts as changed — refusing is the safe side.
+// Returns { ok, prevLatest, why }.
+function sftkApiVerApplyCheck(apiName, rec, records) {
+  const id15 = v => String(v || '').slice(0, 15);
+  const defId = rec && rec.DefinitionId;
+  const mine = defId ? (records || []).filter(r => r && id15(r.DefinitionId) === id15(defId)) : [];
+  if (!mine.length) {
+    return { ok: false, prevLatest: null, why: `${apiName}: its versions could not be re-read just before the deploy, so a version saved since the scan cannot be ruled out` };
+  }
+  let latest = mine[0];
+  for (const r of mine) if ((Number(r.VersionNumber) || 0) > (Number(latest.VersionNumber) || 0)) latest = r;
+  const n = Number(latest.VersionNumber) || 0;
+  const cur = Number(rec.VersionNumber) || 0;
+  if (n > cur) {
+    const active = latest.Status === 'Active';
+    return { ok: false, prevLatest: n, why: `${apiName} changed since the scan: its latest version is now v${n} (${latest.Status || 'not active'}), not the v${cur} this plan would re-save`
+      + (active ? '' : ` — the deploy would overwrite v${n}`) };
+  }
+  return { ok: true, prevLatest: n, why: '' };
+}
+
 if (typeof globalThis !== 'undefined') {
+  globalThis.sftkApiVerApplyCheck = sftkApiVerApplyCheck;
   globalThis.sftkApiVerNum        = sftkApiVerNum;
   globalThis.sftkApiVerList       = sftkApiVerList;
   globalThis.sftkApiVerMax        = sftkApiVerMax;

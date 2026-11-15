@@ -207,16 +207,33 @@ function sftkFriendlyError(raw, opts) {
   // no mapping, the raw "Failed to fetch" / "TotalRequests Limit exceeded"
   // landed in the popup's session banner next to the Connect form, sending
   // the user to reconnect when the session was fine. Name the real cause.
-  if (/REQUEST_LIMIT_EXCEEDED|TotalRequests Limit exceeded/i.test(s)) {
+  // REQUEST_LIMIT_EXCEEDED is ONE code for several limits (2026-11-15): the concurrent ones (ConcurrentRequests,
+  // ConcurrentPerOrgLongTxn) clear in seconds, and the bare code was read as the daily allowance with a 24-hour
+  // wait. Only "TotalRequests" is the daily one; the bare code names no limit, so its text claims none.
+  if (/Concurrent\w*\b.*Limit exceeded/i.test(s)) {
+    out.type = 'api-busy';
+    out.message = 'Too many requests are running in this org at once';
+    out.hint = 'This clears in moments — try again shortly. Your session is fine; reconnecting will not help.';
+    return out;
+  }
+  if (/TotalRequests Limit exceeded/i.test(s)) {
     out.type = 'api-limit';
     out.message = 'This org has used its daily API calls';
     out.hint = 'Salesforce frees calls up again over the next 24 hours — try again later. Your session is fine; reconnecting will not help.';
     return out;
   }
+  if (/REQUEST_LIMIT_EXCEEDED/i.test(s)) {
+    out.type = 'api-limit';
+    out.message = 'An API limit of this org was hit';
+    out.hint = 'Try again shortly. Your session is fine; reconnecting will not help.';
+    return out;
+  }
+  // A dead org address (a deleted sandbox, a renamed My Domain) fails exactly like a dropped network, so the hint
+  // names both (2026-11-15).
   if (/Failed to fetch|NetworkError when attempting to fetch|net::ERR_(INTERNET_DISCONNECTED|NETWORK_CHANGED|NAME_NOT_RESOLVED|CONNECTION_)/i.test(s)) {
     out.type = 'network';
     out.message = 'No connection to Salesforce';
-    out.hint = 'Check your network, then Retry.';
+    out.hint = 'Check your network — or the org address, if the org was renamed or deleted — then Retry.';
     return out;
   }
   if (/SESSION_EXPIRED|INVALID_SESSION_ID/i.test(s)) {
@@ -228,7 +245,30 @@ function sftkFriendlyError(raw, opts) {
   return out;
 }
 
+// 2026-11-15 (live check: a dry run with the network dropped said "dry run stopped: Failed to fetch"). A run-log
+// line keeps its own context ("Account: …", "dry run stopped: …"), so it cannot be replaced wholesale by the
+// friendly message the way History's error rows are. This swaps only the browser's raw network token for words,
+// and only when sftkFriendlyError reads the line as a network failure. Any other line comes back unchanged.
+function sftkNetworkWords(raw) {
+  const s = String(raw ?? '');
+  if (!sftkIsNetworkError(s)) return s;
+  // 2026-11-15 (second review): the browser's usual error carries TWO tokens — "Failed to fetch
+  // (net::ERR_NAME_NOT_RESOLVED)" — and each was replaced, so the run log read the sentence twice. The
+  // parenthesised net:: tail of a token is dropped first, and a repeat left side by side is collapsed.
+  const W = 'the connection to Salesforce dropped';
+  return s.replace(/TypeError:\s*(?=Failed to fetch|NetworkError)/gi, '')
+    .replace(/(Failed to fetch|NetworkError when attempting to fetch(?: resource)?\.?)\s*\(\s*net::ERR_[A-Z_]+\s*\)/gi, '$1')
+    .replace(/Failed to fetch|NetworkError when attempting to fetch(?: resource)?\.?|net::ERR_(?:INTERNET_DISCONNECTED|NETWORK_CHANGED|NAME_NOT_RESOLVED|CONNECTION_\w+)/gi, W)
+    .replace(/(the connection to Salesforce dropped)(?:\s*[:(,—-]?\s*the connection to Salesforce dropped\)?)+/g, '$1');
+}
+// Is this line a network failure? One reading: the friendly classifier's.
+function sftkIsNetworkError(raw) {
+  try { return sftkFriendlyError(String(raw ?? '')).type === 'network'; } catch (_) { return false; }
+}
+
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkFriendlyError = sftkFriendlyError;
+  globalThis.sftkNetworkWords = sftkNetworkWords;
+  globalThis.sftkIsNetworkError = sftkIsNetworkError;
   globalThis.sftkDecodeEntities = sftkDecodeEntities;
 }

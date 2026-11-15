@@ -369,7 +369,8 @@ const LightningPages = (() => {
     // which always returns it. This avoids a noisy error in the debug log.
     const res = await bg({
       type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
-      query: `SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState ` +
+      // NamespacePrefix (2026-11-15): Clone Page must tell an installed package's page from the org's own, see lpPageIsPackaged
+      query: `SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState,NamespacePrefix ` +
              `FROM FlexiPage ORDER BY MasterLabel`
     });
 
@@ -3310,10 +3311,11 @@ const LightningPages = (() => {
     say('Checking the API name is free…');
     const taken = await bg({
       type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-      query: `SELECT Id FROM FlexiPage WHERE DeveloperName='${newApiName}'`
+      query: `SELECT Id,DeveloperName,NamespacePrefix,ManageableState FROM FlexiPage WHERE DeveloperName='${newApiName}'`
     });
     if (!taken || taken.error) throw new Error(`Could not check whether the API name "${newApiName}" is free (${lpWhy(taken?.error)}) — nothing was written.`);
-    if ((taken.records || []).length) throw new Error('DUPLICATE_DEVELOPER_NAME');
+    // 2026-11-15: an installed package's page ns__X does not hold the name X — the deploy makes a separate page.
+    if (lpCloneNameTaken(taken.records, newApiName)) throw new Error('DUPLICATE_DEVELOPER_NAME');
 
     // History: one journal for this Clone Page click. Undo is `none` —
     // cloning only ever CREATES a page; there is no previous copy to go
@@ -3337,11 +3339,12 @@ const LightningPages = (() => {
         say('Locating new page…');
         const findRes = await bg({
           type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-          query: `SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState ` +
+          query: `SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState,NamespacePrefix ` +
                  `FROM FlexiPage WHERE DeveloperName='${newApiName}'`
         });
         if (findRes.error) return { ok: false, text: 'Could not locate cloned page: ' + findRes.error };
-        newPage = findRes.records?.[0] || null;
+        // 2026-11-15: never an installed package's page of the same name — that one is not the clone.
+        newPage = lpCloneFindOwn(findRes.records);
         return { ok: !!newPage, text: newPage ? null : `Cloned page "${newApiName}" not found after deploy — it may have been created under a different namespace.` };
       },
     });
@@ -4622,12 +4625,30 @@ function lpSessionRetryOk(origOrgUrl, failedSid, fresh) {
   return fresh.sid !== failedSid;
 }
 
+// PURE. 2026-11-15: does this page belong to an INSTALLED package? Such a
+// page is ns__X: its DeveloperName X is not taken in the org's own space, and
+// a deploy of X makes a separate page beside it. Both facts are needed: a
+// namespaced Developer Edition or packaging org carries its own prefix on its
+// own pages (ManageableState unmanaged / beta / released), and there the name
+// IS taken. A row whose NamespacePrefix or state was not read counts as the
+// org's own — refusing a free name is the safe mistake, overwriting is not.
+function lpPageIsPackaged(p) {
+  return !!(p && p.NamespacePrefix && /^installed/i.test(String(p.ManageableState || '')));
+}
+
 // 2026-11-14: is this API name already used by a loaded page? Salesforce
-// DeveloperNames are unique case-insensitively.
+// DeveloperNames are unique case-insensitively. 2026-11-15: an installed
+// package's page of the same name does not count (lpPageIsPackaged).
 function lpCloneNameTaken(pages, apiName) {
   const want = String(apiName || '').toLowerCase();
   if (!want) return false;
-  return (pages || []).some(p => String((p && p.DeveloperName) || '').toLowerCase() === want);
+  return (pages || []).some(p => String((p && p.DeveloperName) || '').toLowerCase() === want && !lpPageIsPackaged(p));
+}
+
+// PURE. The clone among the rows found by its API name after the deploy: the
+// org's own page, never an installed package's page of the same name.
+function lpCloneFindOwn(records) {
+  return (records || []).find(r => r && !lpPageIsPackaged(r)) || null;
 }
 
 function lpWhy(raw) {
