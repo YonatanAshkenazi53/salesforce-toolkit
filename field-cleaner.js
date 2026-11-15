@@ -3048,6 +3048,7 @@ const FieldCleaner = (() => {
 
     results.innerHTML = html;
     if (pkgNs) checkEnableDelete();   // a packaged field: the delete stays locked and the note says why
+    else if (autoCount > 0 && blockerTotal === 0 && fcScopeNorm(_lastScan && _lastScan.scope) !== 'mentions') checkEnableDelete();   // only "might break" rows may be open: see _openRowSplit
     _wireFolds(results);
     _paintFilter();
     _refreshFixEvery();   // the ⚡ row's two counts come from the rows as drawn (⇄ and ✂ differ: a formula has no ✂)
@@ -4925,6 +4926,7 @@ const FieldCleaner = (() => {
     // change just made is the first entry with its ↩ Undo (or the true reason it has none). Not on a row that was
     // only settled — nothing was changed there.
     const changed = _fixedRowChanged(label);
+    if (changed && _lastScan) _lastScan.cleared = true;   // the next ask gives Salesforce time to catch up
     item.innerHTML = `
       <span class="fc-item-name">${esc(name)}</span>
       <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>${changed ? '<button type="button" class="btn btn-secondary btn-sm fc-item-undo" title="Opens Field Cleaner’s History — this change is the first entry, with ↩ Undo">↩ Undo</button>' : ''}${detailHtml}`;
@@ -5000,8 +5002,20 @@ const FieldCleaner = (() => {
     return fe.message + (fe.hint ? ' — ' + fe.hint : '');
   }
 
+  // WHAT HOLDS THE DELETE (owner 2026-11-15: "salesforce would accept the delete but i cant click the delete button"):
+  // only what BLOCKS it — the listed blockers and the open rows of a kind Salesforce refuses over (flows, Lightning
+  // pages). A row that only "might break" (a layout, a list view, a report, a template) does not: Salesforce lets the
+  // delete through with it, so with no blocker left Salesforce is asked, and its answer decides. Such rows are still
+  // counted in the note, so they are not forgotten.
+  function _openRowSplit(btns, sevOf) {
+    const blk = new Set(), soft = new Set();
+    for (const b of btns) ((sevOf(b.type) === 'blocker') ? blk : soft).add(String(b.id));
+    for (const id of blk) soft.delete(id);
+    return { blockers: blk.size, soft: soft.size };
+  }
   function checkEnableDelete() {
     const remaining = document.querySelectorAll('.fc-fix-btn:not([disabled])');
+    const open = _openRowSplit([...remaining].map(b => ({ id: b.dataset.id, type: b.dataset.type })), t => (TYPE_CFG[t] || TYPE_CFG_DEFAULT).sev);
     const delBtn    = eid('fcDelBtn');
     if (!delBtn) return;
     // a packaged field is never deletable from here, whatever is cleared
@@ -5015,21 +5029,22 @@ const FieldCleaner = (() => {
     const blockerTotal = (_manualBlockers || []).reduce((n, b) => n + b.count, 0);
     // F2: even with every auto-fix done, manual blockers still make Salesforce
     // reject the delete — keep the button locked and say why.
-    if (remaining.length === 0 && blockerTotal === 0) {
+    if (open.blockers === 0 && blockerTotal === 0) {
       delBtn.disabled = !!(_lastScan && _lastScan.unread && _lastScan.unread.length);   // _paintAsk unlocks it when Salesforce accepts
       const note = eid('fcDeleteNote');
-      if (note) note.textContent = 'Everything listed is resolved — asking Salesforce whether anything else blocks…';
+      const softSay = open.soft ? ` ${open.soft} item${open.soft === 1 ? '' : 's'} below still use${open.soft === 1 ? 's' : ''} the field and will lose it with the delete — fix ${open.soft === 1 ? 'it' : 'them'} first if ${open.soft === 1 ? 'it matters' : 'they matter'}.` : '';
+      if (note) note.textContent = `${open.soft ? 'Nothing listed blocks the delete' : 'Everything listed is resolved'} — asking Salesforce whether anything else blocks…`;
       if (_lastScan) _lastScan.ask = null;
-      askSalesforce().then(() => { const n2 = eid('fcDeleteNote'); if (n2 && /asking Salesforce/.test(n2.textContent)) n2.textContent = 'Everything listed is resolved.'; });
-    } else if (remaining.length === 0 && blockerTotal > 0) {
+      askSalesforce({ settle: !!(_lastScan && _lastScan.cleared) }).then(() => { const n2 = eid('fcDeleteNote'); if (n2 && /asking Salesforce/.test(n2.textContent)) n2.textContent = (open.soft ? 'Nothing listed blocks the delete.' : 'Everything listed is resolved.') + softSay; });
+    } else if (open.blockers === 0 && blockerTotal > 0) {
       delBtn.disabled = true;
       const note = eid('fcDeleteNote');
       if (note) note.textContent = `🔒 Auto-fixes done, but ${blockerTotal} manual blocker(s) remain — clear them in Setup and re-scan.`;
     } else {
       // some are fixed, some are open: the count follows without a re-scan (backlog 2026-11-02)
-      const open = new Set([...remaining].map(b => b.dataset.id)).size;
+      const openN = new Set([...remaining].map(b => b.dataset.id)).size;
       const note = eid('fcDeleteNote');
-      if (note && /^⚠ Fix the /.test(note.textContent.trim())) note.textContent = `⚠ Fix the ${open} fixable item${open === 1 ? '' : 's'} below first.`;
+      if (note && /^⚠ Fix the /.test(note.textContent.trim())) note.textContent = `⚠ Fix the ${openN} fixable item${openN === 1 ? '' : 's'} below first.`;
     }
   }
 
@@ -7095,11 +7110,13 @@ const FieldCleaner = (() => {
     // accept the delete but i cant click the delete button" — the chips said every blocker was cleared, while the
     // button's lock and the answer box still counted the 14 of the scan).
     _manualBlockers = _afterDeleteCount(_manualBlockers, type);
+    if (_lastScan) _lastScan.cleared = true;   // the next ask gives Salesforce time to catch up
     const box = document.querySelector('.fc-delete-zone .fc-blockers');
     const left = box ? [...box.querySelectorAll('.fc-blocker-row strong')].reduce((n, b) => n + (Number(b.textContent) || 0), 0) : 0;
     const hdr = box ? box.querySelector('.fc-blockers-hdr') : null;
     if (box && !box.querySelector('.fc-blocker-row')) {
       if (hdr) hdr.textContent = '✅ Every blocker listed here was fixed or deleted.';
+      box.classList.add('fc-blockers-clear');
       box.querySelector('.fc-blockers-foot')?.remove();
     } else if (hdr) hdr.textContent = `🔒 ${left} blocker${left === 1 ? ' stops' : 's stop'} the delete`;   // the header counts down with the chips (live 2026-11-08: it said 24 after a fix)
     // the note under the gate said "N manual blocker(s) remain" from the scan — it follows the deletes (live 2026-11-07)
@@ -8034,17 +8051,29 @@ const FieldCleaner = (() => {
   }
   function _wireAsk() { const b = eid('fcAskBtn'); if (b) b.onclick = () => askSalesforce(); }
   let _askBusy = false;
-  async function askSalesforce() {
+  async function askSalesforce(opts) {
     const box0 = eid('fcAskBox');
     if (!box0 || !_selObj || !_selField || _askBusy) return;
     const obj = _selObj.api, field = _selField.api, scan = _lastScan;
     _askBusy = true;
     box0.hidden = false; box0.className = 'fc-ask-box fc-ask-asking';
     box0.innerHTML = `<div class="fc-ask-head">⏳ Asking Salesforce whether it would accept the delete… <span class="fc-ask-at">a check only · nothing is deleted</span>${_ASK_AGAIN.replace('id="fcAskBtn"', 'id="fcAskBtn" disabled')}</div>`;
+    // Asked right after a blocker was cleared, Salesforce can still name it for a few minutes (live 2026-11-15: two
+    // validation rules deleted and verified gone, the check-only delete still refused over both; minutes later it
+    // accepted). So after a clear a refusal is asked again, with the wait said, before it is believed — and before
+    // the names it gives are added to the list as new rows.
+    const waits = opts && opts.settle ? [15, 30, 45, 60, 90] : [];
     let r;
-    try { r = await _deleteFieldViaMetadata(`${obj}.${field}`, true); }
-    catch (e) { r = { error: String((e && e.message) || e) }; }
-    finally { _askBusy = false; }
+    try {
+      for (let t = 0; ; t++) {
+        try { r = await _deleteFieldViaMetadata(`${obj}.${field}`, true); }
+        catch (e) { r = { error: String((e && e.message) || e) }; }
+        if (!r || r.error || r.success || t >= waits.length) break;
+        if (!_selField || _selField.api !== field || _lastScan !== scan) break;
+        box0.innerHTML = `<div class="fc-ask-head">⏳ Salesforce still names something that was just cleared — it can take a few minutes to catch up. Asking again in ${waits[t]} s (${t + 2} of ${waits.length + 1})… <span class="fc-ask-at">a check only · nothing is deleted</span></div>`;
+        await new Promise(res => setTimeout(res, waits[t] * 1000));
+      }
+    } finally { _askBusy = false; }
     if (!_selField || _selField.api !== field || _lastScan !== scan) return;   // another field or another scan meanwhile
     const ask = { r, at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), flows: {} };
     // the flow versions Salesforce names by id, read once so the box can say them by name
@@ -9506,7 +9535,7 @@ const FieldCleaner = (() => {
   function _fcSubject() { return _selObj && _selField ? `${_selObj.api}.${_selField.api}` : ''; }
   // every History entry this tool begins is stamped with the picked field (sftkHistoryBegin asks; no call site names it)
   if (typeof sftkHistorySubjectFor === 'function') sftkHistorySubjectFor('Field Cleaner', _fcSubject);
-  let _undoAllBusy = false;
+  let _undoAllBusy = false, _undoAllNote = null, _undoAllWired = false;
   function _undoAllSummary(res) {
     const bad = res.failed.length, left = res.total - res.ran;
     return (bad || res.stopped ? '⚠ ' : '✅ ') + `${res.ok} of ${res.total} change${res.total === 1 ? '' : 's'} undone and verified by re-reading the org`
@@ -9515,10 +9544,19 @@ const FieldCleaner = (() => {
   async function renderUndoAll(doneHtml) {
     const host = eid('fcUndoAll');
     if (!host || _undoAllBusy) return;
+    // a change is in History only when its entry ends — after the row is already marked done: follow the store
+    if (!_undoAllWired) {
+      _undoAllWired = true;
+      try { chrome.storage.onChanged.addListener((c, area) => { if (area === 'local' && c.sftk_history) renderUndoAll(); }); } catch (_) { /* no storage events outside the extension page */ }
+    }
     const subj = _fcSubject();
     const list = subj && _orgUrl && typeof sftkHistoryUndoableFor === 'function'
       ? sftkHistoryUndoableFor(await sftkHistoryAll(), { tool: 'Field Cleaner', orgUrl: _orgUrl, subject: subj }) : [];
     if (subj !== _fcSubject() || _undoAllBusy) return;   // another field was picked while History was read
+    // the summary of the last Undo all stays (through the re-scan) until the field or the list of changes moves on
+    if (doneHtml !== undefined) _undoAllNote = doneHtml ? { subj, n: list.length, html: doneHtml } : null;
+    else if (_undoAllNote && (_undoAllNote.subj !== subj || _undoAllNote.n !== list.length)) _undoAllNote = null;
+    doneHtml = _undoAllNote ? _undoAllNote.html : '';
     if (!list.length && !doneHtml) { host.innerHTML = ''; return; }
     host.innerHTML = `<div class="fc-undoall">${list.length ? `<span class="fc-undoall-txt">↩ <b>${list.length}</b> change${list.length === 1 ? '' : 's'} made here for <code>${esc(subj)}</code> can be undone.</span>
       <button type="button" class="btn btn-secondary btn-sm" id="fcUndoAllBtn" title="Takes every one of them back, newest first — one confirmation; each step is re-read from the org">↩ Undo all ${list.length}</button>` : ''}
@@ -9543,6 +9581,7 @@ const FieldCleaner = (() => {
         needsCheckbox: true,
         ack: 'I understand this writes the earlier state back over whatever is there now',
       },
+      revWord: 'Writes the earlier state back',
       confirmLabel: `↩ Undo all ${list.length}`,
       production: gate.production ? { label: gate.label } : null,
     });
@@ -9552,7 +9591,7 @@ const FieldCleaner = (() => {
     host.innerHTML = '<div class="fc-undoall fc-undoall-run"><div class="fc-undoall-prog"></div><details class="fc-undoall-log" open><summary>What is being undone</summary><ol></ol></details></div>';
     const ol = host.querySelector('ol');
     const prog = typeof sftkProgress === 'function'
-      ? sftkProgress(host.querySelector('.fc-undoall-prog'), { what: `Undoing ${list.length} change${list.length === 1 ? '' : 's'} for ${subj}…`, key: 'fc-undo-all', orgUrl: _orgUrl, total: list.length, unit: 'changes' }) : null;
+      ? sftkProgress(host.querySelector('.fc-undoall-prog'), { what: `Undoing ${list.length} change${list.length === 1 ? '' : 's'} for ${subj}…`, key: 'fc-undo-all', orgUrl: _orgUrl, total: list.length, unit: 'changes', small: true }) : null;
     let li = null, res;
     try {
       res = await sftkHistoryUndoMany(list, {

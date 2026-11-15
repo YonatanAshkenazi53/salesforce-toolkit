@@ -6018,6 +6018,9 @@ body.sftk-dark .fc-badge-del { background: #4a1b1f; color: #ffb4b0; border-color
   background: rgba(234, 0, 30, 0.06); border: 1px solid var(--danger); border-left-width: 4px;
 }
 .fc-blockers-hdr { font-size: 12px; font-weight: 700; color: var(--danger); margin-bottom: 5px; }
+/* every listed blocker cleared: the box says so in green, not in the red of a lock (2026-11-15) */
+.fc-blockers.fc-blockers-clear { background: rgba(46, 132, 74, 0.08); border-color: var(--success); }
+.fc-blockers.fc-blockers-clear .fc-blockers-hdr { color: var(--success); margin-bottom: 0; }
 .fc-blocker-row  { font-size: 12px; color: var(--text); padding: 1px 0; }
 /* the gate's kinds as chips (2026-11-08): click → the group above; the tooltip says the ways */
 .fc-blockers-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 7px 0 8px; }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types><members>Account.SFTK_UA_VR1</members><members>Account.SFTK_UA_VR2</members><name>ValidationRule</name></types>
+    <types><members>Account.SFTK_UA_View</members><name>ListView</name></types>
+    <types><members>SFTK_UA_Access</members><name>PermissionSet</name></types>
+    <types><members>Account.SFTK_UA_Field__c</members><name>CustomField</name></types>
+    <version>64.0</version>
+</Package>

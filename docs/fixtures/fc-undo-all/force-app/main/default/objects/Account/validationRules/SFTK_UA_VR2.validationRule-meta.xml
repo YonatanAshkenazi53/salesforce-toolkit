@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_UA_VR2</fullName>
+    <active>true</active>
+    <description>SFTK undo-all fixture 2, never fires</description>
+    <errorConditionFormula>AND(NOT(ISBLANK(SFTK_UA_Field__c)), Name = &quot;SFTK_UA_never_2&quot;)</errorConditionFormula>
+    <errorMessage>SFTK UA fixture rule 2</errorMessage>
+</ValidationRule>

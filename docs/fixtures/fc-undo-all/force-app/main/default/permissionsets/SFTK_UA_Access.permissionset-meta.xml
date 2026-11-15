@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Salesforce Toolkit undo-all fixture: field access. Safe to delete.</description>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.SFTK_UA_Field__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>SFTK UA Access</label>
+</PermissionSet>

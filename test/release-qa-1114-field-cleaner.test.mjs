@@ -416,3 +416,19 @@ describe('↩ Undo all for one field', () => {
     expect(FC).toContain("revOverride: { html: special, needsCheckbox: false, cls: 'sftk-rev-newver' },");
   });
 });
+
+// 2026-11-15 (live, fc-undo-all.mjs): with both blocking rules deleted, an open ✂ on a list view kept Delete locked
+describe('only what blocks holds the Delete button', () => {
+  const split = new Function('btns', 'sevOf', `${nested('_openRowSplit')}\nreturn _openRowSplit(btns, sevOf);`);
+  const sev = t => ({ Flow: 'blocker', FlexiPage: 'blocker', Layout: 'silent', ListView: 'later' }[t] || 'blocker');
+  it('counts rows, not buttons, and a row that only might break is not a blocker', () => {
+    expect(split([{ id: '1', type: 'ListView' }, { id: '1', type: 'ListView' }, { id: '2', type: 'Layout' }], sev)).toEqual({ blockers: 0, soft: 2 });
+    expect(split([{ id: '1', type: 'Flow' }, { id: '2', type: 'Layout' }], sev)).toEqual({ blockers: 1, soft: 1 });
+    expect(split([], sev)).toEqual({ blockers: 0, soft: 0 });
+  });
+  it('checkEnableDelete asks Salesforce as soon as no blocker is open', () => {
+    const i = FC.indexOf('  function checkEnableDelete() {'), body = FC.slice(i, i + 3200);
+    expect(body).toContain('if (open.blockers === 0 && blockerTotal === 0) {');
+    expect(body).toContain('askSalesforce({ settle:');
+  });
+});

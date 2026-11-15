@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_UA_Field__c</fullName>
+    <description>Salesforce Toolkit undo-all fixture. Safe to delete.</description>
+    <externalId>false</externalId>
+    <label>SFTK UA Field</label>
+    <length>50</length>
+    <required>false</required>
+    <trackFeedHistory>false</trackFeedHistory>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>
