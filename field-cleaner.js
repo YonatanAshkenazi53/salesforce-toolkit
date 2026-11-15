@@ -534,6 +534,7 @@ const FieldCleaner = (() => {
   let _allObjects = [];
   let _allFields  = [];
   let _objectsLoaded = false;
+  let _orgGen = 0;          // bumped by init() on every org switch — an answer asked of the old org drops itself
   // Session-only: Feed/Share/History/ChangeEvent objects stay hidden until the
   // user asks for them in the picker.
   let _objShowSystem = false;
@@ -593,6 +594,18 @@ const FieldCleaner = (() => {
     _sid       = sid;
     _container = container;
     _descCache.clear(); _replField = null; _replCompat = null;
+    // 2026-11-14 (release QA): init() runs again on an org switch (popup.js resetOrgState), but it kept the previous
+    // org's object list (_objectsLoaded stayed true, so the picker drew the OLD org's objects), the picked object and
+    // field, the last scan, and any sweep / report scan still running — which then went on calling the NEW org with
+    // the old org's ids. Every per-org piece is reset here, and _orgGen makes an answer that was asked of the old
+    // org drop itself when it lands.
+    _orgGen++;
+    _objectsLoaded = false; _allObjects = []; _objListCount = 0; _objCapped = false; _objTopping = false;
+    _objSearchInFlight = null; _objSearchErr = null; _objSearchSeq++; clearTimeout(_objSearchTimer); _objSearchTimer = null;
+    _objSearchDone.clear(); _objSearchTried.clear();
+    _allFields = []; _fieldsTotal = 0; _fieldsCapped = false;
+    _selObj = null; _flsSeq++;
+    resetFieldAndBelow();   // the field, the scan, ⇄, the copy, the sweep and the report scan (their loops stop on it)
     renderShell();
     renderSnapshotLog();   // F6: restore points survive across sessions
     // C5a: one delegated listener for every "↗ open in X" cross-link —
@@ -779,6 +792,7 @@ const FieldCleaner = (() => {
     input.addEventListener('focus', async () => {
       if (!_objectsLoaded) {
         _objectsLoaded = true;
+        const gen = _orgGen;
         drop.innerHTML = `<div class="fc-dd-loading">${sftkCatSm('Loading objects…')}</div>`;
         drop.style.display = '';
         // Phase 1 — ONE page, painted immediately. An org with fewer objects
@@ -787,6 +801,7 @@ const FieldCleaner = (() => {
           type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
           query: objectListSoql(FC_TOOLING_PAGE)
         });
+        if (gen !== _orgGen) return;   // the org changed while the list loaded: the new org's picker loads its own
         if (res.error) {
           _objectsLoaded = false;   // let a re-focus retry instead of dead-ending
           const fe = sftkFriendlyError(res.error);
@@ -841,10 +856,12 @@ const FieldCleaner = (() => {
   // true — which is exactly the honest answer, and why the server-side search
   // fallback below is not optional.
   async function topUpObjects() {
+    const gen = _orgGen;
     const res = await bg({
       type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
       query: objectListSoql(FC_OBJ_LIMIT), _suppressError: true
     });
+    if (gen !== _orgGen) return;
     _objTopping = false;
     if (!res.error) {
       _allObjects   = fcMergeEntries(_allObjects, mapEntityRows(res.records)).list;
@@ -993,6 +1010,7 @@ const FieldCleaner = (() => {
   }
 
   async function selectObject(api, label, durableId) {
+    const gen = _orgGen;
     _selObj = { api, label, durableId: durableId || api };
     resetFieldAndBelow();
     // Clear the previous object's completeness state up front — a failed load
@@ -1016,6 +1034,7 @@ const FieldCleaner = (() => {
       query: `SELECT Id, QualifiedApiName, Label, DataType FROM FieldDefinition ` +
              `WHERE EntityDefinitionId = ${fcSoqlLit(api)} ORDER BY Label LIMIT ${FC_FIELD_LIMIT}`
     });
+    if (gen !== _orgGen) return;   // 2026-11-14: asked of an org the popup has since left
 
     if (res.error) {
       const fe = sftkFriendlyError(res.error);
@@ -1644,6 +1663,7 @@ const FieldCleaner = (() => {
     // the seconds tick while a leg runs; the timer ends with the progress box
     const progTimer = setInterval(() => { if (!eid('fcScanProg')) { clearInterval(progTimer); _scanProg = null; return; } _scanProgPaint(); }, 1000);
 
+    const gen = _orgGen;   // 2026-11-14: a scan still running when the org switches must not land in the new org's page
     try {
       // ── 1. Resolve CustomField tooling ID ─────────────────
       const fieldId = await resolveCustomFieldId();
@@ -1760,6 +1780,7 @@ const FieldCleaner = (() => {
         }
       }
 
+      if (gen !== _orgGen) return;
       _rptScan = null; _orgSweep = null; _rtScanned = null; _everyNote = '';
       _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope, unread: scanUnread };
       await renderResults(_lastScan.deps, fieldId);
@@ -1795,6 +1816,12 @@ const FieldCleaner = (() => {
 
     const pages   = listRes.records;
     const hits    = [];
+    // 2026-11-14 (release QA): a page whose read failed used to be dropped as if it held nothing, and an incomplete
+    // page list went unnoticed — the gate then said 'The scan lists no blocker' and unlocked Delete Field. A Lightning
+    // page that holds the field makes Salesforce refuse the delete, so what could not be read is SAID (hits.unread,
+    // which the caller already reads) and keeps Delete locked until a re-scan reads it.
+    const failed  = [];
+    if (listRes.incomplete) failed.push(`the page list came back incomplete (${listRes.incomplete.got} of ${listRes.incomplete.expected})`);
     const BATCH   = 5;
     const msgEl   = () => eid('fcResults')?.querySelector('.lp-robot-msg');
 
@@ -1807,9 +1834,13 @@ const FieldCleaner = (() => {
         }))
       );
       results.forEach((r, j) => {
-        if (r.status !== 'fulfilled' || r.value?.error || !r.value?.Metadata) return;
         const page = slice[j];
         if (alreadyFound.has(String(page.Id || '').substring(0, 15))) return;
+        if (r.status !== 'fulfilled' || r.value?.error || !r.value?.Metadata) {
+          const why = r.status !== 'fulfilled' ? String((r.reason && r.reason.message) || r.reason || 'no answer') : (r.value?.error || 'no metadata came back');
+          failed.push(`${page.MasterLabel || page.DeveloperName || page.Id}: ${String(why).slice(0, 120)}`);
+          return;
+        }
         if (flexiPageReferencesField(r.value.Metadata, _selObj.api, _selField.api)) {
           hits.push({
             MetadataComponentId:      page.Id,
@@ -1825,6 +1856,7 @@ const FieldCleaner = (() => {
       if (el) el.textContent =
         `Scanning Lightning Pages… ${Math.min(i + BATCH, pages.length)}/${pages.length}`;
     }
+    if (failed.length) hits.unread = [{ leg: `Lightning pages (${failed.length} could not be read)`, why: failed.slice(0, 3).join('; ') + (failed.length > 3 ? `; and ${failed.length - 3} more` : '') }];
     return hits;
   }
 
@@ -2049,10 +2081,11 @@ const FieldCleaner = (() => {
     // item's Field for this object; Field comes back like "Contact.Email".
     if (L.matchingRules) try {
       msg('Scanning matching rules…');
-      const mriRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
-        query: `SELECT Id, Field, MatchingRuleId, MatchingRule.DeveloperName, MatchingRule.MasterLabel ` +
-               `FROM MatchingRuleItem WHERE MatchingRule.SobjectType = '${obj}'` });
-      if (!mriRes?.error) {
+      // 2026-11-14 (release QA): read through sfQ, which THROWS on an error or an incomplete answer so miss() says the
+      // leg — a bare bg() here turned a failed read into 'no matching rule' and unlocked Delete Field.
+      const mriRes = await sfQ(`SELECT Id, Field, MatchingRuleId, MatchingRule.DeveloperName, MatchingRule.MasterLabel ` +
+               `FROM MatchingRuleItem WHERE MatchingRule.SobjectType = '${obj}'`, false);
+      {
         for (const it of (mriRes?.records || [])) {
           // a CUSTOM field comes back as the field's Id, not its name (live 2026-11-07: "00NdL00002h5fC1UAI" for an inactive rule on the field)
           const f = String(it.Field || '').toLowerCase();
@@ -2068,8 +2101,8 @@ const FieldCleaner = (() => {
     if (L.workflowFieldUpdates) try {
       msg('Scanning workflow field updates…');
       const id15 = String(fieldId || '').substring(0, 15);
-      const wfRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
-        query: `SELECT Id, Name, FieldDefinitionId FROM WorkflowFieldUpdate WHERE SourceTableEnumOrId = '${obj}'` });
+      // 2026-11-14 (release QA): through sfQ for the same reason as the matching rules above.
+      const wfRes = await sfQ(`SELECT Id, Name, FieldDefinitionId FROM WorkflowFieldUpdate WHERE SourceTableEnumOrId = '${obj}'`, true);
       for (const fu of (wfRes?.records || [])) {
         const fd = String(fu.FieldDefinitionId || '');
         if (id15 && fd.includes(id15)) add('WorkflowFieldUpdate', fu.Id, fu.Name);
@@ -2387,6 +2420,15 @@ const FieldCleaner = (() => {
   //   • component visibility rule criteria    — leftValue / rightValue(.value)
   //   • component filters / list-view filters — field ref buried inside a
   //                                             property value or JSON blob
+  // The scan's tester on a Lightning page with its free text (description, label) left out: true when the page still
+  // names the field somewhere a component or rule reads it (2026-11-14, see toggleXmlInspector).
+  function _flexiNamesBeyondText(metadata, objApi, fieldApi) {
+    if (!metadata || typeof metadata !== 'object') return false;
+    const rest = { ...metadata };
+    delete rest.description; delete rest.masterLabel;
+    return flexiPageReferencesField(rest, objApi, fieldApi);
+  }
+
   function flexiPageReferencesField(metadata, objApi, fieldApi) {
     const fl  = String(fieldApi || '').toLowerCase();
     const obj = String(objApi  || '').toLowerCase();
@@ -2457,6 +2499,17 @@ const FieldCleaner = (() => {
   // dlrs__LookupChild__c.SFTK_Pkg_Tag__c, a field that exists, answered "Could not locate this field": every query's
   // error was swallowed and the three failures read as "no such field").
   let _resolveErr = '';
+  // 2026-11-14 (release QA): CustomField.DeveloperName carries no namespace, so 'Foo' matches the org's Foo__c AND a
+  // package's ns__Foo__c on the same object, and records[0] (no order guaranteed) could be the other field's Id: the
+  // scan then listed the wrong field's dependencies and the delete re-read the packaged field as 'can still be read
+  // back'. Every lookup now reads NamespacePrefix and takes only the row whose namespace is the picked field's; a
+  // lookup that finds only another namespace's field answers nothing (the next attempt, or 'could not locate').
+  function _pickOwnFieldRow(records, fieldApi) {
+    const base = String(fieldApi || '').replace(/__c$/i, '');
+    const want = base.includes('__') ? base.slice(0, base.indexOf('__')).toLowerCase() : '';
+    const row = (records || []).find(r => r && r.Id && String(r.NamespacePrefix || '').toLowerCase() === want);
+    return row ? row.Id : null;
+  }
   async function resolveCustomFieldId() {
     const devName = deriveDevName(_selField.api);
     _resolveErr = '';
@@ -2465,30 +2518,30 @@ const FieldCleaner = (() => {
     // Attempt 1: use EntityDefinition.DurableId as TableEnumOrId (works for both standard + custom)
     const res1 = await bg({
       type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-      query: `SELECT Id FROM CustomField WHERE DeveloperName = '${devName}' ` +
+      query: `SELECT Id, NamespacePrefix FROM CustomField WHERE DeveloperName = '${devName}' ` +
              `AND TableEnumOrId = '${_selObj.durableId}'`
     });
-    if (!res1.error && res1.records?.length) return res1.records[0].Id;
+    { const id = !res1.error ? _pickOwnFieldRow(res1.records, _selField.api) : null; if (id) return id; }
     note(res1);
 
     // Attempt 1b: by the object's API NAME through the relationship — no id of ours in the query, so a stale or
     // missing DurableId cannot fail it (works for standard, custom and packaged objects; proven on npc 2026-11-11).
     const res1b = await bg({
       type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-      query: `SELECT Id FROM CustomField WHERE DeveloperName = '${devName.split('__').pop()}' ` +
+      query: `SELECT Id, NamespacePrefix FROM CustomField WHERE DeveloperName = '${devName.split('__').pop()}' ` +
              `AND EntityDefinition.QualifiedApiName = ${fcSoqlLit(_selObj.api)}`
     });
-    if (!res1b.error && res1b.records?.length) return res1b.records[0].Id;
+    { const id = !res1b.error ? _pickOwnFieldRow(res1b.records, _selField.api) : null; if (id) return id; }
     note(res1b);
 
     // Attempt 2: try with QualifiedApiName (fallback for standard objects)
     if (_selObj.durableId !== _selObj.api) {
       const res2 = await bg({
         type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-        query: `SELECT Id FROM CustomField WHERE DeveloperName = '${devName}' ` +
+        query: `SELECT Id, NamespacePrefix FROM CustomField WHERE DeveloperName = '${devName}' ` +
                `AND TableEnumOrId = '${_selObj.api}'`
       });
-      if (!res2.error && res2.records?.length) return res2.records[0].Id;
+      { const id = !res2.error ? _pickOwnFieldRow(res2.records, _selField.api) : null; if (id) return id; }
       note(res2);
     }
 
@@ -2497,10 +2550,10 @@ const FieldCleaner = (() => {
       const shortName = devName.split('__').pop();
       const res3 = await bg({
         type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-        query: `SELECT Id FROM CustomField WHERE DeveloperName = '${shortName}' ` +
+        query: `SELECT Id, NamespacePrefix FROM CustomField WHERE DeveloperName = '${shortName}' ` +
                `AND TableEnumOrId = '${_selObj.durableId}'`
       });
-      if (!res3.error && res3.records?.length) return res3.records[0].Id;
+      { const id = !res3.error ? _pickOwnFieldRow(res3.records, _selField.api) : null; if (id) return id; }
       note(res3);
     }
 
@@ -3952,10 +4005,12 @@ const FieldCleaner = (() => {
     const dep = store[_depKey()];
     if (dep) {
       const days = Math.floor((Date.now() - dep.at) / 86400000);
+      // 2026-11-14 (QA): no grant at all to strip read as "0 access grant(s)
+      // stripped" — say plainly that nobody had access instead.
       el.innerHTML = `
         <div class="fc-dep-banner">
           🕐 <strong>Deprecated ${days === 0 ? 'today' : days + ' day(s) ago'}</strong> —
-          label renamed and ${dep.fls.length} access grant(s) stripped${(dep.flsFailed || []).length ? ` — ⚠ ${dep.flsFailed.length} could NOT be: ${esc(dep.flsFailed.map(x => x.who).join(', '))} (a Salesforce-managed permission set cannot be edited; the field stays visible there)` : ''}. No complaints so far?
+          label renamed and ${dep.fls.length || (dep.flsFailed || []).length ? `${dep.fls.length} access grant(s) stripped` : 'no profile or permission set had access to the field, so no access grant needed stripping'}${(dep.flsFailed || []).length ? ` — ⚠ ${dep.flsFailed.length} could NOT be: ${esc(dep.flsFailed.map(x => x.who).join(', '))} (a Salesforce-managed permission set cannot be edited; the field stays visible there)` : ''}. No complaints so far?
           It's safe to delete. Changed your mind?
           <button class="btn btn-sm" id="fcDepUndo">↩ Undo deprecation</button>
         </div>`;
@@ -4258,7 +4313,7 @@ const FieldCleaner = (() => {
       if (/timeout|time limit|too many/i.test(agg.error)) {
         return _sampleDataUsage(obj, fld, run);
       }
-      const fe = sftkFriendlyError(agg.error);
+      const fe = sftkFriendlyError(agg.error, { where: 'field-cleaner' });  // FLS-aware hint (2026-11-14)
       const e = el(); if (e) { e.className = 'fc-data-verdict'; e.title = fe.raw; e.textContent = `📊 Couldn't measure field usage: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`; }
       return;
     }
@@ -4286,14 +4341,16 @@ const FieldCleaner = (() => {
       query: `SELECT ${fld} FROM ${obj} LIMIT 5000` });
     if (run !== undefined && run !== _dataRun) return;   // a later pick replaced this one
     if (q.error) {
-      const fe = sftkFriendlyError(q.error);
+      const fe = sftkFriendlyError(q.error, { where: 'field-cleaner' });  // FLS-aware hint (2026-11-14)
       if (el) { el.className = 'fc-data-verdict'; el.title = fe.raw; el.textContent = `📊 Couldn't measure field usage: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`; }
       return;
     }
     const rows = q.records || [];
     const filled = rows.filter(r => r[fld] != null && r[fld] !== '').length;
+    // 2026-11-14 (release QA): a sample that reached the LIMIT is not the whole table — 'last value written never'
+    // and SAFE were claims about every record from the first 5,000 alone. partial says so to the verdict.
     _dataVerdict = {
-      filled, total: rows.length, lastIso: null, sampled: true,
+      filled, total: rows.length, lastIso: null, sampled: true, partial: rows.length >= 5000,
       fillPct: rows.length ? (filled / rows.length * 100) : 0,
     };
     _renderDataVerdict();
@@ -4311,9 +4368,13 @@ const FieldCleaner = (() => {
     }
     const pctFilled = v.fillPct;
     const emptyPct  = Math.max(0, 100 - pctFilled);
-    const safe = pctFilled < 1;   // <1% populated ⇒ effectively unused
+    // 2026-11-14 (release QA): a partial sample (the first 5,000 rows, no order) never reads SAFE or 'never' — the
+    // field may hold values on the records past it. Under 5,000 rows the sample IS the table, so both still hold.
+    const partial = !!(v.sampled && v.partial);
+    const safe = pctFilled < 1 && !partial;   // <1% populated ⇒ effectively unused
     const ageStr = v.lastIso
       ? _relAge(v.lastIso)
+      : partial ? 'unknown (only a sample was read)'
       : (v.filled === 0 ? 'never' : 'unknown');
     // QA 2026-10-06: this read "Empty on 99.9% of 8 of 10,266 records" — the
     // percentage is of ALL records, the count is how many hold a value. Two
@@ -4331,11 +4392,11 @@ const FieldCleaner = (() => {
     el.className = `fc-fact fc-data-verdict ${safe ? 'fc-data-safe' : 'fc-data-caution'}`;
     el.innerHTML = `
       <span class="fc-fact-ico">${safe ? '✅' : '⚠'}</span>
-      <span class="fc-fact-text"><span class="fc-data-badge">${safe ? 'SAFE' : 'CAUTION'}</span>
-        ${safe
+      <span class="fc-fact-text"><span class="fc-data-badge">${safe ? 'SAFE' : partial && pctFilled < 1 ? 'SAMPLE ONLY' : 'CAUTION'}</span>
+        ${safe || (partial && pctFilled < 1)
           ? `${v.bool ? 'Unticked' : 'Empty'} on <strong>${pctStr(emptyPct)}%</strong> of ${scope} · ${holders}`
           : `${v.bool ? 'Ticked' : 'Populated'} on <strong>${pctStr(pctFilled)}%</strong> of ${scope} · ${holders}`}
-        · last value written <strong>${ageStr}</strong>${v.sampled ? ' <em>(sampled)</em>' : ''}
+        · last value written <strong>${ageStr}</strong>${v.sampled ? ' <em>(sampled)</em>' : ''}${partial ? ' · the records past the sample were not read' : ''}
       </span>`;
   }
 
@@ -4589,7 +4650,16 @@ const FieldCleaner = (() => {
     // such outcomes the card's ✂ no longer decides by itself — the dialog shows the ways, this one among them.
     const pvO = hasChoice && !swap ? (flowPlan.previewOutcomes || null) : null;
     let dropOutcomes = false;
-    if (pvO && preset === 'replace') preset = '';   // activeMode keeps its default: the plain way when it can take something out, else nothing chosen
+    const keepAsked = !!(pvO && preset === 'replace');
+    if (keepAsked) preset = '';   // activeMode keeps its default: the plain way when it can take something out, else nothing chosen
+    // 2026-11-14 (release QA): clearing the card's ✂ keep for the outcomes dialog skipped the up-front refusal below, so
+    // the plain way — which leaves an element empty — was offered again, picked in a ✂ walk, sent, and refused by
+    // Salesforce ("Required field is missing: assignmentItems"). Now the plain way is not offered then (plainOff), and
+    // when the outcomes way cannot stand either (it leaves an element empty too, or nothing would be left connected),
+    // the card refuses before any dialog, as it does without outcomes.
+    const plainOff = keepAsked && !swap && replaceLikelyRefused;
+    if (plainOff && (pvO.empty || (pvO.emptied || []).length > 0)) preset = 'replace';
+    if (flowPlan) flowPlan.plainOff = plainOff;   // _flowChoiceHtml reads it from the plan it is handed
     if (preset === 'replace' && !canReplace) {
       const vN = `the active v${flowPlan.plan.active.num} of "${componentName}"`;
       const left = pv ? pv.remaining.length : 0;
@@ -5142,6 +5212,8 @@ const FieldCleaner = (() => {
   // states it instead of asking. '' = not chosen (a bulk walk): it asks.
   function _flowChoiceHtml(fp, flowName, canReplace, preset) {
     const pv = fp.preview || { removed: [], remaining: [], emptied: [] };
+    const plainOff = !!fp.plainOff;   // 2026-11-14: the card's ✂ keep would be refused — the plain way is not offered
+    if (plainOff) canReplace = false;
     if (pv.swap) return _flowSwapHtml(fp, canReplace);
     const act = fp.plan.active;
     if (preset === 'delete') return `<div class="fc-prev">
@@ -5176,7 +5248,7 @@ const FieldCleaner = (() => {
         const nOut = pv.removed.length, nEmpty = pv.emptied.length, nLeft = pv.remaining.length;
         const a = `<label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? (pv.emptied.length ? '' : 'checked') : 'disabled'}>
         <span class="fc-opt"><span class="fc-opt-hd"><b>Keep the flow running — only the field comes out</b>${!canReplace ? tag('not available', 'off') : nEmpty ? tag('⚠ likely refused', 'warn') : nLeft ? tag('🔒 field stays locked', 'warn') : tag('✓ recommended', 'ok')}</span>
-        ${!canReplace ? row('Why not', 'There is nothing the automatic fix can take out of this version.') : `
+        ${plainOff ? row('Why not', `Taking the field out leaves ${nEmpty} element${nEmpty === 1 ? '' : 's'} with nothing in ${nEmpty === 1 ? 'it' : 'them'}, and Salesforce refuses a version like that.`) : !canReplace ? row('Why not', 'There is nothing the automatic fix can take out of this version.') : `
         ${row('What happens', `A new v${fp.plan.expectNew} is deployed without the ${nOut} reference${nOut === 1 ? '' : 's'} to the field, checked to be active, and then v${act.num} is deleted.`)}
         ${row('The flow', 'Keeps running, with the same logic minus the field.')}
         ${nEmpty ? row('Risk', `Salesforce will probably refuse: ${nEmpty} element${nEmpty === 1 ? '' : 's'} would be left with nothing in ${nEmpty === 1 ? 'it' : 'them'}. If it refuses, nothing is changed. Pick this only if you will fix ${nEmpty === 1 ? 'it' : 'them'} in Flow Builder.`, 'fc-opt-row-warn') : ''}
@@ -5265,7 +5337,7 @@ const FieldCleaner = (() => {
         throw new Error(`Could not read v${v.VersionNumber} of "${flowName}"${read?.error ? ` (${_feText(read.error)})` : ''} — refusing to plan deletions from a partial picture of the flow.`);
       }
       metaById[v.Id] = read;
-      if (flowReferencesField(read.Metadata)) referencing.push(v.Id);
+      if (await _flowNamesThisField(read.Metadata)) referencing.push(v.Id);   // object-aware (2026-11-14)
     }
     const plan = sftkFlowSurgeryPlan(versions, referencing);
     const { interviews, error: interviewCheckError } = await _flowInterviewsFor(plan.toDelete.map(v => v.id));
@@ -5396,6 +5468,8 @@ const FieldCleaner = (() => {
       const check = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id: ver.newId, _suppressError: true });
       // a re-read that FAILED is not "no more mentions" (QA 2026-11-11): unread counts as still mentioning, so the row stays open
       out.stillMentions = !check || !!check.error || !check.Metadata || flowReferencesField(check.Metadata);
+      // object-aware (2026-11-14): a name match that is only another object's same-named field is not "still mentions"
+      if (out.stillMentions && !swapping && check && check.Metadata) out.stillMentions = await _flowNamesThisField(check.Metadata);
       if (swapping && check?.Metadata) {
         // After a swap, "still mentions" means: something of THIS field is left
         // (movable, or undecided) — a same-named field of another object is not.
@@ -5504,6 +5578,32 @@ const FieldCleaner = (() => {
     if (!test) return false;
     return sftkFlowRefScan(metadata, test).length > 0;
   }
+  // Does the flow name THIS object's field (2026-11-14, release QA)? flowReferencesField matches the name alone, so a
+  // version that held only Get_Contact.SFTK_MX_Region__c counted for Account.SFTK_MX_Region__c: ✂ reported "still
+  // mentions" after a complete fix, and the plan picked such a version for deletion (Salesforce then accepted the
+  // field's delete with it active — proof it was not Account's). The name-only answer is refined by the ⇄ engine's
+  // object-aware probe (sftkFlowReplaceField, the one _flowSwap uses, which also reads merge fields in free text):
+  // false only when that probe POSITIVELY puts every mention on another object. Anything it cannot place, a mention
+  // it does not see at all, or a probe that fails keeps the name-only true — the safe direction.
+  async function _flowNamesThisField(metadata) {
+    if (!flowReferencesField(metadata)) return false;
+    try {
+      const obj = _selObj.api, from = _selField.api, to = 'SFTK_Owner_Probe__c';
+      let r = sftkFlowReplaceField(JSON.parse(JSON.stringify(metadata)), obj, from, to);
+      if (r.needs && r.needs.length) {
+        const owners = new Map();
+        for (const need of r.needs) owners.set(_chainKey(need.rootObj, need.rels), await _chainOwner(need.rootObj, need.rels));
+        r = sftkFlowReplaceField(JSON.parse(JSON.stringify(metadata)), obj, from, to, {
+          chainOwner: (root, rels) => { const v = owners.get(_chainKey(root, rels)); return v === undefined ? null : v; } });
+      }
+      return _flowProbeSaysThis(r);
+    } catch (_) { return true; }
+  }
+  function _flowProbeSaysThis(r) {
+    const skipped = (r && r.skipped) || [];
+    const other = skipped.filter(x => x && x.why === 'other').length;
+    return !r || (r.changed || []).length > 0 || skipped.length > other || other === 0;
+  }
 
   // Delete old (non-Active) versions of a flow that still reference the
   // selected field. Salesforce blocks custom-field deletion while ANY flow
@@ -5539,7 +5639,7 @@ const FieldCleaner = (() => {
           sobject: 'Flow', id: v.Id
         });
         if (read?.error || !read?.Metadata) { out.stillBlocking++; out.unread = `v${v.VersionNumber} could not be read (${String((read && read.error) || 'no metadata')})`; continue; }
-        if (!flowReferencesField(read.Metadata)) continue;
+        if (!(await _flowNamesThisField(read.Metadata))) continue;   // object-aware (2026-11-14)
         stale.push(v);
         // a restore point of every version that goes — this path (the inspector's "✂ Remove selected") had none,
         // while its History note said the versions' metadata is kept under ↩ Restore points
@@ -5590,6 +5690,7 @@ const FieldCleaner = (() => {
       if (w.why === 'outcome') { bits.push(`the field is the only condition of the outcome ${w.name} — taking it out would remove a path of the flow`); continue; }
       if (w.why === 'outcomeLogic') { bits.push(`the field is in the outcome ${w.name}, whose numbered condition logic would point at a condition that is gone`); continue; }
       if (w.why === 'formula') { bits.push(`the formula "${w.name}" names the field in an expression the auto-fix does not rewrite`); continue; }
+      if (w.why === 'queried') { bits.push(`"${w.name}" still queries the field because {!${w.via}.${_selField ? _selField.api : 'the field'}} is read elsewhere in the flow (a text the auto-fix does not rewrite)`); continue; }
       if (w.why === 'input') { bits.push(`"${w.name}" works on a record variable whose object cannot be told from the flow, so it is not edited`); continue; }
       const what = w.start ? 'the trigger\'s entry condition (Start)' : `the filter of "${w.name}"`;
       bits.push(w.why === 'only'
@@ -5753,11 +5854,14 @@ const FieldCleaner = (() => {
     }
 
     // ── recordLookups — filter conditions, output assignments, queried fields (only on the field's own object)
+    const qDropped = [];   // [{ el, before, n }] — queriedFields taken out, checked again at the end
     for (const el of (metadata.recordLookups || [])) {
       if (!onObj(el)) continue;
       stripFilters(el);
       el.outputAssignments = strip(el.outputAssignments, a => fieldMatches(a.field));
+      const qBefore = el.queriedFields;
       el.queriedFields     = strip(el.queriedFields,     f => fieldMatches(f));
+      if (Array.isArray(qBefore) && qBefore.length !== el.queriedFields.length) qDropped.push({ el, before: qBefore, n: qBefore.length - el.queriedFields.length });
     }
 
     // ── recordCreates — field assignments
@@ -5903,11 +6007,28 @@ const FieldCleaner = (() => {
     // Everything else that names the field in free text — a text or number formula, a text template, a
     // decision outcome that rests on the field alone — is NOT rewritten: it stays listed as by hand.
 
+    // 2026-11-14 (release QA, SFTK_MX_Screen_Flow): ✂ took SFTK_MX_Region__c out of Get_Account's queriedFields while
+    // a screen's display text still read {!Get_Account.SFTK_MX_Region__c} — free text this function never rewrites.
+    // The new ACTIVE version then read a field its lookup no longer queries (a runtime 'field not queried' risk) and
+    // still named the field. A queried field goes only when nothing left in the flow reads it through that lookup
+    // (its name, or the variable it stores into); otherwise it is put back and the lookup is named as left.
+    const escR = x => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (const q of qDropped) {
+      const names = [q.el.name, q.el.outputReference].filter(Boolean).map(String);
+      if (!names.length) continue;
+      const rest = JSON.stringify({ ...metadata, recordLookups: (metadata.recordLookups || []).filter(x => x !== q.el) });
+      const readVia = names.find(n => new RegExp(`(?<![A-Za-z0-9_$])${escR(n)}\\.${escR(fieldApi)}(?![A-Za-z0-9_])`, 'i').test(rest));
+      if (!readVia) continue;
+      q.el.queriedFields = q.before;
+      changes -= q.n;
+      leftAlone.whole.push({ name: q.el.label || q.el.name || '', via: readVia, why: 'queried' });
+    }
+
     // What was left alone and why, for the refusal text when nothing could be taken out (2026-11-14 review: a
     // trigger's only entry condition was reported as "a decision condition, formula expression, or variable default").
     removeFieldRefs.lastLeft = {
       other: [...leftAlone.other], unknown: [...leftAlone.unknown.keys()], unknownKind: Object.fromEntries(leftAlone.unknown),
-      whole: leftAlone.whole.map(w => ({ start: !!w.el && w.el === metadata.start, name: w.name || (w.el && (w.el.label || w.el.name)) || '', why: w.why })),
+      whole: leftAlone.whole.map(w => ({ start: !!w.el && w.el === metadata.start, name: w.name || (w.el && (w.el.label || w.el.name)) || '', why: w.why, ...(w.via ? { via: w.via } : {}) })),
     };
 
     return changes;
@@ -7019,17 +7140,39 @@ const FieldCleaner = (() => {
       throw err;
     } finally {
       await sftkHistoryEnd(j, { undo: wr && wr.accepted
-        ? { steps: [{
-            describe: `Put "${componentName}" layout back the way it was before this fix`,
-            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
-            msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/Layout/${componentId}`, body: { Metadata: beforeMetadata } },
-            // Layout metadata has no Tooling SOQL read (only the PATCH/GET
-            // detail endpoint this tool already uses, which the undo runner's
-            // query-only re-read cannot call) — accepted, not re-read.
-            verify: null,
-          }] }
+        ? { steps: [_layoutUndoStep(componentId, componentName, fullName, beforeMetadata, _selObj.api, _selField.api)] }
         : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
     }
+  }
+
+  // The History undo step of a layout fix (2026-11-14, release QA). It was a bare Tooling PATCH of the raw pre-fix
+  // layout with verify: null — the same round trip the fix itself needs sanitizeLayoutMetadata, up to 14
+  // strip-and-retries and a deploy fallback for (Salesforce refuses the GET's bare-string summaryLayout,
+  // platformActionList… on PATCH), so the undo was refused on those layouts, and where it went through it always
+  // read "0 of 1 step verified". Now: a Metadata API deploy of the layout as it was (no sanitizing needed — the same
+  // path the fix falls back to and ↩ Restore points use), re-read through readMetadata until the field is on it again.
+  // Without a full name (never seen; Tooling always returns one) it stays the PATCH, re-read by its detail endpoint.
+  function _layoutUndoStep(componentId, componentName, fullName, beforeMetadata, obj, field) {
+    const describe = `Put "${componentName}" layout back the way it was before this fix`;
+    if (fullName) {
+      return {
+        describe,
+        // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the readMetadata re-read below
+        msg: { type: 'SF_METADATA_DEPLOY', zipBase64: buildLayoutZip(fullName, beforeMetadata) },
+        verify: { msg: { type: 'SF_MD_READ', mdType: 'Layout', fullNames: [fullName] },
+          pattern: `<fields?>(?:${_rxEsc(obj)}\\.)?${_rxEsc(field)}</fields?>`, flags: 'i', retries: 3,
+          text: { ok: `"${componentName}": the layout shows ${field} again — verified by re-reading the org`,
+                  bad: `"${componentName}": the deploy was accepted, but on re-read the layout does not show ${field} yet` } },
+      };
+    }
+    return {
+      describe,
+      // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the detail re-read below
+      msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/Layout/${componentId}`, body: { Metadata: beforeMetadata } },
+      verify: { path: `services/data/v62.0/tooling/sobjects/Layout/${componentId}`, pick: 'Metadata',
+        text: { ok: `"${componentName}": layout restored — verified by re-reading the org`,
+                bad: `"${componentName}": accepted by Salesforce, but the org could not confirm the restore` } },
+    };
   }
 
   // Is api one of the org's objects in the loaded object list? removeFieldFromLayout asks it before it calls a
@@ -8818,7 +8961,7 @@ const FieldCleaner = (() => {
 
       const cfg     = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
       const fixable = cfg.fixable;
-      let bodyHtml, refCount, delCount = 0;
+      let bodyHtml, refCount, delCount = 0, meta = null;
 
       const isDeletableFn = _XI_IS_DELETABLE[type] || null;
 
@@ -8828,7 +8971,7 @@ const FieldCleaner = (() => {
         bodyHtml = `<pre class="fc-xml-pre fc-xml-pre--code"><code>${bodyHtml}</code></pre>`;
       } else {
         // Render Metadata JSON as pretty XML with deletion block markers
-        const meta = res.Metadata;
+        meta = res.Metadata;
         if (!meta) throw new Error('No Metadata returned by the API.');
         // Flows render with per-block checkboxes so the user can trim only
         // the blocks they choose. Other types keep the all-or-nothing fix.
@@ -8846,9 +8989,15 @@ const FieldCleaner = (() => {
       // the field's API name is listed, though no component or rule uses it (user 2026-10-11:
       // "no refs found, why do i see the lightning page then?"). Such an item has nothing to
       // remove and must not keep "Delete Field" locked — it is settled here, and says why.
+      // 2026-11-14 (release QA): the inspector's count matches a WHOLE value only, while the scan listed a Lightning
+      // page on a token buried inside a larger string too (a related list's 'NAME,Status__c', a filter's JSON). Such a
+      // page was settled here as '✅ Nothing uses the field' — false, and it unlocked Delete Field. A page is settled
+      // only when the scan's own tester, run without the page's description and label, no longer finds the field.
+      const stillNamed = type === 'FlexiPage' && _flexiNamesBeyondText(meta, _selObj?.api, _selField?.api);
       if (!refCount && !delCount && fixable && type !== 'Flow' && type !== 'ApexClass' && type !== 'ApexTrigger') {
-        markFixed(componentId, '✅ Nothing uses the field here — Salesforce lists it because its description or another text mentions the field’s name. Nothing to remove.');
+        if (!stillNamed) markFixed(componentId, '✅ Nothing uses the field here — Salesforce lists it because its description or another text mentions the field’s name. Nothing to remove.');
       }
+      if (stillNamed && !refCount) badgeTxt = 'named inside a longer value — not settled';
       if (delCount > 0) badgeTxt += ` · ${delCount} block${delCount !== 1 ? 's' : ''} to remove`;
 
       const hintHtml = _XI_HINT[type]
@@ -9125,16 +9274,35 @@ const FieldCleaner = (() => {
 
   // ── F6: pre-fix metadata snapshots + one-click restore ───────────────────
   // Every auto-fix (flow / layout / Lightning page) stores the ORIGINAL
-  // metadata before modifying it. The 🧾 Cleanup history section lists the
-  // last 20 changes with ↩ Restore, which redeploys the untouched snapshot
-  // through the same deploy paths the fixes use. Doubles as an audit trail.
+  // metadata before modifying it. The 🧾 Cleanup history section lists them
+  // with ↩ Restore, which redeploys the untouched snapshot through the same
+  // deploy paths the fixes use. Doubles as an audit trail.
   const SNAP_KEY = 'fc_fix_snapshots';
   const SNAP_CAP = 20;
+  // 2026-11-14 (release QA): the cap was 20 for ONE array shared by every org, so a flow with more than 20 versions
+  // that name the field pushed its own first versions' restore points out DURING the fix (and any later fix, in any
+  // org, pushed out the rest) — while the confirm promised "Restore points hold every deleted version", and Salesforce
+  // keeps no Recycle Bin for flow versions. Now: a point younger than SNAP_RUN_MS is never pushed out (the run that
+  // made it, and the day after, keep every one; unlimitedStorage is granted), and the cap counts the OLDER points per
+  // org, so one org's fixes never evict another's.
+  const SNAP_RUN_MS = 24 * 60 * 60 * 1000;
+  function _snapTrim(list, cap, now, keepMs) {
+    const out = [], olderPerOrg = new Map();
+    let dropped = 0;
+    for (const x of (list || [])) {
+      if (!x) continue;
+      if (now - (Number(x.at) || 0) < keepMs) { out.push(x); continue; }
+      const k = x.orgKey || '';
+      const n = olderPerOrg.get(k) || 0;
+      if (n < cap) { out.push(x); olderPerOrg.set(k, n + 1); } else dropped++;
+    }
+    return { list: out, dropped };
+  }
 
   // NO RESTORE POINT, NO WRITE (QA 2026-11-11). A failed save used to be logged and passed over — the fix went on
   // while its dialog said "a restore point is saved first" (and a flow fix deletes versions for good). Every caller
-  // saves BEFORE it writes, so a throw here stops the fix with nothing changed. A full store is retried once with the
-  // oldest half of the restore points dropped.
+  // saves BEFORE it writes, so a throw here stops the fix with nothing changed. A full store is retried once with
+  // half as many of the older-than-a-day points kept per org (never one of the last day's).
   async function _snapshotFix(type, id, name, fullName, metadata) {
     const entry = {
       at: Date.now(),
@@ -9148,7 +9316,9 @@ const FieldCleaner = (() => {
       try {
         const store = await chrome.storage.local.get(SNAP_KEY);
         const list = [entry, ...(store[SNAP_KEY] || []).filter(x => x !== entry)];
-        await chrome.storage.local.set({ [SNAP_KEY]: list.slice(0, cap) });
+        const kept = _snapTrim(list, cap, Date.now(), SNAP_RUN_MS);
+        await chrome.storage.local.set({ [SNAP_KEY]: kept.list });
+        if (kept.dropped && window.SFToolkitDebug?.enabled) window.SFToolkitDebug.log('fields', 'info', 'restore points older than a day dropped', kept.dropped);
         try { renderSnapshotLog(); } catch (_) { /* the list is a view; the restore point is saved */ }
         return;
       } catch (e) { lastErr = e; }

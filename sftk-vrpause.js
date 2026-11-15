@@ -172,23 +172,29 @@ async function sftkVrPauseOff(sess, rules, send) {
 async function sftkVrPauseOn(sess, rules, send) {
   const bg = typeof send === 'function' ? send : sendBg;
   const orgKey = sftkOrgKey(sess.orgUrl);
-  const lost = [];
+  const lost = [], unread = [], goneIds = new Set();
   for (const r of rules) {
     if (r.metadata) continue;
     const rec = await bg({ type: 'SF_TOOLING_GET', orgUrl: sess.orgUrl, sid: sess.sid, sobject: 'ValidationRule', id: r.id, _suppressError: true });
-    if (rec && !rec.error && rec.Metadata) r.metadata = rec.Metadata;
-    else lost.push(`${r.name || r.id}: not found in the org any more — nothing to switch on`);
+    if (rec && !rec.error && rec.Metadata) { r.metadata = rec.Metadata; continue; }
+    // 2026-11-14: only a definite 404 / NOT_FOUND means the rule is gone. A 401, 5xx, network failure or no
+    // answer used to be called "not found" too, and the rule was FORGOTTEN while still OFF org-wide (the
+    // leftover card and its switch-back button vanished). Same fix as sftk-flowpause.js 2026-11-11: such a
+    // rule is reported as still OFF and stays in the memory for the next try.
+    const err = String((rec && rec.error) || '');
+    if (/\bHTTP 404\b|NOT_FOUND|ENTITY_IS_DELETED/.test(err)) { goneIds.add(r.id); lost.push(`${r.name || r.id}: not found in the org any more — nothing to switch on`); }
+    else unread.push(`${r.name || r.id}: still OFF and still remembered — it could not be read (${err || (rec ? 'no rule metadata in the answer' : 'no answer')})`);
   }
   const ready = rules.filter(r => r.metadata);
   const journal = sftkHistoryBegin({ tool: 'Deploy', title: `▶ ${ready.length} validation rule(s) switched back on — ${orgLabel(sess.orgUrl)}`, orgUrl: sess.orgUrl });
   let r = { done: [], failed: [] };
   try {
     r = ready.length ? await _sftkVpSwitch(sess, ready, true, journal, send) : r;
-    if (r.done.length || lost.length) await _sftkVpMemory(m => { for (const x of r.done) delete m[x.id]; for (const x of rules) if (!x.metadata) delete m[x.id]; return m; }, orgKey);
+    if (r.done.length || lost.length) await _sftkVpMemory(m => { for (const x of r.done) delete m[x.id]; for (const id of goneIds) delete m[id]; return m; }, orgKey);
   } finally {
-    await sftkHistoryEnd(journal, { undo: { none: 'switching them off again is what the deployment option does — run it again, or deactivate the rule in Setup' }, errors: lost });
+    await sftkHistoryEnd(journal, { undo: { none: 'switching them off again is what the deployment option does — run it again, or deactivate the rule in Setup' }, errors: [...lost, ...unread] });
   }
-  return { done: r.done, failed: [...r.failed, ...lost] };
+  return { done: r.done, failed: [...r.failed, ...lost, ...unread] };
 }
 
 if (typeof window !== 'undefined') {

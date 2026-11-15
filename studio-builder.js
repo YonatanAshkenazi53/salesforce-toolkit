@@ -252,7 +252,14 @@ function renderBuilder() {
     _bldLoadRootObjects();   // the root-object list comes from the source org
   });
   eid('dsProfileTgtOrg')?.addEventListener('change', e => {
+    const prevTgt = _editingProfile.targetOrg;
     _editingProfile.targetOrg = e.target.value || '';
+    // 2026-11-14: the owner fallback user was read from the OLD target — forget it and reload the list.
+    if (sftkOwnerFallbackForTarget(_editingProfile, prevTgt)) {
+      _ownerFallbackSelectReset();
+      showToast('Target changed — the owner fallback user belonged to the old target. Pick one again from the new target.', 'warning', 6000);
+    }
+    if (_editingProfile.ownerMapping?.mode === 'match') loadOwnerFallbackUsers();
   });
   _bldLoadRootObjects();
 
@@ -263,6 +270,12 @@ function renderBuilder() {
   // = the legacy Name-only engine path). Unmatched owners get the fallback
   // user picked here. The user list loads live from the TARGET org (must
   // be open in a tab).
+  // 2026-11-14: a cleared fallback must not stay visible (and re-pickable) in
+  // the select as the OLD target's user list when the new target cannot load.
+  function _ownerFallbackSelectReset() {
+    const sel = eid('dsProfileOwnerFallback');
+    if (sel) sel.innerHTML = `<option value="">— fallback user (used when the owner has no name match) —</option>`;
+  }
   async function loadOwnerFallbackUsers() {
     const sel  = eid('dsProfileOwnerFallback');
     const hint = eid('dsProfileOwnerHint');
@@ -398,7 +411,11 @@ function renderBuilder() {
   eid('dsProfileSwapOrgs')?.addEventListener('click', () => {
     const doSwap = () => {
       const prof = _editingProfile;
+      const prevTgt = prof.targetOrg;
       [prof.sourceOrg, prof.targetOrg] = [prof.targetOrg || '', prof.sourceOrg || ''];
+      // 2026-11-14: the owner fallback is a User Id of the OLD target — clear it, reload from the new one.
+      const clearedFallback = sftkOwnerFallbackForTarget(prof, prevTgt);
+      if (clearedFallback) _ownerFallbackSelectReset();
       let clearedPicks = 0;
       const droppedMappings = [];
       (function walk(node) {
@@ -434,7 +451,8 @@ function renderBuilder() {
       if (s) s.value = prof.sourceOrg || '';
       if (t) t.value = prof.targetOrg || '';
       refreshTree();
-      showToast(`Orgs swapped ⇄ — field mappings inverted${clearedPicks ? `, ${clearedPicks} picked record(s) cleared (they belonged to the old source org)` : ''}${droppedMappings.length ? `. ⚠ ${droppedMappings.length} ambiguous mapping(s) dropped (${droppedMappings.slice(0, 3).join(', ')}${droppedMappings.length > 3 ? ', …' : ''}) — two fields mapped to the same target; re-map them in Fields & mapping` : ''}.`, droppedMappings.length ? 'warning' : 'info', droppedMappings.length ? 8000 : 5500);
+      if (prof.ownerMapping?.mode === 'match') loadOwnerFallbackUsers();
+      showToast(`Orgs swapped ⇄ — field mappings inverted${clearedFallback ? ', owner fallback user cleared (it belonged to the old target; pick one from the new target)' : ''}${clearedPicks ? `, ${clearedPicks} picked record(s) cleared (they belonged to the old source org)` : ''}${droppedMappings.length ? `. ⚠ ${droppedMappings.length} ambiguous mapping(s) dropped (${droppedMappings.slice(0, 3).join(', ')}${droppedMappings.length > 3 ? ', …' : ''}) — two fields mapped to the same target; re-map them in Fields & mapping` : ''}.`, droppedMappings.length ? 'warning' : 'info', droppedMappings.length ? 8000 : 5500);
     };
     // Picked records are destroyed by a swap — confirm when any exist.
     let pickCount = 0;
@@ -975,27 +993,29 @@ async function bldCompareParent(refObj, btn) {
     const res = await runDiffScan(eph);
     if (res?.error) { showToast(`Scan failed: ${res.error}`, 'error', 6000); return; }
     eph.lastScan = res;
-    const nMiss = (res.missingInTarget || []).length;
-    const nChg  = (res.changed || []).length;
-    const nExt  = (res.onlyInTarget || []).length;
-    const nSame = (res.identical || []).length;
+    // 2026-11-14: the verdict counts AMBIGUOUS keys too. Ambiguous rows sit
+    // in no other bucket and are never deployed until resolved, and child
+    // lookups onto them are refused — so "0 missing, 0 changed" alone is NOT
+    // aligned, and saying "safe to deploy" there was a false green.
+    const { missing: nMiss, changed: nChg, extra: nExt, same: nSame, ambiguous: nAmb, aligned } = sftkParentScanVerdict(res);
     // Feed the session sync map so the row chip (and the reconcile panel)
-    // SHOW this verdict from now on.
+    // SHOW this verdict from now on. ambiguous is deposited like every other
+    // caller does — leaving it out overwrote (newest-wins) a verdict that had
+    // recorded it.
     try {
       sftkParentSyncPut(p.sourceOrg, p.targetOrg, refObj, {
-        missing: nMiss, changed: nChg, extra: nExt, at: res.runAt || new Date().toISOString(),
+        missing: nMiss, changed: nChg, extra: nExt, ambiguous: nAmb, at: res.runAt || new Date().toISOString(),
       });
       sftkBldFillParentSync();
     } catch (_) { /* advisory map only */ }
-    const aligned = !nMiss && !nChg;
     showModal(`
       <div class="ds-modal-hdr">🔍 ${esc(refObj)} — ${esc(orgLabel(p.sourceOrg))} → ${esc(orgLabel(p.targetOrg))}</div>
       <div style="padding:14px 16px; font-size:13px; line-height:1.7">
         ${aligned
           ? `<div style="font-weight:600; color:#067647">✓ Parents aligned — ${nSame} record(s) match${nExt ? `, ${nExt} extra in target (review if unexpected)` : ''}. Safe to deploy objects that point at ${esc(refObj)}.</div>`
           : `<div style="font-weight:600; color:#b45309">Not aligned yet:</div>
-             <div>🔴 ${nMiss} missing in target · 🟡 ${nChg} changed · 🔵 ${nExt} only in target · 🟢 ${nSame} in sync</div>
-             <div style="margin-top:6px">Fix these BEFORE deploying — lookups pointing at missing/drifted parents land empty or wrong.</div>`}
+             <div>🔴 ${nMiss} missing in target · 🟡 ${nChg} changed${nAmb ? ` · ⚠ ${nAmb} ambiguous (the key matches more than one record)` : ''} · 🔵 ${nExt} only in target · 🟢 ${nSame} in sync</div>
+             <div style="margin-top:6px">Fix these BEFORE deploying — lookups pointing at missing/drifted parents land empty or wrong${nAmb ? ', and lookups onto an ambiguous parent are refused until it is resolved' : ''}.</div>`}
         <div style="margin-top:12px; display:flex; gap:8px; align-items:center">
           ${aligned ? '' : `<button class="ds-btn ds-btn-sm ds-btn-primary" id="bldParentCmpOpen">⚖ Open Transfer to fix</button>`}
           <button class="ds-btn ds-btn-sm" id="bldParentCmpClose">Close</button>
@@ -1012,6 +1032,38 @@ async function bldCompareParent(refObj, btn) {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = prev; }
   }
+}
+
+// Parent-alignment verdict of one diff scan (2026-11-14). PURE — unit-tested.
+// Aligned means nothing missing, nothing changed AND no ambiguous key: an
+// ambiguous parent is never deployed until the user resolves it, and a child
+// lookup onto it is refused, so it is not "safe to deploy" yet.
+function sftkParentScanVerdict(res) {
+  const n = k => (Array.isArray(res?.[k]) ? res[k].length : 0);
+  const missing = n('missingInTarget'), changed = n('changed'), ambiguous = n('ambiguous');
+  return { missing, changed, extra: n('onlyInTarget'), same: n('identical'), ambiguous,
+    aligned: !missing && !changed && !ambiguous };
+}
+
+// The same rule read from a stored sync-map verdict ({missing, changed,
+// ambiguous?}). A verdict saved before ambiguous was recorded reads as 0.
+function sftkParentVerdictInSync(vd) {
+  return !!vd && !vd.missing && !vd.changed && !vd.ambiguous;
+}
+
+// Owner fallback user follows the TARGET org (2026-11-14). The fallback is a
+// User Id read from the target; after a swap or a target change it belongs to
+// another org, and every unmatched owner would be written with it (rejected as
+// an invalid cross-reference, or a different user when Ids collide). Clear it
+// so the user picks again from the new target. PURE — returns true if cleared.
+function sftkOwnerFallbackForTarget(prof, prevTarget) {
+  const om = prof?.ownerMapping;
+  if (!om || (!om.fallbackUserId && !om.fallbackUserName)) return false;
+  const key = o => (typeof _orgKey === 'function' ? _orgKey(o || '') : String(o || ''));
+  if (key(prevTarget) === key(prof.targetOrg)) return false;
+  om.fallbackUserId = null;
+  om.fallbackUserName = null;
+  return true;
 }
 
 // ⧉ JUNCTION DETECTION (user 2026-08-10: "we might need to catch junction
@@ -1061,11 +1113,12 @@ async function sftkBldFillParentSync() {
       elm.title = 'No scan of this object against THIS source→target pair is on record. Synced against a different target does not count — each pair is verified separately. Click 🔍 compare parents (one scan) and this chip fills in.';
       return;
     }
-    const inSync = !vd.missing && !vd.changed;
+    // 2026-11-14: ambiguous keys keep the chip off "in sync" (see sftkParentScanVerdict).
+    const inSync = sftkParentVerdictInSync(vd);
     elm.className = `ds-psync ${inSync ? 'ds-psync-ok' : 'ds-psync-bad'}`;
     elm.textContent = inSync
       ? `✓ in sync · ${timeAgo(vd.at)}`
-      : `🔴 ${vd.missing} missing · 🟡 ${vd.changed} changed · ${timeAgo(vd.at)}`;
+      : `🔴 ${vd.missing || 0} missing · 🟡 ${vd.changed || 0} changed${vd.ambiguous ? ` · ⚠ ${vd.ambiguous} ambiguous` : ''} · ${timeAgo(vd.at)}`;
     elm.title = inSync
       ? `Last ${elm.dataset.lkpSyncstate} scan on this org pair found nothing missing and nothing changed — the name-bridges have parents to land on.`
       : `Last ${elm.dataset.lkpSyncstate} scan on this org pair still had work to do — compare & fix before deploying this object.`;

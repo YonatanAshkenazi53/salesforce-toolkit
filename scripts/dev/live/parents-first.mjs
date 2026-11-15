@@ -45,7 +45,12 @@ export default async function (h) {
     for (let i = 0; i < 600; i++) { if (await h.eval(`_history.length > ${histBefore}`)) break; await h.sleep(1000); }
     await h.sleep(5000);
     await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000);
-    h.log('journey run: newest History:', (await h.eval(`(_history[_history.length - 1] && (_history[_history.length - 1].profileName + ' · ' + _history[_history.length - 1].status)) || ''`)));
+    const runLine = await h.eval(`(_history[_history.length - 1] && (_history[_history.length - 1].profileName + ' · ' + _history[_history.length - 1].status)) || ''`);
+    h.log('journey run: newest History:', runLine);
+    // 2026-11-14: the script exited 0 while the journey it drove ended 'failed' (PricebookEntry offered
+    // before Product2, every insert refused). A failed journey run is a failed check, not a log line.
+    const runStatus = await h.eval(`(_history[_history.length - 1] && _history[_history.length - 1].status) || ''`);
+    if (/^fail/i.test(String(runStatus))) throw new Error(`the parents-first journey run ended '${runStatus}' in History (${runLine})`);
   } else h.log('journey: nothing selectable');
   // back to the origin
   const back = await h.eval(`(() => { const b = document.querySelector('#dsDepBackOrigin') || document.querySelector('#dsRecJourneyBack button, #dsRecJourneyBack'); if (b) { b.click(); return b.textContent.trim(); } return null; })()`);

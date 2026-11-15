@@ -1124,6 +1124,22 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   // a path whose object cannot be told is never swapped (see _sftkMdSwapToken), so such a formula is refused whole
   // rather than deployed half-edited and reported done (2026-11-14); the text names the TRUE reason (review 4: an
   // unmapped standard hop was refused as a "custom lookup")
+  // a list view, field set or compact layout lists fields of its OWN object (its <fullName>'s, Contact.X → Contact):
+  // a bare Region__c in a Contact view is Contact's same-named field. The ListView / FieldSet / CompactLayout cases
+  // matched it anyway, so ✂ of Account.Region__c stripped Contact's column, filter and field-set field (Salesforce
+  // accepted it) and ⇄ rewrote them to a field Contact does not have (QA 2026-11-14). Same guard as errorDisplayField,
+  // ApprovalProcess and QuickAction. A path written Account.Region__c from another object's component may well be this
+  // field, so that one is refused as "cannot tell" (unsure), never as "nothing to edit". Host not known = unchanged.
+  const reEsc = t => String(t || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const notOwn = (n, what) => {
+    if (!host || sameObj || !n) return false;
+    if (new RegExp(`>\\s*${reEsc(objApi)}\\.${reEsc(fieldApi)}\\s*<`, 'i').test(before)) {
+      cannotTell(`the ${host} ${what} names ${objApi}.${fieldApi} as a path from ${host}, and whether that reaches this field cannot be told here — edit it in Setup`);
+    } else {
+      refuse(`a ${host} ${what} holds ${host}’s fields, not this one — its ${fieldApi} is ${host}’s same-named field, so there is nothing of this field to edit`);
+    }
+    return true;
+  };
   const relWhy = kind => kind === 'host'
     ? 'the formula also names a field of this name through Parent / MasterRecord, and the object the formula runs on is not known here, so whose field that is cannot be told — edit it in Setup'
     : kind === 'poly'
@@ -1142,6 +1158,12 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const ed = sameObj ? texts(f.xml, 'errorDisplayField') : { xml: f.xml, n: 0 };
       const edWhat = nf ? `error location ${verb}` : 'error location moved to the top of the page';
       if (f.rel) { cannotTell(relWhy(f.kind)); break; }
+      // another object's rule may name a bare token of this name: that is the rule's own object's same-named field,
+      // not this one — the old text said the formula did not name it at all, which was not true (QA 2026-11-14)
+      if (!f.n && !ed.n && host && !sameObj) {
+        const fx0 = sftkMdChildText(xml, 'errorConditionFormula') || '';
+        if (new RegExp(`(^|[^A-Za-z0-9_.$])${reEsc(fieldApi)}(?![A-Za-z0-9_])`, 'i').test(fx0)) { refuse(`the rule’s formula names ${fieldApi} as a field of the rule’s own object (${host}) — ${host}’s same-named field, not this one, so there is nothing of this field to edit`); break; }
+      }
       if (!f.n && !ed.n) { refuse('the rule’s formula does not name the field as a whole token — edit it in Setup'); break; }
       if (nf) { xml = ed.xml; if (f.n) how.push(`formula: ${plural(f.n, 'reference')} ${verb}`); if (ed.n) how.push(edWhat); break; }
       if (!f.n) { xml = ed.xml; how.push(`${edWhat} — the formula does not use the field`); break; }
@@ -1316,6 +1338,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     case 'FieldSet': {
       let n = 0;
       for (const tag of ['displayedFields', 'availableFields']) { const r = items(xml, tag, 'field'); xml = r.xml; n += r.n; }
+      if (notOwn(n, 'field set')) break;
       if (!n) { refuse('the field set does not list the field — edit it in Setup'); break; }
       how.push(`field set: the field ${nf ? verb : 'taken out'}`);
       break;
@@ -1406,6 +1429,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const c = texts(xml, 'columns');
       const fl = sftkMdFindElement(c.xml, 'filters', 0);
       const r = items(c.xml, 'filters', 'field');
+      if (notOwn(c.n + r.n, 'list view')) break;
       if (!c.n && !r.n) { refuse('no column or filter of the view names the field — edit it in Setup'); break; }
       if (!nf && r.n && _sftkMdHasLogic(xml)) { refuse('the view’s filter logic numbers its filters — ⇄ Replace, or edit it in Setup'); break; }
       if (!nf && c.n && !c.left && !fl) { refuse('the field is the view’s only column — ⇄ Replace it, or 🗑 delete the view'); break; }
@@ -1416,6 +1440,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     }
     case 'CompactLayout': {
       const c = texts(xml, 'fields');
+      if (notOwn(c.n, 'compact layout')) break;
       if (!c.n) { refuse('the compact layout does not list the field — edit it in Setup'); break; }
       if (!nf && !c.left) { refuse('the field is the layout’s only field — ⇄ Replace it, or 🗑 delete the compact layout'); break; }
       xml = c.xml; how.push(`${plural(c.n, 'field')} ${verb}`);

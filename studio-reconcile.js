@@ -585,7 +585,10 @@ async function renderReconcile() {
   // able to deploy the childrens and match them to their parents").
   let _journeyHtml = '';
   if (p._parentOf?.objType) {
-    const aligned = scanFresh && !(scan.missingInTarget || []).length && !(scan.changed || []).length;
+    // 2026-11-14: unresolved ambiguous keys are not aligned — those parents are
+    // never deployed until resolved and child lookups onto them are refused.
+    const aligned = scanFresh && !(scan.missingInTarget || []).length && !(scan.changed || []).length &&
+      !(scan.ambiguous || []).length;
     const orig = _profiles.find(x => x.id === p._parentOf.profileId);
     _journeyHtml = `<div class="ds-op-banner" style="border-left:3px solid ${aligned ? '#16a34a' : 'var(--brand)'}">
       <span class="ds-op-banner-icon">⛓</span>
@@ -2249,6 +2252,62 @@ async function sftkReconcileVerifyGone(sess, obj, okIds) {
     : { ok: true, detail: [] };
 }
 
+// 2026-11-14 (release QA): overwrite / delete of more than 200 records used to
+// go to the background as ONE message. The background splits it into chunks of
+// 200 and throws on the first chunk that fails at the transport level (HTTP
+// 5xx, expired session, timeout) — the chunks already written were lost from
+// the answer, so the log said "Updated 0" in green, or "Delete failed" with
+// 0 deleted while hundreds were gone (and a hard delete never purged them).
+// Each chunk of 200 now goes through its own sftkWriteVerified (runChunk), and
+// the results of the accepted chunks are merged. On the first refused chunk we
+// STOP — that chunk and every one after it are reported as not done (the
+// refused chunk may or may not have landed: a rescan says), never as success.
+// Returns the sftkWriteVerified shape plus `notDone` (records not confirmed):
+//   first chunk refused → that chunk's own result (accepted=false), notDone=all;
+//   a later one refused → accepted=true, ok=false, raw = merged earlier chunks,
+//   text names the refusal and how many were written before it.
+async function sftkReconcileChunkedWrite(items, runChunk, merge, noun) {
+  const list = Array.isArray(items) ? items : [];
+  const total = list.length;
+  let first = null, raw = null, done = 0, refusal = '';
+  let allOk = true, allVerified = true;
+  const texts = [], detail = [];
+  for (let i = 0; i < total; i += 200) {
+    const chunk = list.slice(i, i + 200);
+    const dw = await runChunk(chunk);
+    if (!dw || !dw.accepted) {
+      if (!first) return { ...(dw || { ok: false, verified: false, detail: null, raw: null, text: 'refused' }), accepted: false, ok: false, notDone: total };
+      refusal = (dw && (dw.raw?.error || dw.text)) || 'refused';
+      break;
+    }
+    if (!first) first = dw;
+    raw = merge(raw, dw.raw);
+    done += chunk.length;
+    if (!dw.verified) allVerified = false;
+    if (!dw.ok) { allOk = false; if (dw.text) texts.push(dw.text); }
+    if (Array.isArray(dw.detail)) detail.push(...dw.detail);
+  }
+  const notDone = total - done;
+  if (notDone) texts.push(`${notDone} of ${total} ${noun || 'record(s)'} not done: a batch of 200 was refused (${refusal}), so it and the batches after it are not confirmed — the ${done} before it were written. Rescan to see where the target stands.`);
+  return {
+    accepted: true,
+    verified: allVerified,
+    ok: allOk && !notDone,
+    raw,
+    detail,
+    text: texts.length ? texts.join(' · ') : (first && first.text) || '',
+    notDone,
+  };
+}
+// Merges for the two answer shapes: SF_COLLECTIONS_DELETE / _UPDATE answer an
+// array of per-record results; SF_HARD_DELETE answers { deleteResults, purgedOk, purgeErrors }.
+const sftkMergeArr = (acc, r) => [...(acc || []), ...(Array.isArray(r) ? r : [])];
+const sftkMergeHard = (acc, r) => ({
+  deleteResults: [...((acc && acc.deleteResults) || []), ...((r && r.deleteResults) || [])],
+  purgedOk: ((acc && acc.purgedOk) || 0) + ((r && r.purgedOk) || 0),
+  purgeErrors: [...((acc && acc.purgeErrors) || []), ...((r && r.purgeErrors) || [])],
+});
+
 async function runReconcile(profile, objType, buckets, opts) {
   // ⏸ Record-triggered flows paused for this run (user 2026-09-29, Deploy page
   // option — sftk-flowpause.js): opts.flowPause = { flows, managed } is listed
@@ -2827,15 +2886,16 @@ async function runReconcile(profile, objType, buckets, opts) {
         // the same gap a PATCH accepted-but-unchanged taught elsewhere.
         // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
         // history-by: the deployment's own History entry (rollback in studio-undo.js)
-        const dw = await sftkWriteVerified({
+        // 2026-11-14: one verified write per 200 (sftkReconcileChunkedWrite) so a later chunk's failure keeps the earlier ones.
+        const dw = await sftkReconcileChunkedWrite(a.delIds, (ids) => sftkWriteVerified({
           describe: `${obj} hard delete`,
-          write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds }),
+          write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids }),
           verify: (r) => sftkReconcileVerifyGone(tgtSess, obj, (r.deleteResults || []).filter(x => x.success).map(x => x.id)),
-        });
+        }), sftkMergeHard, `${obj} record(s)`);
         if (!dw.accepted) { allErrors.push(`Delete ${obj} failed: ${dw.raw?.error || dw.text}`); log('❌', `Delete ${obj} failed: ${dw.raw?.error || dw.text}`, 'ds-prog-err'); continue; }
         const res = dw.raw || {};
         const okN   = (res.deleteResults || []).filter(r => r.success).length;
-        const failN = (res.deleteResults || []).length - okN;
+        const failN = (res.deleteResults || []).length - okN + (dw.notDone || 0);
         bumpChild(obj, 'deleted', okN); bumpChild(obj, 'deleteFailed', failN);
         counts.purged += (res.purgedOk || 0);
         log(failN ? '⚠' : (dw.ok ? '✅' : '⚠'), `${obj}: deleted ${okN}${failN ? `, ${failN} failed` : ''} → purged ${res.purgedOk || 0} from Recycle Bin`, (failN || !dw.ok) ? 'ds-prog-err' : '');
@@ -2849,15 +2909,16 @@ async function runReconcile(profile, objType, buckets, opts) {
         log('🗑', `Deleting ${a.delIds.length} ${obj} from target (→ Recycle Bin)…`);
         // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
         // history-by: the deployment's own History entry (rollback in studio-undo.js)
-        const dw = await sftkWriteVerified({
+        // 2026-11-14: one verified write per 200 (sftkReconcileChunkedWrite) so a later chunk's failure keeps the earlier ones.
+        const dw = await sftkReconcileChunkedWrite(a.delIds, (ids) => sftkWriteVerified({
           describe: `${obj} delete`,
-          write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds }),
+          write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids }),
           verify: (r) => sftkReconcileVerifyGone(tgtSess, obj, (Array.isArray(r) ? r : []).filter(x => x.success).map(x => x.id)),
-        });
+        }), sftkMergeArr, `${obj} record(s)`);
         if (!dw.accepted) { allErrors.push(`Delete ${obj} failed: ${dw.raw?.error || dw.text}`); log('❌', `Delete ${obj} failed: ${dw.raw?.error || dw.text}`, 'ds-prog-err'); continue; }
         const res = dw.raw || [];
         const okN   = (res || []).filter(r => r.success).length;
-        const failN = (res || []).length - okN;
+        const failN = (res || []).length - okN + (dw.notDone || 0);
         bumpChild(obj, 'deleted', okN); bumpChild(obj, 'deleteFailed', failN);
         log(failN ? '⚠' : (dw.ok ? '✅' : '⚠'), `${obj}: deleted ${okN}${failN ? `, ${failN} failed` : ''}`, (failN || !dw.ok) ? 'ds-prog-err' : '');
         if (!dw.ok) { allErrors.push(dw.text); log('  ⚠', dw.text, 'ds-prog-warn'); }
@@ -2880,15 +2941,16 @@ async function runReconcile(profile, objType, buckets, opts) {
         // the same gap a PATCH accepted-but-unchanged taught elsewhere.
         // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
         // history-by: the deployment's own History entry (rollback in studio-undo.js)
-        const dw = await sftkWriteVerified({
+        // 2026-11-14: one verified write per 200 (sftkReconcileChunkedWrite) so a later chunk's failure keeps the earlier ones.
+        const dw = await sftkReconcileChunkedWrite(delIds, (ids) => sftkWriteVerified({
           describe: `${objType} hard delete`,
-          write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
+          write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids }),
           verify: (r) => sftkReconcileVerifyGone(tgtSess, objType, (r.deleteResults || []).filter(x => x.success).map(x => x.id)),
-        });
+        }), sftkMergeHard);
         if (!dw.accepted) throw new Error(dw.raw?.error || dw.text);
         const res = dw.raw || {};
         const delOk   = (res.deleteResults || []).filter(r => r.success).length;
-        const delFail = (res.deleteResults || []).length - delOk;
+        const delFail = (res.deleteResults || []).length - delOk + (dw.notDone || 0);
         counts.deleted += delOk; counts.deletedFailed += delFail; counts.purged += (res.purgedOk || 0);
         log(delFail ? '⚠' : (dw.ok ? '✅' : '⚠'), `Deleted ${delOk}${delFail ? `, ${delFail} failed` : ''} → purged ${res.purgedOk || 0} from Recycle Bin`, (delFail || !dw.ok) ? 'ds-prog-err' : '');
         if (!dw.ok) { allErrors.push(dw.text); log('  ⚠', dw.text, 'ds-prog-warn'); }
@@ -2903,15 +2965,16 @@ async function runReconcile(profile, objType, buckets, opts) {
       try {
         // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
         // history-by: the deployment's own History entry (rollback in studio-undo.js)
-        const dw = await sftkWriteVerified({
+        // 2026-11-14: one verified write per 200 (sftkReconcileChunkedWrite) so a later chunk's failure keeps the earlier ones.
+        const dw = await sftkReconcileChunkedWrite(delIds, (ids) => sftkWriteVerified({
           describe: `${objType} delete`,
-          write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
+          write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids }),
           verify: (r) => sftkReconcileVerifyGone(tgtSess, objType, (Array.isArray(r) ? r : []).filter(x => x.success).map(x => x.id)),
-        });
+        }), sftkMergeArr);
         if (!dw.accepted) throw new Error(dw.raw?.error || dw.text);
         const res = dw.raw || [];
         const ok = (res || []).filter(r => r.success).length;
-        const fail = (res || []).length - ok;
+        const fail = (res || []).length - ok + (dw.notDone || 0);
         counts.deleted += ok; counts.deletedFailed += fail;
         log(fail ? '⚠' : (dw.ok ? '✅' : '⚠'), `Deleted ${ok}${fail ? `, ${fail} failed` : ''}`, (fail || !dw.ok) ? 'ds-prog-err' : '');
         if (!dw.ok) { allErrors.push(dw.text); log('  ⚠', dw.text, 'ds-prog-warn'); }
@@ -3979,7 +4042,9 @@ async function reconcileStampPairs(p, scan) {
   try {
     const oldValById = new Map();
     for (let i = 0; i < pairs.length; i += 200) {
-      const ids = pairs.slice(i, i + 200).map(pr => pr.targetId).filter(Boolean);
+      // 2026-11-14: sftkIdBackfillPairs gives { srcId, tgtId } — this read used `targetId`, so the id list was always
+      // empty, nothing was read, the guard below never fired and every undo step wrote blank over an existing identity.
+      const ids = pairs.slice(i, i + 200).map(pr => pr.tgtId).filter(Boolean);
       if (!ids.length) continue;
       const oq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
         query: `SELECT Id, ${idField} FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')})` });
@@ -4489,13 +4554,15 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // confirmed-by: every caller (runReconcile's root/inverse/child overwrite
   // paths) confirms via runReconcile's Proceed/production sftkConfirmDestructive first.
   // history-by: the deployment's own History entry (rollback in studio-undo.js)
-  const dw = await sftkWriteVerified({
+  // 2026-11-14: one verified write per 200 (sftkReconcileChunkedWrite) so a later chunk's failure keeps the earlier
+  // ones — the merged answer stays index-aligned with `payloads` for the chunks that were accepted (they run in order).
+  const dw = await sftkReconcileChunkedWrite(payloads, (part) => sftkWriteVerified({
     describe: `${objType} overwrite`,
-    write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads }),
+    write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: part }),
     verify: async (r) => {
       const arr0 = Array.isArray(r) ? r : [];
       const okById = new Map();
-      arr0.forEach((x, i) => { if (x && x.success && payloads[i]) okById.set(payloads[i].Id, payloads[i]); });
+      arr0.forEach((x, i) => { if (x && x.success && part[i]) okById.set(part[i].Id, part[i]); });
       if (!okById.size || !writeFields.length) return { ok: true, detail: [] };
       const ids = [...okById.keys()];
       const stale = [];
@@ -4514,7 +4581,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         ? { ok: false, detail: stale, text: `${objType} overwrite: accepted by Salesforce, but ${stale.length} record(s) still show a different value` }
         : { ok: true, detail: [] };
     },
-  });
+  }), sftkMergeArr);
   const res = dw.accepted ? dw.raw : { error: dw.raw?.error || dw.text };
   const arr = Array.isArray(res) ? res : [];
   const staleSet = new Set(Array.isArray(dw.detail) ? dw.detail : []);
@@ -4550,7 +4617,12 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     failCounts.set(m, (failCounts.get(m) || 0) + 1);
   }
   for (const [m, c] of failCounts) errors.push(c > 1 ? `${m}  (×${c})` : m);
-  return { ok, failed: arr.length - ok, errors, updatedRecords, failedRecords };
+  // 2026-11-14: records whose batch was refused (or never sent after it) have no answer — they count as failed, never
+  // as nothing (a refused write used to give failed = 0 and a green "Updated 0").
+  for (let i = arr.length; i < payloads.length; i++) {
+    if (rowMeta[i] && failedRecords.length < 200) failedRecords.push({ ...rowMeta[i], error: 'not confirmed — its batch of 200 was refused, or not sent after a refused batch; rescan to see its value' });
+  }
+  return { ok, failed: payloads.length - ok, errors, updatedRecords, failedRecords };
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -4881,7 +4953,24 @@ async function sftkParentOrderFor(p) {
     }
     g.srcCount = counts.get(g.refObj);
   }
-  return { offline: false, objects };
+  // 2026-11-14: what each OUTSIDE parent object itself points at among the other outside parents. The card
+  // listed them in first-seen order, so PricebookEntry was offered as '← next' above Product2 and its journey
+  // run failed (every insert refused: its Product2 was not in the target yet). One describe per parent object;
+  // a describe that fails leaves that object without known parents (first-seen order, as before).
+  const outside = new Set(); for (const o of objects) for (const g of o.parents) outside.add(g.refObj);
+  const parentDeps = {};
+  for (const refObj of outside) {
+    let d = null;
+    try { d = await describe(refObj, srcSess.orgUrl, srcSess.sid); } catch (_) { d = null; }
+    const own = [];
+    for (const f of sftkLkpRefFields(d?.fields)) {
+      if ((f.referenceTo || []).length !== 1) continue;   // a polymorphic lookup (WhoId…) names no one object it needs
+      const r = f.referenceTo[0];
+      if (r !== refObj && outside.has(r) && !own.includes(r)) own.push(r);
+    }
+    if (own.length) parentDeps[refObj] = own;
+  }
+  return { offline: false, objects, parentDeps };
 }
 
 // One background alignment check of a parent object: scan it across this org

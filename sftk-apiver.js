@@ -106,6 +106,15 @@ function sftkApiVerSelectable(cell) {
   if (cell.managed) return { ok: false, why: 'installed from a managed package — its API version ships with the package and only the publisher can change it' };
   if (cell.status === 'InvalidDraft') return { ok: false, why: 'its only version is an invalid draft — Salesforce cannot save it until its errors are fixed in Flow Builder' };
   if (!cell.id) return { ok: false, why: 'Salesforce gave this flow version no record id, so it cannot be read or re-saved from here' };
+  // 2026-11-14: an active flow with a NEWER version that is not active (a
+  // Draft being edited in Flow Builder, or an Obsolete one) cannot be
+  // re-saved safely. The deploy overwrites the latest inactive version in
+  // place (live 2026-09-22), so the user's Draft would be replaced by the
+  // active version's content, then activated, and Undo would delete it.
+  if (cell.newerInactive) {
+    const n = cell.newerInactive;
+    return { ok: false, why: `it has a newer ${n.status || 'inactive'} version (v${n.versionNumber}) that the deploy would overwrite — activate or delete it in Flow Builder first` };
+  }
   return { ok: true, why: '' };
 }
 
@@ -177,6 +186,12 @@ function sftkFlowVerMatrix(orgs, rowsByOrg) {
         status: gov ? gov.status : '',
         versionNumber: gov ? gov.versionNumber : null,
         id: gov ? gov.id : null,
+        // 2026-11-14: the latest version, when it is newer than the active
+        // one, is what a deploy would overwrite — sftkApiVerSelectable
+        // refuses such a cell and avVerifyAndActivate never calls it "new".
+        latestVersion: row.latest ? row.latest.versionNumber : null,
+        newerInactive: (row.active && row.latest && row.latest.versionNumber > row.active.versionNumber)
+          ? { versionNumber: row.latest.versionNumber, status: row.latest.status || '' } : null,
         versions: row.versions,
         lag: gov ? sftkApiVerLag(gov.apiVersion, o.maxVersion) : null,
       };
@@ -236,7 +251,8 @@ function sftkApiVerPlan(target, orgs, cells) {
       continue;
     }
     if (c.num != null && c.num === t) { out.noop.push({ orgKey: o.key }); continue; }
-    out.applicable.push({ orgKey: o.key, from: c.apiVersion, to: String(target), flowVersionId: c.id, status: c.status });
+    out.applicable.push({ orgKey: o.key, from: c.apiVersion, to: String(target), flowVersionId: c.id, status: c.status,
+      ...(c.latestVersion == null ? {} : { latestVersion: c.latestVersion }) });
   }
   return out;
 }

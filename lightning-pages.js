@@ -3230,6 +3230,15 @@ const LightningPages = (() => {
         errEl.style.display = '';
         return;
       }
+      // 2026-11-14: a Metadata deploy is an upsert — an API name that is
+      // already taken would silently OVERWRITE that page (undo 'none'), and
+      // no DUPLICATE_DEVELOPER_NAME error ever comes back. Refuse up front
+      // from the loaded list; doClone re-checks the org right before writing.
+      if (lpCloneNameTaken(allPages, apiName)) {
+        errEl.textContent = `A page with the API name "${apiName}" already exists — choose a different API name.`;
+        errEl.style.display = '';
+        return;
+      }
       const friendly = raw => {
         if (/DUPLICATE_DEVELOPER_NAME|duplicate.*developer.?name/i.test(raw)) return `A page with the API name "${apiName}" already exists — choose a different API name.`;
         if (/invalid.*(?:character|name)|INVALID_NAME/i.test(raw)) return 'The API name is not valid — use letters, numbers, and underscores, starting with a letter.';
@@ -3293,6 +3302,18 @@ const LightningPages = (() => {
     // Create a fake metaRes-shape so buildFlexiPageZip uses the new developer name
     const cloneMetaRes = { FullName: newApiName, Metadata: cloneMeta };
     const zipBase64    = buildFlexiPageZip(cloneMetaRes);
+
+    // 2026-11-14: the deploy below is an upsert, so a taken API name would
+    // overwrite that page and the verify would find it and say "created".
+    // allPages can be stale (another tab, App Builder), so ask the org right
+    // before writing. A failed check refuses too — never guess it is free.
+    say('Checking the API name is free…');
+    const taken = await bg({
+      type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
+      query: `SELECT Id FROM FlexiPage WHERE DeveloperName='${newApiName}'`
+    });
+    if (!taken || taken.error) throw new Error(`Could not check whether the API name "${newApiName}" is free (${lpWhy(taken?.error)}) — nothing was written.`);
+    if ((taken.records || []).length) throw new Error('DUPLICATE_DEVELOPER_NAME');
 
     // History: one journal for this Clone Page click. Undo is `none` —
     // cloning only ever CREATES a page; there is no previous copy to go
@@ -3835,7 +3856,13 @@ const LightningPages = (() => {
     if (resp?.error !== 'SESSION_EXPIRED') return resp;
 
     const fresh = await bgRaw({ type: 'GET_SF_SESSION', activeTabUrl: _orgUrl });
-    if (fresh?.sid && fresh?.orgUrl) {
+    // 2026-11-14: pinned to the org this tab was opened on. GET_SF_SESSION
+    // falls back to ANY open org tab when this org has none, and the retried
+    // message can be a write (an org-default deploy is name-based, so it would
+    // land in the other org, verify there, and leave Undo aimed at this one).
+    // A different org, or the same dead sid, ends here as SESSION_EXPIRED —
+    // the same rule as popup.js sendBg (freshIsCorrectOrg) and background.js.
+    if (lpSessionRetryOk(_orgUrl, msg.sid !== undefined ? msg.sid : _sid, fresh)) {
       _orgUrl = fresh.orgUrl;
       _sid    = fresh.sid;
       const retry = msg.sid !== undefined
@@ -4584,6 +4611,25 @@ function lpAssignmentWords(a) {
 // Salesforce's own words for a refusal, without the HTTP prefix. Not the
 // shared translator: its hints are written for data deployments ("map them
 // from a source field"), which is the wrong advice on this screen.
+// 2026-11-14: bg()'s own SESSION_EXPIRED retry may only re-send to the SAME
+// org (sftkOrgKey) and only with a sid that differs from the one that just
+// failed. Anything else (GET_SF_SESSION fell back to another org's tab, or
+// the same dead cookie) is refused so the caller sees SESSION_EXPIRED.
+function lpSessionRetryOk(origOrgUrl, failedSid, fresh) {
+  if (!fresh || !fresh.sid || !fresh.orgUrl || !origOrgUrl) return false;
+  const a = sftkOrgKey(origOrgUrl), b = sftkOrgKey(fresh.orgUrl);
+  if (!a || a !== b) return false;
+  return fresh.sid !== failedSid;
+}
+
+// 2026-11-14: is this API name already used by a loaded page? Salesforce
+// DeveloperNames are unique case-insensitively.
+function lpCloneNameTaken(pages, apiName) {
+  const want = String(apiName || '').toLowerCase();
+  if (!want) return false;
+  return (pages || []).some(p => String((p && p.DeveloperName) || '').toLowerCase() === want);
+}
+
 function lpWhy(raw) {
   return String(raw == null ? '' : raw).replace(/^HTTP\s*\d+:\s*/i, '').replace(/\s+/g, ' ').trim().slice(0, 400) || 'no reason given';
 }

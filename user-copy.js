@@ -79,6 +79,13 @@ const UserCopy = (() => {
   let sourceUser = null;
   let targetUser = null;
 
+  // True from the 📋 Copy click until the run (dialog + writes + undo record)
+  // is over. selectUser / clearUser refuse to act while it is set (2026-11-14):
+  // the chips' ✎ Change / ✕ stayed live during a run, so a click could send the
+  // remaining writes to a user the confirmation never named, or null the
+  // target and lose the undo.
+  let copyRunning = false;
+
   // Fetched data
   let allUsers       = [];       // pre-loaded on init
   let usersCapped    = false;    // true when the org has MORE than USER_LIST_LIMIT active users
@@ -545,6 +552,7 @@ const UserCopy = (() => {
   }
 
   async function selectUser(role, user) {
+    if (copyRunning) return;   // 2026-11-14: never swap a user under a running copy
     const ids = pickerIds(role);
 
     // Hide the filter + list; the chip takes their place.
@@ -587,6 +595,7 @@ const UserCopy = (() => {
   }
 
   function clearUser(role, focus = false) {
+    if (copyRunning) return;   // 2026-11-14: never clear a user under a running copy
     const ids   = pickerIds(role);
     const input = document.getElementById(ids.input);
     const pick  = document.getElementById(ids.pick);
@@ -1105,7 +1114,47 @@ const UserCopy = (() => {
   }
 
   // ── Execute copy ─────────────────────────────────────────
+  // 2026-11-14: the run used to read the module's sourceUser / targetUser at
+  // the moment each write fired, and the chips stayed clickable — ✎ Change
+  // mid-run sent the remaining assignments to another user (and built an undo
+  // that put user A's old profile on user B); ✕ nulled the target, every later
+  // write failed, the finally threw on targetUser.Name, the undo was never
+  // recorded and the button stayed on "Copying…". Now the pair is taken ONCE
+  // here and handed to runCopy, whose parameters deliberately shadow the
+  // module variables, so every write, re-read and undo step uses the pair the
+  // confirmation named. The chips are locked and selectUser / clearUser refuse
+  // to act until the run is over.
   async function executeCopy() {
+    if (copyRunning) return;
+    const src = sourceUser, tgt = targetUser;
+    if (!src || !tgt) {
+      showResult('Pick both a source and a target user first. Nothing was written.', true);
+      return;
+    }
+    copyRunning = true;
+    setChipsLocked(true);
+    try {
+      await runCopy(src, tgt);
+    } catch (e) {
+      // Say the failure rather than leave the button on "Copying…".
+      const btn = document.getElementById('ucCopyBtn');
+      if (btn) { btn.disabled = false; btn.textContent = '📋 Copy Selected'; }
+      const loadingEl = document.getElementById('ucLoading');
+      if (loadingEl) { loadingEl.style.display = 'none'; loadingEl.innerHTML = sftkCatSm('Loading permissions…'); }
+      showResult(`⚠️ The copy stopped unexpectedly (${esc((e && e.message) || String(e))}). Some changes may already be written: re-open both users to check, and see History (top bar).`, true);
+    } finally {
+      copyRunning = false;
+      setChipsLocked(false);
+    }
+  }
+
+  function setChipsLocked(locked) {
+    document.querySelectorAll('.uc-chip-change, .uc-chip-clear').forEach(b => { b.disabled = locked; });
+  }
+
+  // sourceUser / targetUser here are runCopy's own parameters (the pair
+  // snapshotted by executeCopy), NOT the module variables — see above.
+  async function runCopy(sourceUser, targetUser) {
     const opts = getOptions();
     const btn  = document.getElementById('ucCopyBtn');
     // 📋 Copy used to write on the click (live 2026-09-23): profile change,

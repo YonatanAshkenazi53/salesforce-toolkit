@@ -87,6 +87,9 @@ describe('every verified write names its History journal; every End states its u
     expect(hist).toContain('sftkToolUndoState(run)');
     expect(readFileSync(join(root, 'studio-core.js'), 'utf8')).toContain("case 'undoTool':              window.undoTool?.(arg); break;");
     // entries the popup writes while Data Studio is open are merged, not lost on the next save
-    expect(readFileSync(join(root, 'studio-core.js'), 'utf8')).toMatch(/changes\.sftk_history\.newValue \|\| \[\]\)\.filter\(e => e && e\.kind === 'tool' && !_history\.some/);
+    // (2026-11-14: the merge moved into _historyAdoptToolUpdates, which also takes an
+    // existing entry's toolUndo.done — behavior in release-qa-1114-studio-core.test.mjs)
+    expect(readFileSync(join(root, 'studio-core.js'), 'utf8')).toContain("_historyAdoptToolUpdates(_history, changes.sftk_history.newValue || [], true)");
+    expect(readFileSync(join(root, 'studio-core.js'), 'utf8')).toMatch(/if \(i < 0\) \{ if \(addNew\) \{ local\.push\(e\); changed = true; \} continue; \}/);
   });
 });

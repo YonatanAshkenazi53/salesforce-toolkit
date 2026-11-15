@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_MX_VR_One</fullName>
+    <active>true</active>
+    <errorConditionFormula>AND(Name = &quot;zzz_sftk_mx_never&quot;, NOT(ISBLANK(SFTK_MX_Region__c)))</errorConditionFormula>
+    <errorMessage>SFTK MX fixture rule (never fires).</errorMessage>
+</ValidationRule>

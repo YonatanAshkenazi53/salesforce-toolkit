@@ -1,0 +1,2 @@
+Account {!Account.Name} is in {!Account.SFTK_MX_Region__c} ({!Account.SFTK_MX_Region__c}).
+Contact region: {!Contact.SFTK_MX_Region__c}.

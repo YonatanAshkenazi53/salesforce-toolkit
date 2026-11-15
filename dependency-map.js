@@ -3807,6 +3807,17 @@ const DependencyMap = (() => {
         out.push({ apiName: c.apiName, ok: true, text: `${c.apiName}: v${newest.versionNumber} (${newest.status || 'not active'}) was rewritten in place at API ${target} — Salesforce overwrites a version that is not active instead of adding one (verified by re-reading the org).`, rewrittenInPlace: true });
         continue;
       }
+      // 2026-11-14: an active flow whose latest version was ALREADY newer
+      // than the active one before the deploy (a Draft) — that Draft was
+      // overwritten in place, it is not a new version. Never activate it,
+      // never report it as done, and never let Undo delete a version that
+      // existed before this run. The plan refuses such flows up front
+      // (sftkApiVerSelectable); this is the second line if the org changed
+      // between the scan and the Apply.
+      if (newest && c.wasActive && c.prevLatest != null && newest.versionNumber > c.prevVersion && newest.versionNumber <= c.prevLatest) {
+        out.push({ apiName: c.apiName, ok: false, overwroteExisting: true, text: `${c.apiName}: the deploy overwrote the existing v${newest.versionNumber} (${newest.status || 'not active'}) instead of adding a new version — it now holds the content of active v${c.prevVersion} at API ${newest.apiVersion || '?'}. Nothing was activated; v${c.prevVersion} is still the running version. Check v${newest.versionNumber} in Flow Builder.` });
+        continue;
+      }
       if (!newest || newest.versionNumber <= c.prevVersion) {
         out.push({ apiName: c.apiName, ok: false, text: `${c.apiName}: no new version appeared after the deploy (latest is still v${c.prevVersion}${newest ? ` at API ${newest.apiVersion || '?'}` : ''}) — nothing changed for this flow.` });
         continue;
@@ -3949,6 +3960,9 @@ const DependencyMap = (() => {
         members.push(fullName);
         changed.push({ apiName: j.apiName, from: set.from, to: set.to, status: j.status,
           wasActive: (rec.Status || j.status) === 'Active', prevVersion: Number(rec.VersionNumber) || 0,
+          // 2026-11-14: the flow's latest version number at scan time, so a
+          // pre-existing Draft overwritten in place is never taken for new.
+          prevLatest: j.latestVersion == null ? null : Number(j.latestVersion),
           defId: rec.DefinitionId || null });
       }
       if (bad) { orgsFailed++; say('❌', `${org.label}: ${bad} — nothing changed in this org.`); continue; }
@@ -4005,6 +4019,9 @@ const DependencyMap = (() => {
         const vByName = new Map(verdicts.map(v => [v.apiName, v]));
         for (const c of changed) {
           const v = vByName.get(c.apiName);
+          // 2026-11-14: an overwritten pre-existing version has no previous
+          // copy to restore — named in the undo note, never deleted.
+          if (v && v.overwroteExisting) { undoSkipped.push(c.apiName); continue; }
           if (!v || !v.ok) continue;
           if (v.rewrittenInPlace || !c.defId) { undoSkipped.push(c.apiName); continue; }
           undoCandidates.push({ apiName: c.apiName, defId: c.defId, orgUrl: org.orgUrl, wasActive: c.wasActive, prevVersion: c.prevVersion, newId: v.newId || null, newVersion: v.newVersion || null });

@@ -61,6 +61,19 @@ function sftkValOvClear(node, tgtOrgUrl, srcId, field) {
   if (!Object.keys(all).length) delete node.valueOverrides;
 }
 
+// Many-record Save (2026-11-14): what one row of the bulk dialog does to every selected record.
+// r: { dirty, cleared, mixed, nullOn, text } → 'keep' | 'null' | 'clear' | 'set'.
+// WHY: Save used to walk every row and clear the field on every record whose box was empty — and a field
+// whose typed values differ between the records (or exist on only some) is rendered with an EMPTY box, so
+// Save silently erased each record's own typed value. A row the user did not touch is now left alone, and
+// a mixed row is only cleared when its ✕ was pressed (typing then erasing goes back to "keep each").
+function sftkValOvManyAction(r) {
+  if (!r || !r.dirty) return 'keep';
+  if (r.nullOn) return 'null';
+  if (String(r.text || '') === '') return (r.mixed && !r.cleared) ? 'keep' : 'clear';
+  return 'set';
+}
+
 // How many records of this node carry typed values for that target org, and how many values.
 function sftkValOvCount(node, tgtOrgUrl) {
   const b = sftkValOvBucket(node, tgtOrgUrl) || {};

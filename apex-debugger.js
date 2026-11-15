@@ -84,6 +84,50 @@ function sftkMoreMatchesNote(more, isSuggest) {
     : 'More matches — keep typing to narrow';
 }
 
+// Release QA 2026-11-14: a list cut into runs of `size` (min 1). The batch
+// delete's ONE re-read sent every id in a single Tooling IN (…) GET; past
+// about 700 ids the URL crossed the 16 KB request-line limit, the re-read
+// failed, and a purge that had deleted every log reported all of them failed.
+// Tooling queries get no composite-POST backstop, so callers chunk their own.
+function sftkDbgChunks(list, size) {
+  const all = Array.isArray(list) ? list : [];
+  const n = Math.max(1, Math.floor(+size) || 1);
+  const out = [];
+  for (let i = 0; i < all.length; i += n) out.push(all.slice(i, i + n));
+  return out;
+}
+
+// Release QA 2026-11-14: may the cross-log search keep this body for the next
+// search? Bodies are up to 20 MB each and the list holds up to 200 logs, so
+// keeping every body pinned hundreds of MB in the popup until an org switch.
+// A body is kept only when it is small enough AND the running total stays
+// inside the budget; anything else is scanned and dropped (a later search
+// downloads it again — slower, never wrong). Sizes are in string characters.
+function sftkDbgCacheAdmit(usedChars, len, perLogMax, budget) {
+  const u = Number(usedChars) || 0, l = Number(len);
+  if (!Number.isFinite(l) || l < 0) return false;
+  return l <= perLogMax && u + l <= budget;
+}
+
+// Release QA 2026-11-14: is this DebugLevel one the Toolkit created? Every
+// built-in and custom profile is named SFTK_… (see PROFILES / custom
+// profiles). Start Trace on a user who already had a trace flag used to
+// take it over and Stop / undo then DELETED it — a colleague's own level and
+// expiry were lost. Only a flag on a Toolkit level may be deleted; any other
+// (or one whose level could not be read — the safe answer) is put back.
+function sftkDbgIsToolkitLevel(developerName) {
+  return typeof developerName === 'string' && /^SFTK_/.test(developerName);
+}
+
+// Release QA 2026-11-14: a datetime as a SOQL literal (whole seconds, Z) —
+// Salesforce hands back "2026-11-14T10:00:00.000+0000", which SOQL rejects.
+// Returns '' for anything that is not a date.
+function sftkDbgSoqlDateTime(v) {
+  const t = Date.parse(String(v || '').replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
+  if (!Number.isFinite(t)) return '';
+  return new Date(t).toISOString().replace(/\.\d+Z$/, 'Z');
+}
+
 const ApexDebugger = (() => {
   'use strict';
 
@@ -92,6 +136,7 @@ const ApexDebugger = (() => {
   const POLL_MS      = 4000;    // poll interval while trace is active
   const TRACE_HOURS  = 1;       // default trace expiry (hours)
   const MAX_LOGS     = 200;     // max ApexLog records to fetch
+  const VERIFY_CHUNK = 200;     // ids per delete re-read (Release QA 2026-11-14: one IN list overflowed the URL)
   // Rows the trace-flag user dropdown renders. The SOQL asks for
   // USER_DROP_SHOWN + 1 so an 11th row proves the org has more matches than
   // fit — see sftkOverflowRows / sftkMoreMatchesNote.
@@ -483,6 +528,14 @@ const ApexDebugger = (() => {
   let _xSearchRunning = false;
   let _xSearchCancel  = false;
   let _xRawCache      = {};         // logId → raw body string (caches HTTP fetch)
+  // Release QA 2026-11-14: the body cache is bounded (sftkDbgCacheAdmit) —
+  // _xRawChars is what it holds now; _xScanned is what THIS search has
+  // already scanned (a body too big to keep is scanned, then dropped, so the
+  // cache alone can no longer say "scanned").
+  const XRAW_PER_LOG_MAX = 2 * 1048576;    // characters; bigger bodies are scanned, not kept
+  const XRAW_BUDGET      = 32 * 1048576;   // characters kept across all cached bodies
+  let _xRawChars      = 0;
+  let _xScanned       = new Set();
 
   let _pollTimer   = null;
   let _cdTimer     = null;  // countdown timer
@@ -504,8 +557,19 @@ const ApexDebugger = (() => {
   }
 
   function updateSession(orgUrl, sid) {
+    const prev = _orgUrl;
     _orgUrl = orgUrl;
     _sid    = sid;
+    // Release QA 2026-11-14: an org switch from the topbar lands here, not in
+    // init(). Without a reset, org A's TraceFlag id, countdown and poll kept
+    // running against org B — Stop DELETEd A's id in B and the poll merged
+    // B's logs into A's list. A fresh session for the SAME org keeps state.
+    if (prev && orgUrl && _orgKeyOf(prev) !== _orgKeyOf(orgUrl)) _reset();
+  }
+
+  function _orgKeyOf(u) {
+    if (typeof sftkOrgKey === 'function') return sftkOrgKey(u);
+    return String(u || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase();
   }
 
   // ── Reset ─────────────────────────────────────────────────
@@ -534,6 +598,8 @@ const ApexDebugger = (() => {
     _xSearchQuery = '';
     _xSearchHits  = new Map();
     _xRawCache    = {};
+    _xRawChars    = 0;
+    _xScanned     = new Set();
     if (_xSearchRunning) _xSearchCancel = true;
   }
 
@@ -991,11 +1057,27 @@ const ApexDebugger = (() => {
       // Check for existing TraceFlag on this user
       const existing = await _bg({
         type: 'SF_QUERY', tooling: true,
-        query: `SELECT Id,ExpirationDate FROM TraceFlag ` +
+        query: `SELECT Id,DebugLevelId,StartDate,ExpirationDate FROM TraceFlag ` +
                `WHERE TracedEntityId='${_selUser.Id}' AND LogType='USER_DEBUG' LIMIT 1`
       });
 
       if (!existing.error && existing.records?.length) {
+        // Release QA 2026-11-14: the flag may be someone else's (an admin's
+        // trace on an integration user, with its own level and up to 24h).
+        // Keep its values BEFORE the PATCH so Stop and the History undo put
+        // it back instead of deleting it. Only a flag on a Toolkit level
+        // (SFTK_…) is ours to delete; a level that cannot be read counts as
+        // foreign — restoring is the safe direction.
+        const ex = existing.records[0];
+        let prior = null;
+        if (ex.DebugLevelId && ex.DebugLevelId !== debugLevelId) {
+          const lv = await _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
+            query: `SELECT DeveloperName FROM DebugLevel WHERE Id = '${ex.DebugLevelId}'` });
+          const dn = lv && !lv.error && lv.records && lv.records[0] && lv.records[0].DeveloperName;
+          if (!sftkDbgIsToolkitLevel(dn)) {
+            prior = { DebugLevelId: ex.DebugLevelId, StartDate: ex.StartDate || null, ExpirationDate: ex.ExpirationDate };
+          }
+        }
         // Extend existing flag. QA 2026-07-26: the result MUST be checked —
         // an ignored PATCH failure (expired session, bad DebugLevelId) used
         // to fake a live 60-minute countdown while the org captured nothing.
@@ -1025,7 +1107,7 @@ const ApexDebugger = (() => {
         });
         if (!pWr.accepted) throw new Error((pWr.raw && pWr.raw.error) || 'refused');
         if (!pWr.ok) throw new Error('the trace extension was accepted, but the org still shows the old expiration on re-read — treat this as UNVERIFIED.');
-        _traceFlag = { Id: existing.records[0].Id, ExpirationDate: exp.toISOString() };
+        _traceFlag = { Id: existing.records[0].Id, ExpirationDate: exp.toISOString(), prior };
         confirmedThisCall = true;
       } else {
         // Create new. The write discipline (sftk-write.js): the create is
@@ -1077,8 +1159,21 @@ const ApexDebugger = (() => {
       // Undo: stop the trace this call confirmed started/extended — the
       // DebugLevel config it may also have written is left in place (it is
       // reusable, inert config; not itself a running trace).
+      // Release QA 2026-11-14: a flag that was already there and is not the
+      // Toolkit's is PUT BACK (its own level, start and expiry), never deleted.
+      const tfPrior = confirmedThisCall && _traceFlag && _traceFlag.prior;
+      const priorLit = tfPrior ? sftkDbgSoqlDateTime(tfPrior.ExpirationDate) : '';
       await sftkHistoryEnd(journal, {
-        undo: (confirmedThisCall && _traceFlag && _traceFlag.Id) ? { steps: [{
+        undo: (tfPrior && priorLit) ? { steps: [{
+          describe: `Put back the trace flag that was already set for ${_selUser.Name || _selUser.Username || _selUser.Id}`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_PATCH', path: `${TAPI}/sobjects/TraceFlag/${_traceFlag.Id}`,
+                 body: { DebugLevelId: tfPrior.DebugLevelId, StartDate: tfPrior.StartDate, ExpirationDate: tfPrior.ExpirationDate } },
+          verify: { query: `SELECT Id FROM TraceFlag WHERE Id = '${_traceFlag.Id}' AND DebugLevelId = '${tfPrior.DebugLevelId}' AND ExpirationDate = ${priorLit}`, tooling: true, count: 1,
+            text: { ok: 'trace flag put back to its own level and expiry — verified by re-reading the org',
+                    bad: 'accepted by Salesforce, but the org does not show the original level and expiry' } },
+        }] } : tfPrior ? { none: 'the trace flag that was already set could not be read back exactly, so it cannot be put back automatically' }
+        : (confirmedThisCall && _traceFlag && _traceFlag.Id) ? { steps: [{
           describe: `Stop the trace for ${_selUser.Name || _selUser.Username || _selUser.Id}`,
           // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
           msg: { type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id },
@@ -1093,7 +1188,11 @@ const ApexDebugger = (() => {
   async function _stopTrace() {
     _stopPolling();
     _stopCountdown();
+    let note = null;   // the status line after a stop that ended a different way
     if (_traceFlag?.Id) {
+      // Release QA 2026-11-14: work on a local handle — an org switch during
+      // the request resets _traceFlag under us.
+      const tf = _traceFlag;
       // Visual state while the TraceFlag delete is in flight.
       const stopping = document.getElementById('adbgStopBtn');
       if (stopping) { stopping.disabled = true; stopping.textContent = 'Stopping…'; }
@@ -1103,30 +1202,73 @@ const ApexDebugger = (() => {
       // and nulling _traceFlag threw away the only handle for a retry.
       // The write discipline (sftk-write.js): the DELETE is the write, a
       // Tooling re-query of the flag id is the verify — gone = ok.
+      // Release QA 2026-11-14: a flag Start Trace took over from someone else
+      // (tf.prior) is PUT BACK with a PATCH of its own level / start / expiry,
+      // not deleted. And a refused write is no longer the verdict by itself:
+      // a flag deleted elsewhere (Setup, Developer Console, another window)
+      // answers the DELETE with NOT_FOUND, which used to read as "STILL
+      // ACTIVE" forever. The org is re-read; only a re-read that answers
+      // and shows NO row turns the refusal into "already gone".
       // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
       // History (sftk-history.js): one journal for this Stop click. Undo is
       // `none` — the same TraceFlag row cannot be recreated; starting a new
       // trace from the tool does the same job.
+      const restore = tf.prior ? { DebugLevelId: tf.prior.DebugLevelId, StartDate: tf.prior.StartDate || null, ExpirationDate: tf.prior.ExpirationDate } : null;
+      const readFlag = () => _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
+        query: `SELECT Id,DebugLevelId,ExpirationDate FROM TraceFlag WHERE Id = '${tf.Id}'` });
       const journal = sftkHistoryBegin({ tool: 'Apex Debugger', title: `Trace stopped for ${_traceUser?.Name || _traceUser?.Username || _traceUser?.Id || ''}`, orgUrl: _orgUrl });
       const dWr = await sftkWriteVerified({
         describe: 'TraceFlag',
         journal,
-        write: () => _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id }),
-        verify: async () => {
-          const chk = await _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
-            query: `SELECT Id FROM TraceFlag WHERE Id = '${_traceFlag.Id}'` });
+        write: async () => {
+          const r = restore
+            ? await _bg({ type: 'SF_PATCH', path: `${TAPI}/sobjects/TraceFlag/${tf.Id}`, body: restore })
+            : await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: tf.Id });
+          if (r && r.error) {
+            const chk = await readFlag();
+            if (chk && !chk.error && Array.isArray(chk.records) && chk.records.length === 0) return { alreadyGone: true };
+          }
+          return r;
+        },
+        verify: async r => {
+          const chk = await readFlag();
           if (!chk || chk.error) return { ok: false, text: null };
-          return { ok: !(chk.records && chk.records.length), text: null };
+          const recs = chk.records || [];
+          if (!recs.length) {
+            return { ok: true, detail: 'gone',
+              text: r && r.alreadyGone ? 'TraceFlag was already gone from the org (removed elsewhere) — verified by re-reading the org' : null };
+          }
+          if (!restore) return { ok: false, text: null };
+          const f = recs[0];
+          return { ok: f.DebugLevelId === restore.DebugLevelId && sftkDbgSameInstant(f.ExpirationDate, restore.ExpirationDate),
+            detail: 'restored', text: null };
         },
       });
       await sftkHistoryEnd(journal, { undo: { none: 'stopping a trace is undone by starting a new one from the tool — the same TraceFlag row cannot be recreated' } });
       if (stopping) { stopping.disabled = false; stopping.textContent = 'Stop'; }
+      if (_traceFlag !== tf) return;   // the org was switched meanwhile — that reset owns the UI now
       if (!dWr.ok) {
         const fe = sftkFriendlyError((dWr.raw && dWr.raw.error) || dWr.text || 'not confirmed stopped on re-read');
-        _renderStatus(`Couldn't stop the trace: ${fe.message} — the flag is STILL ACTIVE in the org${_traceFlag?.ExpirationDate ? ` until ${new Date(_traceFlag.ExpirationDate).toLocaleTimeString()}` : ''}. Fix the session (open the org tab) and click Stop again.`, 'error');
-        _startCountdown();   // keep showing the truth: it IS still running
-        _startPolling();
-        return;              // keep _traceFlag so Stop can retry
+        const until = tf.ExpirationDate ? new Date(tf.ExpirationDate).toLocaleTimeString() : '';
+        // Release QA 2026-11-14: past its expiry the flag captures nothing,
+        // so there is nothing left to stop. Restarting the countdown here made
+        // its next tick call Stop again — one DELETE and one History entry
+        // per second for as long as the page stayed open. Say what is true
+        // and stop retrying.
+        if (Date.parse(tf.ExpirationDate) <= Date.now()) {
+          note = { msg: `The trace expired${until ? ` at ${until}` : ''} and captures nothing now, but its TraceFlag could not be ${restore ? 'put back' : 'removed'}: ${fe.message}. Check it in Setup > Debug Logs.`, type: 'error' };
+        } else {
+          // Only a re-read that answered can say the flag is still there.
+          const state = dWr.verified ? 'the flag is STILL ACTIVE in the org' : 'the org could not be re-read, so the flag may still be active';
+          _renderStatus(`Couldn't stop the trace: ${fe.message} — ${state}${until ? ` until ${until}` : ''}. Fix the session (open the org tab) and click Stop again.`, 'error');
+          _startCountdown();   // keep showing the truth: it may still be running
+          _startPolling();
+          return;              // keep _traceFlag so Stop can retry
+        }
+      } else if (dWr.detail === 'restored') {
+        note = { msg: 'Trace stopped — the trace flag that was already set on this user is back on its own debug level and expiry.', type: 'info' };
+      } else if (dWr.raw && dWr.raw.alreadyGone) {
+        note = { msg: 'Trace stopped — its TraceFlag had already been removed from the org.', type: 'info' };
       }
     }
     _traceFlag = null;
@@ -1138,7 +1280,7 @@ const ApexDebugger = (() => {
     if (stopBtn)  stopBtn.style.display = 'none';
     const dot = document.getElementById('adbgLiveDot');
     if (dot) dot.style.display = 'none';
-    _renderStatus();
+    if (note) _renderStatus(note.msg, note.type); else _renderStatus();
   }
 
   function _renderStatus(msg, type) {
@@ -1308,7 +1450,7 @@ const ApexDebugger = (() => {
     // appear during the in-progress phase.
     const xActive  = !!_xSearchQuery;
     const visible = xActive
-      ? _logs.filter(l => _xSearchHits.has(l.Id) || (_xSearchRunning && !(l.Id in _xRawCache) && !_bodyCache[l.Id]))
+      ? _logs.filter(l => _xSearchHits.has(l.Id) || (_xSearchRunning && !_xScanned.has(l.Id) && !(l.Id in _xRawCache) && !_bodyCache[l.Id]))
       : _logs;
 
     // A real header row. The list is a data table in everything but tag name:
@@ -1427,7 +1569,8 @@ const ApexDebugger = (() => {
   // Fetches every log body (with concurrency) and marks rows whose body
   // contains the keyword. Hits are kept in _xSearchHits → the list
   // renderer adds a "🔍 N" badge and a snippet of the first matching line.
-  // Subsequent searches reuse _xRawCache so we don't re-download bodies.
+  // Subsequent searches reuse _xRawCache so we don't re-download bodies —
+  // within a byte budget (Release QA 2026-11-14: it used to keep every body).
   async function _searchAcrossLogs(query) {
     query = (query || '').trim();
     if (!query) { _clearXSearch(); return; }
@@ -1436,6 +1579,7 @@ const ApexDebugger = (() => {
 
     _xSearchQuery   = query;
     _xSearchHits    = new Map();
+    _xScanned       = new Set();
     _xSearchCancel  = false;
     _xSearchRunning = true;
 
@@ -1473,7 +1617,12 @@ const ApexDebugger = (() => {
             // poisoned cache blocked every retry. Failures stay uncached so
             // the next search re-attempts them; the count is surfaced below.
             // (Skip the write if a reset/cancel swapped the cache mid-fetch.)
-            if (!_xSearchCancel) _xRawCache[log.Id] = raw;
+            // Release QA 2026-11-14: kept only inside the byte budget — a
+            // big body is scanned below and then dropped (sftkDbgCacheAdmit).
+            if (!_xSearchCancel && sftkDbgCacheAdmit(_xRawChars, raw.length, XRAW_PER_LOG_MAX, XRAW_BUDGET)) {
+              _xRawCache[log.Id] = raw;
+              _xRawChars += raw.length;
+            }
           } else {
             unreachable++;
           }
@@ -1487,7 +1636,9 @@ const ApexDebugger = (() => {
             }
           }
           if (hits.length) _xSearchHits.set(log.Id, hits);
+          _xScanned.add(log.Id);
         }
+        raw = null;   // Release QA 2026-11-14: drop this worker's handle on the body
         done++;
         // Re-render every few completions so the user sees marks appear live
         if (done % 3 === 0 || done === total) {
@@ -3245,11 +3396,19 @@ const ApexDebugger = (() => {
       verifyAll: async results => {
         const okIds = ids.filter((id, i) => results[i] && results[i].accepted);
         if (!okIds.length) return [];
-        const q = await _bg({ type: 'SF_QUERY_ALL', tooling: true, _suppressError: true,
-          query: `SELECT Id FROM ApexLog WHERE Id IN (${okIds.map(x => `'${x}'`).join(',')})` });
-        if (!q || q.error) return null;
-        const stillThere = new Set((q.records || []).map(r => r.Id));
-        return ids.map(id => ({ ok: !stillThere.has(id), text: null }));
+        // Release QA 2026-11-14: one re-read per 200 ids. A single IN list of
+        // every purged id (700+) overflowed the GET URL, the re-read failed,
+        // and "Purge >24h" reported every deleted log as failed. A chunk whose
+        // re-read fails leaves only ITS ids unverified (null), never "ok".
+        const gone = new Map();   // id → true (gone) / false (still there)
+        for (const chunk of sftkDbgChunks(okIds, VERIFY_CHUNK)) {
+          const q = await _bg({ type: 'SF_QUERY_ALL', tooling: true, _suppressError: true,
+            query: `SELECT Id FROM ApexLog WHERE Id IN (${chunk.map(x => `'${x}'`).join(',')})` });
+          if (!q || q.error) continue;
+          const stillThere = new Set((q.records || []).map(r => r.Id));
+          chunk.forEach(id => gone.set(id, !stillThere.has(id)));
+        }
+        return ids.map(id => (gone.has(id) ? { ok: gone.get(id), text: null } : null));
       },
     });
     await sftkHistoryEnd(journal, { undo: { none: 'deleted debug logs are gone — Salesforce keeps no copy' } });
@@ -3523,6 +3682,11 @@ const ApexDebugger = (() => {
   // ── Export ────────────────────────────────────────────────
   // Test-only surface (harness/unit tests). Harmless in production — just refs.
   const _test = { parseLog: _parseLog, matchesCat: _logMatchesCat, renderDetail: _renderDetail,
-    setLogs: (l) => { _logs = l; }, peak: _logPeak };
+    setLogs: (l) => { _logs = l; }, peak: _logPeak,
+    // Release QA 2026-11-14: the trace / delete paths, for the regression tests.
+    stopTrace: _stopTrace, deleteLogs: _deleteApexLogsVerified,
+    setTrace: (tf, u) => { _traceFlag = tf; _traceUser = u || null; },
+    trace: () => _traceFlag, timers: () => ({ countdown: _cdTimer, poll: _pollTimer }),
+    setSession: (orgUrl, sid) => { _orgUrl = orgUrl; _sid = sid; } };
   return { init, updateSession, _test };
 })();

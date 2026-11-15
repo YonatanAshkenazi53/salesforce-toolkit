@@ -3613,7 +3613,18 @@ function showScanProgress(show, text, onCancel) {
   }
 }
 
-function showSessionError(msg, rawDetail) {
+// opts.retryOnly (2026-11-14, QA): a dropped network or the org's daily API
+// limit is not a session problem — the Connect form and Reload Extension
+// would send the user to reconnect for nothing, so only a Retry is offered.
+function showSessionError(msg, rawDetail, opts) {
+  const retryOnly = !!(opts && opts.retryOnly);
+  const connectRow = document.getElementById('orgUrlInput')?.closest('.session-error-row');
+  if (connectRow) connectRow.style.display = retryOnly ? 'none' : '';
+  const reloadBtn = document.getElementById('reloadExtBtn');
+  if (reloadBtn) reloadBtn.style.display = retryOnly ? 'none' : '';
+  const retryBtnEl = document.getElementById('retryBtn');
+  const retryLabel = retryBtnEl && [...retryBtnEl.childNodes].reverse().find(n => n.nodeType === 3);
+  if (retryLabel) retryLabel.textContent = retryOnly ? 'Retry' : 'Auto-detect';
   const msgEl = document.getElementById('sessionErrorMsg');
   msgEl.textContent = msg;
   // Keep the raw API error reachable for copy-paste / support without surfacing it
@@ -3693,7 +3704,8 @@ function handleApiError(errMsg) {
     initSession();
   } else {
     const fe = sftkFriendlyError(errMsg);
-    showSessionError(fe.message + (fe.hint ? ' — ' + fe.hint : ''), String(errMsg));
+    showSessionError(fe.message + (fe.hint ? ' — ' + fe.hint : ''), String(errMsg),
+      { retryOnly: fe.type === 'network' || fe.type === 'api-limit' });
   }
 }
 

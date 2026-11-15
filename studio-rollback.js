@@ -336,6 +336,7 @@ async function _rbGo() {
     out.innerHTML = `<div class="ds-rec-card ${res.status === 'success' ? '' : 'ds-rec-card-warn'}" style="margin-top:10px">
       <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">${res.status === 'success' ? '✅' : '⚠'}</span><span class="ds-rec-card-title">Rollback ${esc(res.status)}${res.status === 'success' ? ' — verified by re-reading the org' : ''}</span></div>
       <div class="ds-rec-card-line">${chips}</div>
+      ${res.coverage && res.coverage.left ? `<div class="ds-rec-card-line">⚠ ${n(res.coverage.left)} of ${n(res.coverage.planned)} record(s) in the plan were not picked${res.coverage.kept ? ` or were kept (${n(res.coverage.kept)} kept)` : ''} — they still hold the run's changes, and ↩ Roll back stays available in History for them.</div>` : ''}
       <div class="ds-rec-card-line">${res.entry ? `<button class="ds-btn ds-btn-sm ds-btn-primary" id="dsRbOpenReport">📋 Which records — the full report</button> ` : ''}<button class="ds-btn ds-btn-sm" id="dsRbToHistory" title="Everything done, with its undo — the 🧾 Activity feed in the top bar">🧾 Activity</button></div>
     </div>`;
     eid('dsRbOpenReport')?.addEventListener('click', () => window.openRollback(res.entry.id, { report: true }));

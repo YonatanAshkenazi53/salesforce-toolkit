@@ -257,6 +257,7 @@ function sftkSweepKindTable() {
   Translations:           { label: 'Translations', sev: 'mention', why: 'the translated text goes with the field' },
   ExperienceBundle:       { label: 'Experience Cloud pages', sev: 'mention', why: 'the page or component names the field as text — it breaks where it reads it' },
   CustomLabel:            { label: 'Custom Labels', sev: 'mention', why: 'a label’s text holds the field’s name — nothing stops the delete' },
+  SameNameOtherObject:    { label: 'Same name, another object', sev: 'mention', why: 'a component of another object (or code that never names this object) holds a field of the same API name — most likely that object’s own field, not this one; it does not join the list, and Salesforce’s own delete check decides' },
   Other:                  { label: 'Other components', sev: 'mention', why: 'the component names the field — the delete goes through; what reads it may break' },
   };
 }
@@ -404,14 +405,42 @@ function sftkSweepKind(path, text, hit, forms) {
 function sftkSweepRun(files, forms) {
   const hits = [];
   let filesWithHits = 0;
+  // 2026-11-14 (release QA): the bare-name grep cannot tell WHICH object a name belongs to. Status__c, Type__c,
+  // Amount__c live on many objects, so a validation rule, formula, list view, workflow or Apex class of ANOTHER
+  // object that names its OWN same-named field came back 🔒, joined the list as a blocker, kept Delete Field locked,
+  // and a ✂ walk then offered to delete that unrelated component. The safe direction: such a hit is 👀 "same name,
+  // another object" (never joined, never a blocker) unless the line names OUR object's field qualified
+  // ("Account.Status__c"). Hiding a real blocker here costs nothing — Salesforce's own check-only delete still
+  // refuses and names it; listing a false one leads to deleting the wrong component. Kept inside this function so
+  // every caller that slices sftkSweepRun alone keeps working.
+  const objName = String((forms && forms.object) || '');
+  const objLc = objName.toLowerCase();
+  const objWord = objName ? new RegExp(`(?<![A-Za-z0-9_])${objName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i') : null;
+  const ownerOf = p => {   // the object an object-shaped file belongs to, or null when its path does not say
+    const seg = String(p || '').replace(/^unpackaged\//, '').split('/');
+    const base = (seg[seg.length - 1] || '').replace(/\.[^.]+$/, '');
+    switch (seg[0]) {
+      case 'objects': case 'workflows': case 'sharingRules': case 'matchingRules': case 'assignmentRules': case 'autoResponseRules': case 'escalationRules': return base;
+      case 'duplicateRules': case 'approvalProcesses': return base.includes('.') ? base.split('.')[0] : null;
+      default: return null;
+    }
+  };
+  const CODE = new Set(['ApexClass', 'ApexTrigger', 'ApexPage', 'ApexComponent', 'LightningComponentBundle']);
+  const ON = sftkSweepKindTable().SameNameOtherObject;
+  const other = (k, note) => ({ ...k, type: 'SameNameOtherObject', label: ON.label, sev: ON.sev, why: ON.why, section: note });
   for (const [path, text] of files) {
     if (/package\.xml$/.test(path)) continue;
     const lines = sftkSweepHits(text, forms);
     if (!lines.length) continue;
     let any = false;
+    const owner = ownerOf(path);
+    const codeNamesObj = !objWord || objWord.test(String(text || ''));
     for (const h of lines) {
-      const k = sftkSweepKind(path, text, h, forms);
+      let k = sftkSweepKind(path, text, h, forms);
       if (!k) continue;
+      const qualified = !!(forms && forms.qualified && forms.qualified.test(h.text));
+      if (objLc && owner && owner.toLowerCase() !== objLc && !qualified) k = other(k, `${owner}’s own field of this name`);
+      else if (objLc && CODE.has(k.type) && !codeNamesObj) k = other(k, `the code never names ${objName}`);
       any = true;
       hits.push({ path: k.path, file: k.file || null, line: h.line, text: h.text, type: k.type, label: k.label, sev: k.sev, why: k.why, component: k.component, section: k.section });
     }

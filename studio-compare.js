@@ -375,12 +375,18 @@ async function _ocCompareOneObject(objName, srcSess, tgtSess) {
   const customName = (_orgCompareState.customMatchField || '').trim();
   let matchField = null;       // null → Id-only key mode
   let queryable  = true;
+  // 2026-11-14: a describe that fails (returns {error} or throws) used to leave
+  // matchField null, so the object was compared by record Id across two orgs —
+  // a meaningless 0% with no warning. Ids never match across orgs, so say the
+  // failure instead of guessing a key.
+  let describeErr = null;
   try {
     const d = await sendBg({
       type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
       path: `services/data/v62.0/sobjects/${objName}/describe`
     });
-    if (d && d.queryable === false) queryable = false;
+    if (!d || d.error) throw new Error(d?.error || 'empty describe response');
+    if (d.queryable === false) queryable = false;
     const fields = d?.fields || [];
 
     // Strategy: External Id. Prefer the first field with externalId=true.
@@ -405,7 +411,8 @@ async function _ocCompareOneObject(objName, srcSess, tgtSess) {
       if (nf?.name) matchField = nf.name;
       else if (fields.some(f => f.name === 'Name')) matchField = 'Name';
     }
-  } catch (_) {/* push through with matchField = null */}
+  } catch (e) { describeErr = e?.message || String(e); }
+  if (describeErr) return { error: `source describe: ${describeErr}` };
 
   if (!queryable) {
     return { skipped: true, reason: 'Object is not queryable.' };
@@ -451,25 +458,57 @@ async function _ocCompareOneObject(objName, srcSess, tgtSess) {
   if (srcRes?.error) return { error: `source: ${srcRes.error}` };
   if (tgtRes?.error) return { error: `target: ${tgtRes.error}` };
 
-  const srcByKey = new Map(), tgtByKey = new Map();
-  for (const r of (srcRes.records || [])) {
-    const k = r[effectiveKey]; if (k != null && k !== '') srcByKey.set(String(k), r);
+  return sftkOcCountByKey(srcRes.records || [], tgtRes.records || [], effectiveKey);
+}
+
+// PURE. Count records (not distinct keys) on both sides of one object.
+// 2026-11-14: each side used to be a Map keyed by the match value, so records
+// sharing a Name overwrote each other and blank Names were dropped — three
+// source 'John Smith' against one in the target read Source 1 / Target 1 /
+// 100% clean. Now each key carries a count: per key, min(src, tgt) match and
+// the surplus on either side is missing / only-in-target. A record with a blank
+// key can't be proven present on the other side, so it counts as missing
+// (source) or only-in-target (target) — never as clean — and the row says why.
+function sftkOcCountByKey(srcRecords, tgtRecords, key) {
+  const tally = recs => {
+    const byKey = new Map(); let blank = 0;
+    for (const r of recs) {
+      const k = r ? r[key] : null;
+      if (k == null || k === '') { blank++; continue; }
+      const ks = String(k);
+      byKey.set(ks, (byKey.get(ks) || 0) + 1);
+    }
+    return { byKey, blank };
+  };
+  const S = tally(srcRecords), T = tally(tgtRecords);
+  let matched = 0, missing = S.blank, extras = T.blank, dupKeys = 0;
+  for (const [k, sn] of S.byKey) {
+    const tn = T.byKey.get(k) || 0;
+    matched += Math.min(sn, tn);
+    missing += Math.max(0, sn - tn);
+    if (sn > 1 || tn > 1) dupKeys++;
   }
-  for (const r of (tgtRes.records || [])) {
-    const k = r[effectiveKey]; if (k != null && k !== '') tgtByKey.set(String(k), r);
+  for (const [k, tn] of T.byKey) {
+    const sn = S.byKey.get(k) || 0;
+    extras += Math.max(0, tn - sn);
+    if (!sn && tn > 1) dupKeys++;
   }
-  let matched = 0, missing = 0, extras = 0;
-  for (const k of srcByKey.keys()) (tgtByKey.has(k) ? matched++ : missing++);
-  for (const k of tgtByKey.keys()) if (!srcByKey.has(k)) extras++;
+  const blanks = S.blank + T.blank;
   const pct = sftkOcMatchPct(matched, missing, extras);
+  const notes = [];
+  if (dupKeys) notes.push(`${dupKeys} ${key} value${dupKeys === 1 ? ' is' : 's are'} shared by more than one record, matched by count`);
+  if (blanks) notes.push(`${blanks} record${blanks === 1 ? ' has' : 's have'} a blank ${key} and cannot be matched`);
   return {
-    srcCount:   srcByKey.size,
-    tgtCount:   tgtByKey.size,
+    srcCount:   srcRecords.length,
+    tgtCount:   tgtRecords.length,
     matched, missing, extras,
-    matchField: effectiveKey,
+    dupKeys, srcBlank: S.blank, tgtBlank: T.blank,
+    note:       notes.join('; '),
+    matchField: key,
     matchPct:   pct
   };
 }
+if (typeof globalThis !== 'undefined') globalThis.sftkOcCountByKey = sftkOcCountByKey;
 
 function _ocRenderResults() {
   const el = eid('dsOCResults');
@@ -533,7 +572,7 @@ function _ocRenderResults() {
         }
         if (r.skipped) return `<tr class="ds-oc-skipped"><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-skip">— ${esc(r.reason || 'Skipped.')}</td></tr>`;
         return `<tr class="ds-oc-row ${colorFor(r.matchPct)}">
-          <td>${esc(r.name)} <span class="ds-oc-row-mf">by ${esc(r.matchField)}</span></td>
+          <td>${esc(r.name)} <span class="ds-oc-row-mf">by ${esc(r.matchField)}</span>${r.note ? ` <span class="ds-oc-row-mf" title="${esc(r.note)}">⚠ ${esc(r.note)}</span>` : ''}</td>
           <td>${r.srcCount.toLocaleString()}</td>
           <td>${r.tgtCount.toLocaleString()}</td>
           <td>${r.matched.toLocaleString()}</td>
@@ -598,7 +637,7 @@ function _ocExportCsv() {
     const status = r.error ? 'error'
                  : r.skipped ? 'skipped'
                  : ((r.missing || r.extras) ? 'drifted' : 'clean');
-    const detail = r.error ? r.error : (r.skipped ? (r.reason || 'Skipped.') : '');
+    const detail = r.error ? r.error : (r.skipped ? (r.reason || 'Skipped.') : (r.note || ''));
     return [
       r.name, status, r.matchField || '',
       r.srcCount ?? '', r.tgtCount ?? '',

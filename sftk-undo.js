@@ -420,12 +420,16 @@ function sftkUndoCardState(run) {
       title: `Salesforce confirmed that this ${what} wrote nothing — every record failed — so there is nothing to undo. The restore point is kept.` };
   }
   const objs = (u.objects || []).join(', ');
-  const again = u.lastRollbackStatus ? ` again (last attempt: ${u.lastRollbackStatus})` : '';
+  // The label keeps the short status word; the title carries the full last
+  // attempt, including how many records it left in place (2026-11-14).
+  const lastFull = u.lastRollbackStatus ? String(u.lastRollbackStatus) : '';
+  const again = lastFull ? ` again (last attempt: ${lastFull.split(' — ')[0]})` : '';
+  const lastLine = lastFull ? ` Last rollback attempt: ${lastFull}${u.lastRollbackAt ? ` on ${u.lastRollbackAt}` : ''}.` : '';
   const base = `Compares ${objs} in the target against the restore point taken before this ${what}, then deletes what the ${what} created and restores what it overwrote. You review the exact counts, and the automation that could reject them, before anything is written.`;
   if (u.status === 'partial') {
-    return { show: true, disabled: false, label: `↩ Roll back${again} (${objs} only)`, title: `${base} NOT covered — ${why}` };
+    return { show: true, disabled: false, label: `↩ Roll back${again} (${objs} only)`, title: `${base} NOT covered — ${why}${lastLine}` };
   }
-  return { show: true, disabled: false, label: `↩ Roll back${seq ? ' sequence' : ''}${again}`, title: base };
+  return { show: true, disabled: false, label: `↩ Roll back${seq ? ' sequence' : ''}${again}`, title: `${base}${lastLine}` };
 }
 
 // Leave other people's LATER work alone. A record created or edited after the
@@ -617,7 +621,39 @@ function sftkUndoVerifyCounts(diff, actedIds) {
   return { remaining, leftAlone };
 }
 
+// How much of the rollback PLAN one execution covered (2026-11-14). The plan
+// page lets the user untick records, whole objects and the Kept parents; a
+// verified rollback of 3 of 200 records is verified only for those 3. The run
+// may be marked "Rolled back" (which closes its only rollback button) only
+// when nothing of the plan was left in place — otherwise the run's inserts
+// and overwrites still sit in the org with no way back from the toolkit.
+// `plan` items: { refused, scoped: { created: [id], changed: [{id}] }, keptIds }
+// `work`  items: { item, created: [id], changed: [{id}] } (what was acted on)
+// Kept ids count as left in place unless "delete anyway" picked them: the
+// run's records are still there, whatever the reason. Refused items are not
+// counted here — a refusal already keeps the status below 'success'.
+function sftkUndoPickCoverage(plan, work) {
+  const actedBy = new Map();
+  for (const w of (work || [])) {
+    if (!w || !w.item) continue;
+    actedBy.set(w.item, new Set([...(w.created || []), ...((w.changed || []).map(c => c && c.id))]));
+  }
+  let planned = 0, acted = 0, kept = 0;
+  for (const it of (plan || [])) {
+    if (!it || it.refused) continue;
+    const did = actedBy.get(it) || new Set();
+    const ids = [...((it.scoped && it.scoped.created) || []), ...(((it.scoped && it.scoped.changed) || []).map(c => c && c.id))];
+    const keptIds = it.keptIds || [];
+    planned += ids.length + keptIds.length;
+    for (const id of ids) if (did.has(id)) acted++;
+    for (const id of keptIds) { if (did.has(id)) acted++; else kept++; }
+  }
+  const left = planned - acted;
+  return { planned, acted, left, kept, complete: left === 0 };
+}
+
 if (typeof globalThis !== 'undefined') {
+  globalThis.sftkUndoPickCoverage      = sftkUndoPickCoverage;
   globalThis.sftkUndoMaxRows           = sftkUndoMaxRows;
   globalThis.sftkUndoBinQuery          = sftkUndoBinQuery;
   globalThis.sftkUndoBinAge            = sftkUndoBinAge;

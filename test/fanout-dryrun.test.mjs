@@ -90,7 +90,7 @@ describe('the dry-run path writes nothing', () => {
 // free variables — so `new Function` resolves them off globalThis at call
 // time and the test can drive the whole thing off a canned org pair.
 const { sftkDryRunAgainst } = extractFunctions('studio-transfer.js',
-  ['sftkDryRunAgainst'], { 'studio-core.js': ['soqlStrLit'] });
+  ['sftkDryRunAgainst', 'sftkChildCountWhere'], { 'studio-core.js': ['soqlStrLit'] });
 
 const SRC = { orgUrl: 'https://acme.my.salesforce.com', sid: 'SID_SRC' };
 const TGT = { orgUrl: 'https://acme--qa.sandbox.my.salesforce.com', sid: 'SID_TGT' };

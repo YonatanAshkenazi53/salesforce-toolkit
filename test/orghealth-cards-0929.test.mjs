@@ -15,7 +15,7 @@ const rd = f => readFileSync(join(root, f), 'utf8');
 const SRC = rd('studio-orghealth.js');
 const F = 'studio-orghealth.js';
 
-const { sftkOhApiVerVerdict: apiVerdict } = extractFunctions(F, ['sftkOhApiVerVerdict'], { 'sftk-apiver.js': ['sftkApiVerNum', 'sftkApiVerLag'] });
+const { sftkOhApiVerVerdict: apiVerdict } = extractFunctions(F, ['sftkOhApiVerVerdict'], { 'sftk-apiver.js': ['sftkApiVerNum', 'sftkApiVerLag', 'sftkFlowIsLocked'] });
 const objectName = extractFunction(F, 'sftkOhObjectName');
 const readProblem = extractFunction(F, 'sftkOhReadProblem');
 const batchItems = extractFunction(F, 'sftkOhBatchItems');
@@ -31,7 +31,8 @@ const fieldsVerdict = extractFunction(F, 'sftkOhFieldsVerdict');
 // ── 1. apiver ───────────────────────────────────────────────────────────
 describe('apiver — flows pinned below the org’s release', () => {
   const max = { version: '66.0', num: 66, label: "Winter '26" };
-  const flow = (name, api, ns) => ({ Id: '301x', ApiVersion: api, Status: 'Active', Definition: { DeveloperName: name, NamespacePrefix: ns || null } });
+  // 2026-11-14: rows carry ManageableState (packaged = 'installed', sftkFlowIsLocked).
+  const flow = (name, api, ns) => ({ Id: '301x', ApiVersion: api, Status: 'Active', ManageableState: ns ? 'installed' : 'unmanaged', Definition: { DeveloperName: name, NamespacePrefix: ns || null } });
   it('3+ releases behind → warn, worst first, "Flow — API 49 · 17 releases behind"', () => {
     const v = apiVerdict(max, [flow('Recent', 65), flow('Old_A', 60), flow('Ancient', 49), flow('Old_B', 60), flow('Edge', 63)]);
     expect(v.tone).toBe('warn');
@@ -55,7 +56,7 @@ describe('apiver — flows pinned below the org’s release', () => {
   it('the card reads the org release and the active flows, 2 calls, opens API versions', () => {
     expect(SRC).toContain("id: 'apiver'");
     expect(SRC).toContain("path: 'services/data/'");
-    expect(SRC).toContain("SELECT Id, ApiVersion, Status, Definition.DeveloperName, Definition.NamespacePrefix FROM Flow WHERE Status = 'Active'");
+    expect(SRC).toContain("SELECT Id, ApiVersion, Status, ManageableState, Definition.DeveloperName, Definition.NamespacePrefix, Definition.ManageableState FROM Flow WHERE Status = 'Active'");
     expect(SRC).toContain('sftkApiVerMax(v)');
     expect(SRC).toContain("fix: { label: 'Open ⚙ API versions', popupTab: 'dependencies' }");
     expect(SRC).toMatch(/id: 'apiver'[\s\S]*?calls: \(\) => 2,/);
@@ -122,11 +123,12 @@ describe('pages — Lightning pages assigned to nobody', () => {
     expect(pageDescribe(null, 'x', 'y', []).answered).toBe(false);
   });
   it('a page is unassigned only when EVERY read answered and found none', () => {
-    const ok = { metaOk: true, assignments: 0, needsProbe: true, probe: { answered: true, isDefault: false } };
+    const ok = { metaOk: true, assignments: 0, appsOk: true, needsProbe: true, probe: { answered: true, isDefault: false } };
     expect(pageState(ok).state).toBe('unassigned');
     expect(pageState({ ...ok, assignments: 2 }).state).toBe('assigned');
     expect(pageState({ ...ok, probe: { answered: true, isDefault: true } }).state).toBe('assigned');
-    expect(pageState({ metaOk: true, assignments: 0, needsProbe: false }).state).toBe('unassigned');   // a Home page: no object to probe
+    // 2026-11-14: a Home page (no object) is NOT judged — its org default and app navigation are not read
+    expect(pageState({ metaOk: true, assignments: 0, appsOk: true, needsProbe: false }).state).toBe('notjudged');
     // the honest failure branches
     expect(pageState({ metaOk: false, metaError: 'HTTP 500' }).state).toBe('unread');
     expect(pageState({ ...ok, probe: { answered: false, isDefault: false, error: 'HTTP 500' } })).toMatchObject({ state: 'unread' });
@@ -163,7 +165,7 @@ describe('pages — Lightning pages assigned to nobody', () => {
     expect(SRC).toContain("type: 'SF_COMPOSITE_BATCH'");
     expect(SRC).toContain("p.Type !== 'UtilityBar'");
     expect(SRC).toContain("const OH_PAGES_NOT_JUDGED = new Set(['FlowPage', 'LoginPage']);");
-    expect(SRC).toContain("calls: () => '1 + 1 per 10 pages + 1 per 200 custom objects + 1 per 5 objects with record pages'");
+    expect(SRC).toContain("calls: () => '2 + 1 per 10 pages + 1 per 10 Lightning apps + 1 per 200 custom objects + 1 per 5 objects with record pages'");
     expect(SRC).toContain("fix: { label: 'Open Lightning Pages', popupTab: 'pages' }");
   });
 });

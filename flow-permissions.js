@@ -7,17 +7,52 @@ function sftkFlowIsAssignable(r) {
 }
 if (typeof globalThis !== 'undefined') globalThis.sftkFlowIsAssignable = sftkFlowIsAssignable;
 
+// PURE. Why this tool must not grant flow access on a permission set, or null when it may (2026-11-14).
+// A packaged set (NamespacePrefix) belongs to its package: the subscriber org cannot change it, and the old
+// deploy by bare Name made a stray unmanaged copy instead. A set of Type Group is the one Salesforce keeps
+// for a permission set group: it holds what the group's sets give, nothing is granted on it directly.
+function sftkFlowAccessLockedReason(ps) {
+  if (!ps) return 'unknown permission set';
+  if (ps.NamespacePrefix) return `it belongs to the ${ps.NamespacePrefix} package`;
+  if (ps.Type === 'Group') return 'it is the permission set of a permission set group';
+  return null;
+}
+if (typeof globalThis !== 'undefined') globalThis.sftkFlowAccessLockedReason = sftkFlowAccessLockedReason;
+
+// PURE. Which (flow, permission set) pairs the SetupEntityAccess rows show (2026-11-14).
+// rows: [{ Id, ParentId, SetupEntityId }]. Returns { ok, missing: ['Flow → Set'], missingKeys: ['flowId|psId'], present: { 'flowId|psId': rowId } }.
+function sftkFlowAccessCheck(flows, permSets, rows) {
+  const have = new Map();
+  for (const r of (rows || [])) if (r && r.SetupEntityId && r.ParentId) have.set(`${r.SetupEntityId}|${r.ParentId}`, r.Id);
+  const missing = [];
+  const missingKeys = [];
+  const present = {};
+  for (const f of (flows || [])) for (const ps of (permSets || [])) {
+    const k = `${f.Id}|${ps.Id}`;
+    if (have.has(k)) { present[k] = have.get(k); continue; }
+    missing.push(`${f.MasterLabel || f.DeveloperName || f.Id} → ${ps.Label || ps.Name || ps.Id}`);
+    missingKeys.push(k);
+  }
+  return { ok: missing.length === 0, missing, missingKeys, present };
+}
+if (typeof globalThis !== 'undefined') globalThis.sftkFlowAccessCheck = sftkFlowAccessCheck;
+
 'use strict';
 /* ============================================================
    Flow Permissions — bulk-assign Screen Flows to Permission Sets
    ============================================================
-   WRITE (grant): via the METADATA API. We deploy each selected
-   PermissionSet with <flowAccesses><enabled>true</enabled><flow>API
-   name</flow></flowAccesses>. This is the only mechanism that actually
-   creates a usable grant — a REST insert into SetupEntityAccess returns
-   HTTP 200 but produces NO real Flow Access (Setup shows nothing). The
-   deploy is additive: only flowAccesses are declared, so existing
-   object/field/Apex permissions on the set are preserved.
+   WRITE (grant): one SetupEntityAccess row per (flow, permission set),
+   inserted through the REST collections API (ParentId = the set,
+   SetupEntityId = the FlowDefinition Id). 2026-11-14: this replaced a
+   PermissionSet metadata deploy that carried only <flowAccesses> + <label>.
+   Salesforce took that deploy as the WHOLE set: on npc it cleared the set's
+   description and dropped its field permissions (SetupAuditTrail
+   19:03:46Z), and on a packaged set it created a new unmanaged copy. A row
+   insert touches nothing else on the set. (The older note here said a REST
+   insert gives no usable grant; a live insert on npc2 the same day was
+   stored as SetupEntityType FlowDefinition, and a retrieve of the set then
+   listed it under <flowAccesses>.) Packaged and group-owned sets are not
+   offered: the subscriber org cannot change them.
 
    READ (show existing grants): query SetupEntityAccess by
    `SetupEntityId IN (<FlowDefinition Ids>)`. We do NOT filter on
@@ -142,6 +177,7 @@ const FlowPermissions = (() => {
                 <input type="checkbox" id="fpPsOnlyFlows"> ⚡ Only show perm sets with flows enabled
               </label>
               <div id="fpPsList" class="fp-list"></div>
+              <div id="fpPsNote" class="fp-flow-note" hidden></div>
             </div>
 
           </div>
@@ -279,7 +315,8 @@ const FlowPermissions = (() => {
       const [psRes, accessRecords] = await Promise.all([
         sendBg({
           type: 'SF_QUERY_ALL', tooling: false, orgUrl: _orgUrl, sid: _sid,
-          query: `SELECT Id, Name, Label FROM PermissionSet
+          // NamespacePrefix + Type (2026-11-14): packaged and group-owned sets are counted and left out, see sftkFlowAccessLockedReason
+          query: `SELECT Id, Name, Label, NamespacePrefix, Type FROM PermissionSet
                   WHERE IsOwnedByProfile = false ORDER BY Label ASC`
         }),
         accessRecsP
@@ -294,7 +331,9 @@ const FlowPermissions = (() => {
           JSON.stringify(accessRecords.slice(0, 15).map(r => ({ ps: r.ParentId, flow: r.SetupEntityId, type: r.SetupEntityType }))));
       }
 
-      _permSets = psRes.records || [];
+      const allPs = psRes.records || [];
+      _permSets = allPs.filter(p => !sftkFlowAccessLockedReason(p));
+      _psLocked = allPs.length - _permSets.length;
 
       // flowDefId → label, for naming flows in the reverse (per-PS) view.
       // Covers the assignable screen flows; flows we couldn't resolve fall
@@ -476,10 +515,16 @@ const FlowPermissions = (() => {
     });
   }
 
+  let _psLocked = 0;   // packaged / group-owned permission sets left out (2026-11-14)
   function renderPermSets() {
     const list    = document.getElementById('fpPsList');
     const countEl = document.getElementById('fpPsCount');
     if (!list) return;
+    const psNote = document.getElementById('fpPsNote');
+    if (psNote) {
+      psNote.hidden = !_psLocked;
+      psNote.textContent = _psLocked ? `${_psLocked} more permission set${_psLocked === 1 ? ' is' : 's are'} not listed: sets from installed packages and the sets Salesforce keeps for permission set groups cannot be changed here.` : '';
+    }
 
     const search   = (document.getElementById('fpPsSearch')?.value || '').toLowerCase().trim();
     let filtered = search
@@ -580,7 +625,7 @@ const FlowPermissions = (() => {
   // ── Assignment ──────────────────────────────────────────────
   async function onAssign() {
     const flows    = _flows.filter(f => _selFlows.has(f.Id));
-    const permSets = _permSets.filter(p => _selPS.has(p.Id));
+    const permSets = _permSets.filter(p => _selPS.has(p.Id) && !sftkFlowAccessLockedReason(p));   // 2026-11-14: never a packaged or group set
     if (!flows.length || !permSets.length) return;
 
     const confirmed = await showConfirmModal(flows, permSets);
@@ -610,64 +655,58 @@ const FlowPermissions = (() => {
     });
   }
 
-  // ── Metadata API: grant flow access via PermissionSet deploy ───────────
-  // Stored-zip building delegates to the shared builder in sftk-zip.js
-  // (loaded before this module in popup.html).
-  function _fpBuildStoredZip(files) {
-    return window.sftkBuildStoredZip(files);
-  }
-
-  // PermissionSet metadata XML carrying ONLY <flowAccesses> (+ the required
-  // <label>). Additive — leaves all other permissions on the set intact.
-  function buildPermSetXml(label, flowApiNames) {
-    const lines = [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">'
-    ];
-    for (const fn of flowApiNames) {
-      lines.push(
-        '    <flowAccesses>',
-        '        <enabled>true</enabled>',
-        `        <flow>${esc(fn)}</flow>`,
-        '    </flowAccesses>'
-      );
-    }
-    lines.push(`    <label>${esc(label)}</label>`);
-    lines.push('</PermissionSet>');
-    return lines.join('\n');
-  }
-
-  function buildPermSetPackageXml(psApiNames) {
-    return [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
-      '    <types>',
-      ...psApiNames.map(n => `        <members>${esc(n)}</members>`),
-      '        <name>PermissionSet</name>',
-      '    </types>',
-      '    <version>62.0</version>',
-      '</Package>'
-    ].join('\n');
-  }
-
-  // Build a single deploy package: package.xml + one .permissionset file per
-  // selected permission set, each granting all selected flows. Deploy once.
-  async function deployFlowAccess(permSets, flowApiNames) {
-    const enc = new TextEncoder();
-    const files = [
-      { name: 'package.xml', data: enc.encode(buildPermSetPackageXml(permSets.map(p => p.Name))) }
-    ];
-    for (const ps of permSets) {
-      files.push({
-        name: `permissionsets/${ps.Name}.permissionset`,
-        data: enc.encode(buildPermSetXml(ps.Label, flowApiNames))
+  // ── Grant: SetupEntityAccess rows, nothing else on the set ─────────────
+  // 2026-11-14: the old PermissionSet deploy (only <flowAccesses> + <label>)
+  // was taken by Salesforce as the whole set — it wiped the set's description
+  // and field permissions on npc, and on a packaged set it made a new
+  // unmanaged copy. Inserting the access rows changes only the access.
+  // Returns { created: [{ key, id }], refused: { key: reason } } and never
+  // throws: rows made before a later chunk fails must still reach the undo.
+  async function insertFlowAccess(pairs) {
+    const created = [];
+    const refused = {};
+    for (let i = 0; i < pairs.length; i += 200) {
+      const chunk = pairs.slice(i, i + 200);
+      const records = chunk.map(p => ({ attributes: { type: 'SetupEntityAccess' }, ParentId: p.psId, SetupEntityId: p.flowId }));
+      let res;
+      // verified-by: doAssign's sftkWriteVerified — its verify re-reads SetupEntityAccess for every (flow, permission set) pair
+      try { res = await sendBg({ type: 'SF_COLLECTIONS_CREATE', orgUrl: _orgUrl, sid: _sid, records }); }
+      catch (e) { res = { error: (e && e.message) || String(e) }; }
+      if (!Array.isArray(res)) {
+        const why = (res && res.error) || 'no answer from Salesforce';
+        for (const p of chunk) refused[p.key] = why;
+        continue;
+      }
+      chunk.forEach((p, j) => {
+        const r = res[j];
+        if (r && r.success && r.id) created.push({ key: p.key, id: r.id });
+        else refused[p.key] = (r && r.errors && r.errors.map(e => e.message || e.statusCode).join('; ')) || 'not accepted';
       });
     }
-    // verified-by: doAssign's sftkWriteVerified — its verify re-reads SetupEntityAccess for every (flow, permission set) pair
-    return sendBg({
-      type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid,
-      zipBase64: _fpBuildStoredZip(files)
-    });
+    return { created, refused };
+  }
+
+  // The verify's own read (2026-11-14). It used to call loadData(), which
+  // swallows its errors: a failed re-read left the PRE-change map in place,
+  // so every new grant looked missing (a false "not granted") and the undo,
+  // built from that same old map, offered nothing. This read throws instead,
+  // and sftkWriteVerified then says "unverified" — never a guessed verdict.
+  async function readFlowAccessRows(flows, permSets) {
+    const rows = [];
+    const fIds = flows.map(f => f.Id).filter(Boolean);
+    const pIds = permSets.map(p => p.Id).filter(Boolean);
+    for (let i = 0; i < fIds.length; i += 150) for (let j = 0; j < pIds.length; j += 150) {
+      const fl = fIds.slice(i, i + 150).map(id => `'${id}'`).join(',');
+      const pl = pIds.slice(j, j + 150).map(id => `'${id}'`).join(',');
+      const res = await sendBg({
+        type: 'SF_QUERY_ALL', tooling: false, orgUrl: _orgUrl, sid: _sid,
+        query: `SELECT Id, ParentId, SetupEntityId FROM SetupEntityAccess WHERE SetupEntityId IN (${fl}) AND ParentId IN (${pl})`
+      });
+      if (!res || res.error) throw new Error(`the flow access could not be re-read — ${(res && res.error) || 'no answer'}`);
+      if (res.incomplete) throw new Error(`the flow access re-read came back incomplete (${res.incomplete.got} of ${res.incomplete.expected})`);
+      rows.push(...(res.records || []));
+    }
+    return rows;
   }
 
   async function doAssign(flows, permSets) {
@@ -675,78 +714,85 @@ const FlowPermissions = (() => {
     const summary = document.getElementById('fpActionSummary');
     if (btn) btn.disabled = true;
 
-    // Grant flow access via the METADATA API — deploy each selected
-    // PermissionSet with <flowAccesses> members. This is the ONLY mechanism
-    // that actually works. The REST SetupEntityAccess insert returns HTTP 200
-    // but creates NO usable grant (Salesforce Setup → Permission Set → Flow
-    // Access shows nothing afterward). Permission-set metadata deploys are
-    // ADDITIVE: only the flowAccesses we declare are added; existing
-    // object/field/Apex permissions on the set are left untouched.
-    if (summary) summary.innerHTML = sftkCatSm(`Deploying flow access to ${permSets.length} permission set(s)…`);
+    if (summary) summary.innerHTML = sftkCatSm(`Granting flow access to ${permSets.length} permission set(s)…`);
 
-    const flowApiNames = flows.map(f => f.DeveloperName).filter(Boolean);
     // History (sftk-history.js): one journal for this Assign click. Snapshot
     // which (flow, permission set) pairs ALREADY had a grant before the
-    // deploy — the deploy is additive, so re-running it over an existing
-    // grant must not make the undo delete something this run didn't create.
+    // change — those are not inserted again, and the undo never removes them.
     const journal = sftkHistoryBegin({ tool: 'Flow Access', title: `🔑 Flow access: ${flows.length} flow(s) → ${permSets.length} permission set(s)`, orgUrl: _orgUrl });
     const before = new Set();
     for (const f of flows) for (const g of (_accessMap[f.Id] || [])) if (permSets.some(ps => ps.Id === g.permSetId)) before.add(`${f.Id}|${g.permSetId}`);
+    const pairs = [];
+    for (const f of flows) for (const ps of permSets) {
+      const key = `${f.Id}|${ps.Id}`;
+      if (!before.has(key)) pairs.push({ key, flowId: f.Id, psId: ps.Id, flow: f, ps });
+    }
+    const pairByKey = new Map(pairs.map(p => [p.key, p]));
+    let ins = { created: [], refused: {} };
     let wr;
     try {
     // confirmed-by: onAssign's showConfirmModal (the only caller of doAssign)
-    // The write discipline (sftk-write.js): the deploy is the write; the
-    // verify is the same SetupEntityAccess read loadData() already performs
-    // — never the deploy's own answer (a REST insert here used to return
-    // HTTP 200 with NO usable grant, which is exactly what this checks for).
+    // The write discipline (sftk-write.js): the insert is the write; the
+    // verify re-reads SetupEntityAccess for every pair — never the insert's
+    // own answer.
     wr = await sftkWriteVerified({
       describe: `flow access for ${permSets.length} permission set(s)`,
       journal,
-      write: () => deployFlowAccess(permSets, flowApiNames),
+      write: async () => {
+        ins = await insertFlowAccess(pairs);
+        const refusedKeys = Object.keys(ins.refused);
+        // Nothing created and something refused = a refusal, said with Salesforce's reason.
+        if (!ins.created.length && refusedKeys.length) return { error: ins.refused[refusedKeys[0]] };
+        return ins;
+      },
       verify: async () => {
-        // Reload so the SetupEntityAccess read (now matched by flow Id)
-        // surfaces the real grants the deploy created.
-        await loadData();
-        const missing = [];
-        for (const f of flows) for (const ps of permSets) {
-          if (!(_accessMap[f.Id] || []).some(g => g.permSetId === ps.Id)) missing.push(`${f.MasterLabel} → ${ps.Label}`);
-        }
-        return { ok: missing.length === 0, detail: missing, text: null };
+        const check = sftkFlowAccessCheck(flows, permSets, await readFlowAccessRows(flows, permSets));
+        // A pair Salesforce refused carries its reason; the rest of a partial insert stays visible.
+        const detail = check.missing.map((m, i) => {
+          const why = ins.refused[check.missingKeys[i]];
+          return why ? `${m} (${why})` : m;
+        });
+        return { ok: check.ok, detail, text: null };
       },
     });
-    if (!wr.accepted) await loadData();   // verify never ran — refresh the table anyway
     } finally {
-      // Undo: delete only the SetupEntityAccess rows this run CREATED (not
-      // in `before`) and that the re-read now confirms exist.
+      // Undo: delete only the rows this run CREATED — the ids Salesforce
+      // returned for its inserts, not a re-read map (2026-11-14: a failed
+      // re-read used to leave a stale map and no undo for real grants).
+      // Each step re-reads its own row, so a row already gone is said.
       const steps = [];
-      for (const f of flows) for (const g of (_accessMap[f.Id] || [])) {
-        if (!permSets.some(ps => ps.Id === g.permSetId)) continue;
-        if (before.has(`${f.Id}|${g.permSetId}`)) continue;
-        if (!g.accessId) continue;
+      for (const c of ins.created) {
+        const p = pairByKey.get(c.key);
+        if (!p || before.has(c.key)) continue;
+        const name = `${p.flow.MasterLabel || p.flow.DeveloperName} → ${p.ps.Label || p.ps.Name}`;
         steps.push({
-          describe: `${f.MasterLabel} → ${g.label}: remove flow access`,
+          describe: `${name}: remove flow access`,
           // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
-          msg: { type: 'SF_REST_DELETE', sobject: 'SetupEntityAccess', id: g.accessId },
-          verify: { query: `SELECT Id FROM SetupEntityAccess WHERE Id = '${g.accessId}'`, tooling: false, count: 0,
-            text: { ok: `${f.MasterLabel} → ${g.label}: flow access removed — verified by re-reading the org`,
-                    bad: `${f.MasterLabel} → ${g.label}: accepted by Salesforce, but the org still shows this grant` } },
+          msg: { type: 'SF_REST_DELETE', sobject: 'SetupEntityAccess', id: c.id },
+          verify: { query: `SELECT Id FROM SetupEntityAccess WHERE Id = '${c.id}'`, tooling: false, count: 0,
+            text: { ok: `${name}: flow access removed — verified by re-reading the org`,
+                    bad: `${name}: accepted by Salesforce, but the org still shows this grant` } },
         });
       }
-      await sftkHistoryEnd(journal, { undo: steps.length ? { steps } : { none: 'nothing was confirmed granted, so there is nothing to undo' } });
+      await sftkHistoryEnd(journal, { undo: steps.length ? { steps } : { none: 'this run created no flow access, so there is nothing to undo' } });
     }
+    await loadData();   // refresh the table; the verdict above comes from its own read, not from this one
 
     if (btn) btn.textContent = '🔑 Assign';
     if (summary) summary.textContent = '';
 
-    // Deploy is all-or-nothing (rollbackOnError) → every flow either landed
-    // on every selected PS, or none did.
+    // ✅ only when the re-read shows every pair. A re-read that failed is said
+    // as unverified (wr.text), never as "grants missing" (2026-11-14).
+    const missing = Array.isArray(wr.detail) ? wr.detail : [];
     const deployErr = !wr.accepted
-      ? ((wr.raw && (wr.raw.error || wr.raw.errorMessage)) || 'Deployment failed')
-      : (!wr.ok
-          ? `accepted, but the org does not yet show ${wr.detail.length} expected grant(s) after re-reading: ${wr.detail.slice(0, 5).join('; ')}${wr.detail.length > 5 ? '…' : ''}`
-          : null);
+      ? ((wr.raw && (wr.raw.error || wr.raw.errorMessage)) || 'the flow access was not granted')
+      : !wr.verified
+        ? wr.text
+        : (!wr.ok
+            ? `accepted, but the org does not show ${missing.length} expected grant(s) after re-reading: ${missing.slice(0, 5).join('; ')}${missing.length > 5 ? '…' : ''}`
+            : null);
     const errors    = deployErr
-      ? [{ label: 'Deployment', fe: sftkFriendlyError(deployErr), raw: deployErr }]
+      ? [{ label: 'Flow access', fe: sftkFriendlyError(deployErr), raw: deployErr }]
       : [];
     const successes = deployErr ? [] : flows;
 

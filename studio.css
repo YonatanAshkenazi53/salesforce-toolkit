@@ -2802,6 +2802,12 @@ html, body {
 .ds-org-row-status--offline { color: var(--subtext-lt); }
 
 .ds-org-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+/* QA sizes 2026-11-14: the action buttons never wrapped, so below ~1300 px the
+   name column shrank to ~120 px (org name on 4-5 lines, "Last seen" one word
+   per line). The name keeps ~260 px; the buttons wrap onto their own line. */
+.ds-org-row { flex-wrap: wrap; }
+.ds-org-row-info { flex: 1 1 260px; min-width: min(260px, 100%); }
+.ds-org-row-actions { flex-wrap: wrap; flex-shrink: 1; max-width: 100%; }
 
 /* Add org wizard */
 .ds-add-org-steps {
@@ -6888,3 +6894,34 @@ details.ds-dep-pause[open] > summary.ds-dep-pause-hd::before { transform: rotate
 details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
 .ds-prog-verdict .ds-prog-row.ds-prog-block { padding: 0; border: none; }
 .ds-prog-verdict .ds-prog-row.ds-prog-block + .ds-prog-row.ds-prog-block { margin-top: 8px; }
+
+/* ── Topbar fits the window at every laptop size (QA sizes 2026-11-14) ──
+   The right-hand row never shrinks, and the centre's trust badge used to hold
+   its full one-line width as its minimum, so between about 1100 and 1300 CSS px
+   (1280x720 at 100%, 1920x1080 at 150%) and again below about 950 the row ran
+   past the right edge and cut off Licence, Activity and the open-orgs chip.
+   Three steps, all here so the cascade order is obvious:
+   1. the centre is the one part that gives way: it may shrink to nothing and
+      the badge text ends in an ellipsis instead (the lock and arrow stay, and
+      the button keeps its aria-label), so a control on the right is never
+      pushed off-screen at a width nobody measured;
+   2. the chip's org names go below 1320 px (was 1100 px) so the badge text
+      stays readable on 1280-wide windows;
+   3. below 960 px the badge text and the Quick nav word go (Ctrl K stays). */
+.ds-topbar-center { min-width: 0; }
+.ds-topbar .ds-trust-badge { flex-shrink: 1; min-width: 0; max-width: 100%; }
+.ds-topbar .ds-trust-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-brand, .ds-topbar-right { flex-shrink: 0; }
+@media (max-width: 1320px) { .ds-pair-chip-names { display: none; } }
+@media (max-width: 960px) {
+  .ds-topbar .ds-trust-text,
+  .ds-topbar .ds-cmd-topbar-hint > span { display: none; }
+}
+
+/* Dark mode: the danger button kept its light pink fill (#FEF0EE) with the
+   dark theme's light red text on it, 2.50:1, a pale square on a dark card
+   (deployment card trash, Clear mappings, Remove object, Cancel, History
+   Undo). A dark red-tinted fill with light red text, like the other dark
+   buttons: #FF8A8A on #3A1A1D is about 6.9:1 (QA sizes 2026-11-14). */
+.ds-dark .ds-btn-danger { background: #3A1A1D; border-color: #7A2E33; color: #FF8A8A; }
+.ds-dark .ds-btn-danger:hover:not(:disabled) { background: #4A2025; border-color: #A33A40; }

@@ -107,6 +107,9 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   const ovOf = id => sftkValOvGet(node, p.targetOrg, id);
   // for many records the box shows a value only when every record carries the same one
   const sameOv = f => { const vs = ids.map(id => ovOf(id)); if (!vs.every(o => f.name in o)) return undefined; const first = vs[0][f.name]; return vs.every(o => JSON.stringify(o[f.name]) === JSON.stringify(first)) ? first : undefined; };
+  // a field typed on SOME of the records, or with different values: its box is empty, but it is NOT "nothing typed"
+  // — said on the row and left alone by Save unless the user acts on it (2026-11-14: Save erased those values)
+  const mixedOv = f => many && !f.reference && sameOv(f) === undefined && ids.some(id => f.name in ovOf(id));
   const lkpOf = id => (typeof sftkLkpOvGet === 'function') ? sftkLkpOvGet(node, p.targetOrg, id) : {};
   const sameLkp = f => { const vs = ids.map(id => lkpOf(id)[f.name] || ''); return vs.every(v => v === vs[0]) ? vs[0] : (vs.some(Boolean) ? '__mixed__' : ''); };
   const nameOf = id => (typeof _lkpNameCache !== 'undefined' && _lkpNameCache.get(id)) || id;
@@ -121,14 +124,15 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   const srcText = f => (!many && srcRec) ? asText(srcRec[f.name]) : '';
   const row = f => {
     const cur = f.reference ? sameLkp(f) : sameOv(f);
-    const edited = f.reference ? !!cur : cur !== undefined;
+    const mixed = mixedOv(f);
+    const edited = f.reference ? !!cur : (cur !== undefined || mixed);
     const isNull = !f.reference && cur === null;
     const boxText = isNull ? '' : cur !== undefined ? asText(cur) : srcText(f);
     // a field empty in the source is marked ∅ from the start — it IS written empty — and a typed value lifts the mark
     // (user 2026-11-07: "by default זה יסומן בתור ריק אלא אם כן המשתמש אמר אחרת. כמובן שאפשר לתת לו לבטל ולהכניס ערך")
     const unread = !many && isUnread(f.name);   // the org refused this column for the running user: not "empty", unknown
     const dflEmpty = !many && !f.reference && !isNull && cur === undefined && !!srcRec && srcText(f) === '' && !unread;
-    const boxHint = isNull ? 'written empty' : dflEmpty ? 'empty' : unread ? 'could not be read for your user — type a value, or leave it' : many ? esc(f.picklist ? 'pick a value (API name is written)…' : hint(f.type)) : (srcText(f) ? '' : 'type a value, or leave it empty');
+    const boxHint = isNull ? 'written empty' : dflEmpty ? 'empty' : unread ? 'could not be read for your user — type a value, or leave it' : mixed ? 'different values per record — each keeps its own unless you type one for all' : many ? esc(f.picklist ? 'pick a value (API name is written)…' : hint(f.type)) : (srcText(f) ? '' : 'type a value, or leave it empty');
     const cls = `ds-ve-row${edited ? ' ds-ve-row-on' : ''}${isNull ? ' ds-ve-null-on' : ''}${dflEmpty ? ' ds-ve-empty-dfl' : ''}`;
     const srcCell = many ? '' : `<td class="ds-ve-src">${unread ? '<span class="ds-dc-empty" title="The org refused this column for your user — the value is unknown, not empty">not readable</span>' : f.reference ? (relName(f) != null ? `${val(relName(f))}<div class="ds-dep-muted">${esc(String(srcRec[f.name] || ''))}</div>` : val(srcRec ? srcRec[f.name] : null)) : val(srcRec ? srcRec[f.name] : null)}</td>`;
     const tgtCell = many || !tgtId ? '' : `<td class="ds-ve-tgt">${f.reference ? (tgtRel(f) != null ? val(tgtRel(f)) : val(tgtRec ? tgtRec[tf(f.name)] : null)) : val(tgtRec ? tgtRec[tf(f.name)] : null)}</td>`;
@@ -139,17 +143,17 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
           <div class="ds-ve-lkp-cur">${cur === '__mixed__' ? '<span class="ds-dep-muted">different picks per record</span>' : cur ? pickLine(f.name, cur, nameOf(cur)) : matchLine(f.name)}</div>
           ${!many && refObj && relName(f) != null ? `<div class="ds-ve-land" data-ve-land="${esc(f.name)}"${cur ? ' style="display:none"' : ''}>⏳ where it lands in ${esc(tgtL)}…</div>` : ''}
         </div>`
-      : `<div class="ds-ve-edit"><input type="text" class="ds-input ds-input-sm ds-ve-in" data-ve-field="${esc(f.name)}" data-ve-type="${esc(f.type)}" data-ve-src="${esc(srcText(f))}"${unread ? ' data-ve-unread="1"' : ''} value="${esc(boxText)}" placeholder="${boxHint}" ${f.picklist ? `list="dsVeList_${esc(f.name)}"` : ''} aria-label="The value ${esc(f.label)} is written with" ${isNull ? 'disabled' : ''}>
+      : `<div class="ds-ve-edit"><input type="text" class="ds-input ds-input-sm ds-ve-in" data-ve-field="${esc(f.name)}" data-ve-type="${esc(f.type)}" data-ve-src="${esc(srcText(f))}"${unread ? ' data-ve-unread="1"' : ''}${mixed ? ' data-ve-mixed="1"' : ''} value="${esc(boxText)}" placeholder="${boxHint}" ${f.picklist ? `list="dsVeList_${esc(f.name)}"` : ''} aria-label="The value ${esc(f.label)} is written with" ${isNull ? 'disabled' : ''}>
           ${f.picklist ? `<datalist id="dsVeList_${esc(f.name)}">${f.picklist.map(v => `<option value="${esc(v.value)}" label="${esc(v.label === v.value ? v.label : `${v.label} · API ${v.value}`)}">`).join('')}</datalist>` : ''}
           <button class="ds-btn ds-btn-xs ds-ve-null${isNull || dflEmpty ? ' ds-btn-primary' : ''}" data-ve-null="${esc(f.name)}" title="${isNull ? 'Written empty — click to type a value instead' : dflEmpty ? 'Empty in the source, written empty — type a value instead' : 'Write this field empty'}">∅</button>
-          <button class="ds-btn ds-btn-xs ds-ve-clear" data-ve-clear="${esc(f.name)}" title="${many ? 'Keep each record\'s own value' : 'Back to the source\'s value'}" ${edited ? '' : 'style="visibility:hidden"'}>✕</button>
+          <button class="ds-btn ds-btn-xs ds-ve-clear" data-ve-clear="${esc(f.name)}" title="${mixed ? 'Forget every record\'s own typed value for this field — the source\'s values are written' : many ? 'Keep each record\'s own value' : 'Back to the source\'s value'}" ${edited ? '' : 'style="visibility:hidden"'}>✕</button>
           <div class="ds-ve-err" data-ve-err="${esc(f.name)}"></div></div>`;
     return `<tr class="${cls}" data-ve-row="${esc(f.name)}" data-ve-search="${esc((f.label + ' ' + f.name).toLowerCase())}"><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}${f.name !== tf(f.name) ? ` → ${esc(tf(f.name))}` : ''} · ${esc(f.reference ? `lookup (${f.refTo.join(' / ')})` : f.type)}</div></th>${srcCell}${tgtCell}<td class="ds-ve-cell">${editor}</td></tr>`;
   };
   // what a person looks for first: the typed fields, then the fields the source holds a value in, then the rest
   const has = f => { if (f.reference ? !!sameLkp(f) : sameOv(f) !== undefined) return 2; if (!srcRec) return 0; const v = f.reference && f.relationshipName ? (relName(f) != null || srcRec[f.name]) : srcRec[f.name]; return v !== null && v !== undefined && v !== '' ? 1 : 0; };
   fields.sort((a, b) => (b.nameField - a.nameField) || (has(b) - has(a)) || a.label.localeCompare(b.label));
-  const nEdited = fields.filter(f => f.reference ? !!sameLkp(f) : sameOv(f) !== undefined).length;
+  const nEdited = fields.filter(f => f.reference ? !!sameLkp(f) : (sameOv(f) !== undefined || mixedOv(f))).length;
   // the Record Type row: the source's type by name; a pick among the target's types, else the type of the same API name
   const rtRow = () => {
     if (!hasRt) return '';
@@ -244,7 +248,8 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     b.classList.toggle('ds-btn-primary', on); b.title = on ? 'Empty in the source, written empty — type a value instead' : 'Write this field empty';
     inp.placeholder = on ? 'empty' : inp.dataset.veUnread ? 'could not be read for your user — type a value, or leave it' : (String(inp.dataset.veSrc || '') === '' ? 'type a value, or leave it empty' : hint(inp.dataset.veType));
   };
-  const mark = tr => { const inp = tr.querySelector('.ds-ve-in'); const on = tr.classList.contains('ds-ve-null-on') || (inp && changedBox(inp)); tr.classList.toggle('ds-ve-row-on', on); const x = tr.querySelector('.ds-ve-clear'); if (x) x.style.visibility = on ? '' : 'hidden'; emptyDfl(tr); };
+  // a mixed row stays "changed" (its records keep their own typed values) until its ✕ is pressed
+  const mark = tr => { const inp = tr.querySelector('.ds-ve-in'); const on = tr.classList.contains('ds-ve-null-on') || (inp && changedBox(inp)) || !!(inp && inp.dataset.veMixed && !inp.dataset.veCleared); tr.classList.toggle('ds-ve-row-on', on); const x = tr.querySelector('.ds-ve-clear'); if (x) x.style.visibility = on ? '' : 'hidden'; emptyDfl(tr); };
   // ── one record: saved as you type (debounced), on blur, and flushed when the dialog closes ──
   const timers = new Map();
   const saveRow = async tr => {
@@ -273,12 +278,14 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     document.addEventListener('keydown', function onEsc(e) { if (e.key === 'Escape') flush(); if (!host.isConnected) document.removeEventListener('keydown', onEsc); }, true);
   }
   host.querySelectorAll('.ds-ve-in').forEach(inp => {
+    inp.addEventListener('input', () => { inp.dataset.veDirty = '1'; });   // many records: Save acts only on rows the user touched (2026-11-14)
     inp.addEventListener('input', () => { const tr = inp.closest('tr'); tr.querySelector('.ds-ve-err').textContent = ''; mark(tr); queueSave(tr); });
     inp.addEventListener('change', () => queueSave(inp.closest('tr'), true));
   });
   host.querySelectorAll('[data-ve-null]').forEach(b => b.addEventListener('click', () => {
     const tr = b.closest('tr'), inp = tr.querySelector('.ds-ve-in'), on = !tr.classList.contains('ds-ve-null-on');
     if (on && tr.classList.contains('ds-ve-empty-dfl')) { inp.focus(); return; }   // already empty by default: the ∅ is where a value is typed instead
+    inp.dataset.veDirty = '1';
     tr.classList.toggle('ds-ve-null-on', on); inp.disabled = on; if (on) inp.value = ''; inp.placeholder = on ? 'written empty' : hint(inp.dataset.veType);
     b.classList.toggle('ds-btn-primary', on); b.title = on ? 'Written empty — click to type a value instead' : 'Write this field empty';
     if (!on && !many) inp.value = String(inp.dataset.veSrc || '');   // back from "empty": the source's value again
@@ -286,6 +293,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   }));
   host.querySelectorAll('[data-ve-clear]').forEach(b => b.addEventListener('click', () => {
     const tr = b.closest('tr'), inp = tr.querySelector('.ds-ve-in');
+    inp.dataset.veDirty = '1'; inp.dataset.veCleared = '1';   // an explicit ✕: on a mixed row, Save then clears every record's value
     tr.classList.remove('ds-ve-null-on'); inp.disabled = false; inp.value = many ? '' : String(inp.dataset.veSrc || ''); inp.placeholder = many ? hint(inp.dataset.veType) : (inp.value ? '' : 'empty in the source — type a value, or leave it empty');
     tr.querySelector('.ds-ve-null').classList.remove('ds-btn-primary'); tr.querySelector('.ds-ve-err').textContent = '';
     mark(tr); queueSave(tr, true);
@@ -444,8 +452,12 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     host.querySelectorAll('tr[data-ve-row]').forEach(tr => {
       const inp = tr.querySelector('.ds-ve-in'); if (!inp) return;
       const field = inp.dataset.veField;
-      if (tr.classList.contains('ds-ve-null-on')) { picks.push([field, null]); return; }
       const text = inp.value.trim();
+      // a row the user did not touch (hidden ones too), or a mixed row only typed into and erased, is left as it
+      // is — each record keeps its own typed value, as the column header promises (2026-11-14)
+      const act = sftkValOvManyAction({ dirty: !!inp.dataset.veDirty, cleared: !!inp.dataset.veCleared, mixed: !!inp.dataset.veMixed, nullOn: tr.classList.contains('ds-ve-null-on'), text });
+      if (act === 'keep') return;
+      if (tr.classList.contains('ds-ve-null-on')) { picks.push([field, null]); return; }
       if (text === '') { picks.push([field, undefined]); return; }
       const r = sftkMergeCoerce(inp.dataset.veType, text);
       if (!r.ok) { bad.push(field); tr.querySelector('.ds-ve-err').textContent = `needs ${r.error}`; tr.style.display = ''; return; }
@@ -457,7 +469,10 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     await saveNode();
     closeModal();
     const per = picks.filter(x => x[1] !== undefined).length;
-    showToast(per ? `✏ ${per} value${per === 1 ? '' : 's'} saved for ${many ? `${ids.length.toLocaleString()} records` : (label || 'this record')} — written by ▶ Deploy.` : `No typed value left for ${many ? 'these records' : (label || 'this record')} — the source's values are written.`, 'success', 5000);
+    // rows left alone keep their typed values — the toast says so instead of "no typed value left" (2026-11-14)
+    const kept = ids.some(id => Object.keys(ovOf(id)).length);
+    if (!per && kept) showToast(picks.length ? `✏ ${picks.length} typed value${picks.length === 1 ? '' : 's'} cleared — every other typed value of these records is kept.` : 'Nothing changed — each record keeps its own typed values.', 'success', 5000);
+    else showToast(per ?`✏ ${per} value${per === 1 ? '' : 's'} saved for ${many ? `${ids.length.toLocaleString()} records` : (label || 'this record')} — written by ▶ Deploy.` : `No typed value left for ${many ? 'these records' : (label || 'this record')} — the source's values are written.`, 'success', 5000);
     if (typeof onSaved === 'function') onSaved();
   });
   eid('dsVeClearAll')?.addEventListener('click', async () => {

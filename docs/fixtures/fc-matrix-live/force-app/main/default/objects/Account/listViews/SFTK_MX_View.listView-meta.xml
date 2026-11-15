@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ListView xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_MX_View</fullName>
+    <columns>ACCOUNT.NAME</columns>
+    <columns>SFTK_MX_Region__c</columns>
+    <columns>ACCOUNT.TYPE</columns>
+    <filterScope>Everything</filterScope>
+    <filters>
+        <field>SFTK_MX_Region__c</field>
+        <operation>notEqual</operation>
+        <value>zzz</value>
+    </filters>
+    <filters>
+        <field>ACCOUNT.NAME</field>
+        <operation>notEqual</operation>
+        <value>zzz_sftk_mx_never</value>
+    </filters>
+    <label>SFTK MX View</label>
+</ListView>

@@ -603,6 +603,12 @@ async function sftkUndoExecute(ctx, picks, io) {
     return { item, created, changed, forced: forcedIds.length };
   });
   if (!work.some(w => w.created.length || w.changed.length)) { _sftkUndoBusy = null; showToast('Nothing selected to roll back.', 'warning', 3500); return { status: 'nothing' }; }
+  // 2026-11-14: a verified rollback of a SUBSET (records, a whole object or
+  // the Kept parents unticked) must not close the run as "Rolled back" — that
+  // disables its only rollback button while the rest of the run's inserts and
+  // overwrites are still in the org. Measured against the plan, not the picks.
+  const coverage = sftkUndoPickCoverage(plan, work);
+  const leftNote = coverage.left ? ` — ${coverage.left.toLocaleString()} of ${coverage.planned.toLocaleString()} record(s) left in place${coverage.kept ? ` (${coverage.kept.toLocaleString()} kept)` : ''}` : '';
 
   // The rollback's own History entry — written on success AND on a failure
   // half-way, so what happened is never lost.
@@ -615,12 +621,12 @@ async function sftkUndoExecute(ctx, picks, io) {
       srcOrgUrl: run.srcOrgUrl || run.sourceOrg, sourceOrg: run.sourceOrg || run.srcOrgUrl,
       tgtOrgUrl: run.tgtOrgUrl || run.targetOrg || legs[0].orgUrl, targetOrg: run.targetOrg || run.tgtOrgUrl || legs[0].orgUrl,
       startedAt, completedAt: now, status,
-      summary: sftkUndoResultSummary(results), errors,
+      summary: sftkUndoResultSummary(results), errors, coverage,
     };
     _history.push(entry);
     for (const h of siblings) {
       if (status === 'success') { h.undo.rolledBackAt = now; h.undo.rolledBackStatus = status; }
-      else { h.undo.lastRollbackStatus = status; h.undo.lastRollbackAt = now; }
+      else { h.undo.lastRollbackStatus = status + leftNote; h.undo.lastRollbackAt = now; }
     }
     return entry;
   };
@@ -724,7 +730,10 @@ async function sftkUndoExecute(ctx, picks, io) {
       } catch (_) { /* remaining stays null → UNVERIFIED */ }
       log(r.remaining === 0 ? '✅' : '⚠', sftkUndoVerifyLine(item.objType, r.remaining, r.leftAlone, r.stillGone, r.goneHard), r.remaining === 0 ? '' : 'ds-prog-warn');
     }
-    const status = sftkUndoRunStatus(results);
+    // Verified on what it acted on, but part of the plan left in place →
+    // 'partial', never 'success' (2026-11-14): the card stays open to finish.
+    const verified = sftkUndoRunStatus(results);
+    const status = verified === 'success' && !coverage.complete ? 'partial' : verified;
     entry = record(results, errors, status, startedAt);
     recordActivity?.('transfer');
     await _sftkUndoPersist(siblings);
@@ -732,10 +741,12 @@ async function sftkUndoExecute(ctx, picks, io) {
     const tail = gone ? ` ${gone.toLocaleString()} record(s) the run deleted are still gone — ${Object.values(results).some(r => r.goneHard) ? 'hard-deleted, permanently' : 'in the Recycle Bin; restore them there within 15 days'}.` : '';
     log(status === 'success' ? '🏁' : '⚠', status === 'success'
       ? `Rollback complete — everything it acted on is verified; recorded in History.${tail}`
+      : verified === 'success'
+      ? `Rollback verified for everything it acted on, but ${coverage.left.toLocaleString()} of ${coverage.planned.toLocaleString()} record(s) in the plan were not picked${coverage.kept ? ` or were kept (${coverage.kept.toLocaleString()} kept)` : ''} and still hold the run's changes — recorded in History as partial; ↩ Roll back stays available for the rest.${tail}`
       : `Rollback finished with status "${status}" — see the lines above. It is recorded in History; ↩ Roll back stays available to try again once the refusal is sorted.${tail}`, status === 'success' ? '' : 'ds-prog-warn');
     showToast(status === 'success' ? (gone ? '✅ Rollback complete and verified — see the note about deleted records' : '✅ Rollback complete and verified') : `⚠ Rollback ${status} — see the page`, status === 'success' ? 'success' : 'warning', 6000);
     progress({ phase: 'end' });
-    return { status, results, errors, entry, startedAt };
+    return { status, results, errors, entry, startedAt, coverage };
   } catch (e) {
     // A failure half-way is still a fact worth a History entry.
     errors.push(`stopped: ${e?.message || e}`);

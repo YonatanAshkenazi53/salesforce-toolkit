@@ -178,9 +178,28 @@ function sftkMergeCoerce(type, text) {
   const t = String(type || ''), s = String(text == null ? '' : text).trim();
   if (s === '') return { ok: true, value: null };
   if (t === 'boolean') { if (/^(true|yes|1)$/i.test(s)) return { ok: true, value: true }; if (/^(false|no|0)$/i.test(s)) return { ok: true, value: false }; return { ok: false, error: 'true or false' }; }
-  if (['double', 'currency', 'int', 'percent', 'long'].includes(t)) { const n = Number(s.replace(/,/g, '')); if (!Number.isFinite(n)) return { ok: false, error: 'a number' }; return { ok: true, value: t === 'int' || t === 'long' ? Math.trunc(n) : n }; }
+  if (['double', 'currency', 'int', 'percent', 'long'].includes(t)) {
+    // A comma is removed only where it groups thousands (1,234.56 / -12,000). Any other comma is refused
+    // (2026-11-14): stripping every comma turned a decimal comma (1,5 / 12,5 / 1.234,56) into 15 / 125 /
+    // 1.23456 and passed it as ok, so the wrong number reached the org. Saying so beats guessing a locale.
+    if (s.includes(',') && !/^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) return { ok: false, error: 'a number (use a dot for decimals, e.g. 1234.56)' };
+    const n = Number(s.replace(/,/g, '')); if (!Number.isFinite(n)) return { ok: false, error: 'a number' }; return { ok: true, value: t === 'int' || t === 'long' ? Math.trunc(n) : n };
+  }
   if (t === 'date') { if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { ok: false, error: 'a date as YYYY-MM-DD' }; return { ok: true, value: s }; }
-  if (t === 'datetime') { if (Number.isNaN(Date.parse(s))) return { ok: false, error: 'a date and time, e.g. 2026-10-14T09:30:00Z' }; return { ok: true, value: new Date(s).toISOString() }; }
+  if (t === 'datetime') {
+    // Only an ISO date and time WITH its zone (Z, +02:00, or Salesforce's own +0000) is taken (2026-11-14):
+    // Date.parse read 10/11/2026 as US October 11, read unzoned text in this PC's time zone, and took junk
+    // like '1' or 'Q 3' as 2001 dates — all passed as ok and written. A rolled-over day (Feb 30) is refused
+    // too, where Date.parse would have moved it into March.
+    const dtErr = { ok: false, error: 'a date and time with its zone, e.g. 2026-10-14T09:30:00Z or 2026-10-14T09:30:00+02:00' };
+    const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})$/i.exec(s);
+    if (!m) return dtErr;
+    const y = +m[1], mo = +m[2], d = +m[3];
+    if (mo < 1 || mo > 12 || d < 1 || d > new Date(Date.UTC(y, mo, 0)).getUTCDate() || +m[4] > 23 || +m[5] > 59 || (m[6] != null && +m[6] > 59)) return dtErr;
+    const ms = Date.parse(s.replace(' ', 'T').replace(/z$/, 'Z').replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+    if (Number.isNaN(ms)) return dtErr;
+    return { ok: true, value: new Date(ms).toISOString() };
+  }
   if (t === 'reference') { if (!/^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/.test(s)) return { ok: false, error: 'a Salesforce id' }; return { ok: true, value: s }; }
   return { ok: true, value: s };
 }

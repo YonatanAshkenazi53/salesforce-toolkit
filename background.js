@@ -842,6 +842,11 @@ let _runHeartbeat = null;
 
 chrome.runtime.onConnect.addListener(port => {
   if (port.name !== 'sftk-run-progress') return;
+  // A second page connecting while a run already streams to a live page is a
+  // bystander (its own run will be refused, see _beginRun): it must not take
+  // the run's log over, and its Cancel or its closing must not stop a run it
+  // did not start (2026-11-14).
+  if (_runActive && _runPort) return;
   _runPort = port;
   port.onMessage.addListener(msg => {
     if (msg?.cmd === 'cancel') { _runCancelled = true; _runStopWhy = 'cancel'; }
@@ -862,15 +867,36 @@ function postRunProgress(evt) {
 // Called at the start of every engine entry point: clears the cancel flag and
 // starts a heartbeat so silent stretches (large queryAll pages) can't idle the
 // worker out. _endRun stops it.
+// One run at a time (2026-11-14): the cancel flag, the progress port, the
+// heartbeat and the duplicate-rule choice are worker globals, so a second run
+// started from another Studio tab used to take them over — A's cancel stopped
+// B, B's Bypass reached A's writes. A second run is now REFUSED, with a line
+// that says why. _beginRun returns false then and changes nothing.
+let _runActive = false;
+const SFTK_RUN_BUSY = 'Another Data Studio run is already in progress in this browser (another tab or window). Wait for it to finish, or stop it there, then start this one again. Nothing was written by this request.';
 function _beginRun(kind) {
+  if (_runActive) return false;
+  _runActive = true;
+  // A fresh run never inherits a duplicate-rule bypass (2026-11-14) —
+  // executeProfileTransfer sets it from its own profile.
+  globalThis.__sftkRunDupBypass = false;
+  globalThis.__sftkRunDupBypassObjs = null;
   _runCancelled = false;
   _runStopWhy = '';
   clearInterval(_runHeartbeat);
   _runHeartbeat = setInterval(() => postRunProgress({ phase: 'hb' }), 20000);
   chrome.storage.local.set({ sftk_active_run: { kind, startedAt: new Date().toISOString() } }).catch(() => {});
   postRunProgress({ phase: 'start', kind });
+  return true;
 }
 function _endRun() {
+  _runActive = false;
+  // The duplicate-rule bypass is "for this deployment" (studio-deploy.js) —
+  // it used to stay on after the run, so every later SF_COLLECTIONS_* write
+  // (Field Cleaner, merge, reconcile, seed, undo), in ANY org, silently sent
+  // allowSave=true (release QA 2026-11-14). It ends with the run.
+  globalThis.__sftkRunDupBypass = false;
+  globalThis.__sftkRunDupBypassObjs = null;
   clearInterval(_runHeartbeat);
   _runHeartbeat = null;
   chrome.storage.local.remove('sftk_active_run').catch(() => {});
@@ -2297,6 +2323,18 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // them) so they are counted and reported separately. They still land in
       // failedSourceIds so "↻ Retry failed" can finish the job.
       let notProcessed = 0;
+      // Release QA 2026-11-14 — records with no per-record answer (a thrown
+      // write call, an unreadable Bulk success file). Neither written nor
+      // failed; listed apart from failedSourceIds so ↻ Retry failed never
+      // re-inserts a record that may already be there.
+      let unconfirmed = 0;
+      const unconfirmedSourceIds = [];   // [{ id, label, error }]
+      let chunkThrew = '';                // the first thrown write call's message
+      let sentEnd = 0;                    // records [0, sentEnd) were sent
+      // Fetched records this run did NOT prove are in the target: refused for
+      // a reason other than a duplicate, unconfirmed, or never sent (cancel,
+      // stop). The 📎 files pass never pairs them by key (2026-11-14).
+      const notInSync = new Set();
       // T11b — how many failed records we captured payload values for. Each
       // captured record adds ~5 short strings to chrome.storage, so the
       // capture stops well before the 2000-entry failedSourceIds cap; when it
@@ -2382,6 +2420,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // strictly in upload order below (idMap/labels/failure capture all
       // assume it).
       const sendChunk = async (i) => {
+        // Each chunk settles on its own (see the wave below): a thrown call
+        // answers UNCONFIRMED for each of its records instead of rejecting.
+        try {
         const chunk = payloads.slice(i, i + STEP).map((p, k) => {
           const rec = { attributes: { type: objType }, ...p };
           // The external-Id value must be present for Salesforce to match on
@@ -2435,6 +2476,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             : await sfCollectionsCreate(tgtOrgUrl, tgtSid, chunk);
         }
         return Array.isArray(res) ? res : [];
+        } catch (e) {
+          chunkThrew = chunkThrew || ((e && e.message) || String(e));
+          return sftkUnconfirmedRows(Math.min(STEP, payloads.length - i), `the write call failed (${(e && e.message) || e})`);
+        }
       };
       for (let w = 0; w < payloads.length; w += STEP * THREADS) {
         // Cancel between waves — records already written stay written
@@ -2446,11 +2491,35 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         const starts = [];
         for (let t = 0; t < THREADS && w + t * STEP < payloads.length; t++) starts.push(w + t * STEP);
         const errBefore = errors.length;   // stream NEW error lines after this wave
+        // Release QA 2026-11-14: a chunk that THROWS (HTTP error after the
+        // retry, the 30 s timeout — Salesforce may still commit it — an expired
+        // session, a Bulk poll that ran out) used to reject the whole wave and
+        // reach the node's catch, which replaced the summary with "created 0":
+        // every earlier batch's count, ids and History links were lost, and the
+        // siblings that DID land in the same wave never reached idMap. Each
+        // chunk now settles on its own; a thrown one is UNCONFIRMED per record,
+        // and the object stops writing after this wave (the next call would
+        // meet the same failure — the rest is said, not sent).
         const waveRes = await Promise.all(starts.map(s => sendChunk(s)));
         for (let wi = 0; wi < starts.length; wi++) {
         const i = starts[wi];
-        const results = waveRes[wi];
+        const chunkLen = Math.min(STEP, payloads.length - i);
+        // A response shorter than the chunk (or not a list) answered nothing
+        // for the rest: those records are unconfirmed too, never silently lost.
+        const results = waveRes[wi].length >= chunkLen ? waveRes[wi]
+          : waveRes[wi].concat(sftkUnconfirmedRows(chunkLen - waveRes[wi].length, 'Salesforce returned no result for this record'));
+        sentEnd = Math.max(sentEnd, i + chunkLen);
         results.forEach((result, j) => {
+          if (j >= chunkLen) return;
+          if (!result.success && sftkIsUnconfirmed(result)) {
+            unconfirmed++;
+            notInSync.add(recs[i + j].Id);
+            if (unconfirmedSourceIds.length < 2000) {
+              unconfirmedSourceIds.push({ id: recs[i + j].Id, label: recLabel(i + j, recs[i + j].Id),
+                error: ((result.errors || [])[0] || {}).message || 'Unconfirmed' });
+            }
+            return;
+          }
           if (result.success) {
             idMap[recs[i + j].Id] = result.id; ok++;
             if (result.created === true) upsCreated++;
@@ -2474,6 +2543,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             // flood the per-record error list either.
             const notRun = (result.errors || []).some(e => e.statusCode === 'BULK_CANCELLED');
             if (notRun) notProcessed++; else fail++;
+            // 📎 the files pass may pair a failed record by key only when the
+            // failure itself says the record is already in the target (a
+            // duplicate); any other refusal proves nothing (2026-11-14).
+            if (notRun || !sftkFailureMeansInTarget(result)) notInSync.add(recs[i + j].Id);
             if (!notRun) errors.push(`${objType}: ${msg}`);
             // T11b — the message alone ("…please select a state from the list
             // of valid states.: Billing State/Province") never says WHAT was
@@ -2592,6 +2665,13 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             lines: errors.slice(errBefore, errBefore + 20),
             more: Math.max(0, errors.length - errBefore - 20) });
         }
+        if (chunkThrew) break;   // said below — no further call for this object
+      }
+      // Never sent (cancel, pause, a stop after a thrown call): not in sync.
+      for (let k = sentEnd; k < recs.length; k++) if (recs[k] && recs[k].Id) notInSync.add(recs[k].Id);
+      if (unconfirmed || chunkThrew) {
+        const unsent = Math.max(0, payloads.length - sentEnd);
+        errors.push(`${objType}: ${unconfirmed} record(s) NOT CONFIRMED written — ${chunkThrew ? `a write call failed (${chunkThrew})` : 'Salesforce gave no per-record answer for them'}. They may or may not be in the target, so they are not offered under "↻ Retry failed": check the target org before writing them again.${chunkThrew && unsent ? ` The object stopped there: ${unsent} later record(s) were not sent.` : ''}`);
       }
       // PII MASKING v1 — the write disclosure: how many values this object's
       // payloads carried hashed / nulled / fixed. Present whenever the policy
@@ -2651,6 +2731,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         ...(useUpsert && (upsCreated || upsUpdated)
           ? { upsertCreated: upsCreated, upsertUpdated: upsUpdated } : {}),
         ...(notProcessed ? { notProcessed } : {}),
+        ...(unconfirmed ? { unconfirmed, unconfirmedSourceIds } : {}),   // 2026-11-14 — see the write loop
         ...(piiRows ? { masked: piiRows.counts } : {}) };
       // B3 — one line for everything the aborted Bulk job did not confirm.
       // "not confirmed written" rather than "never attempted": when the job's
@@ -2700,7 +2781,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       if (failedSourceIds.length) {
         summary[objType].failedSourceIds = failedSourceIds.slice(0, 2000);
       }
-      // W9 — 📎 FILES PASS (flag-gated: no UI sets node.includeFiles yet).
+      // W9 — 📎 FILES PASS (node.includeFiles: the Builder's 📎 Files button and the Seeder set it).
       // Runs after this node's records landed so FirstPublishLocationId can
       // point at the mapped target records. Failures are per-file, never
       // fatal to the run.
@@ -2714,7 +2795,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           // Match the leftovers to their target rows by the node's key field
           // — single-field keys only, ambiguity fails closed, and a masked
           // key is never matched raw (PII fail-closed).
-          const leftover = recs.filter(r => r?.Id && !nodeIdMap[r.Id]);
+          // Only records the run did not disprove: a record refused for a
+          // non-duplicate reason, unconfirmed, or never sent (cancel / stop)
+          // is NOT "already in the target" (release QA 2026-11-14).
+          const leftover = recs.filter(r => r?.Id && !nodeIdMap[r.Id]).filter(r => !notInSync.has(r.Id));
+          const notPaired = recs.filter(r => r?.Id && !nodeIdMap[r.Id] && notInSync.has(r.Id)).length;
+          if (notPaired) diagnostics.push(`ℹ ${objType}: 📎 ${notPaired} record(s) not written by this run were left out of the files pass — their write was refused for a reason other than a duplicate, was not confirmed, or was never sent, so nothing proves they are already in the target.`);
           if (leftover.length) {
             const strat = node.matching && node.matching.strategy;
             if ((piiPolicyKeys || []).length > 0) {
@@ -2734,6 +2820,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
                 tgtRows.push(...(q.records || []));
               }
               const kp = sftkFileKeyPairs(recs, nodeIdMap, keyField, tgtRows);
+              for (const sId of Object.keys(kp.pairs)) if (notInSync.has(sId)) delete kp.pairs[sId];   // see leftover above
               Object.assign(nodeIdMap, kp.pairs);
               const matched = Object.keys(kp.pairs).length;
               if (matched || kp.ambiguous || kp.unmatched) {
@@ -3184,6 +3271,18 @@ async function executeProfileSequence(profiles, srcOrgUrl, srcSid, tgtOrgUrl, tg
 // key field against fetched target rows. Ambiguity fails closed: attaching a
 // file to a guessed record is worse than skipping, and the skip is counted.
 // Returns { pairs: {srcId → tgtId}, ambiguous, unmatched }.
+// Does this refused write itself say the record is already in the target?
+// Only a duplicate does (a unique-field DUPLICATE_VALUE, a duplicate rule's
+// DUPLICATES_DETECTED; Bulk rows carry the code in their text). A validation
+// rule, a required field, a lock say nothing about the target, and the 📎
+// files pass must not pair such a record with a same-Name stranger (release QA
+// 2026-11-14: a failed 'John Smith' got its files put on another one). PURE.
+function sftkFailureMeansInTarget(result) {
+  return (result && Array.isArray(result.errors) ? result.errors : []).some(e => e
+    && (/^(DUPLICATE_VALUE|DUPLICATES_DETECTED)$/.test(String(e.statusCode || ''))
+      || /\b(DUPLICATE_VALUE|DUPLICATES_DETECTED)\b/.test(String(e.message || ''))));
+}
+
 function sftkFileKeyPairs(recs, writtenMap, keyField, tgtRows) {
   const byVal = new Map();
   for (const t of (tgtRows || [])) {
@@ -3382,32 +3481,59 @@ async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, t
     .filter(f => !onlyByRec || (f.linkedTo || []).length);
 
   // 3. Checksums already on the mapped target records (idempotence).
+  // Release QA 2026-11-14: a failed or short read of the target's files used
+  // to count as "no files there" and copied every file again — duplicates on
+  // records that already had them, reported as "copied". A target record
+  // whose existing files could not be read in full now gets NO files, and
+  // the run says so (a copy can be made later; a duplicate cannot be unsaid).
   const tgtIds = [...new Set(Object.values(idMap))];
   const tgtByRecord = {};
+  const tgtUnknown = new Set();   // target ids whose existing files are not known
+  let tgtReadErr = '';
   for (let i = 0; i < tgtIds.length; i += 200) {
-    const lit = tgtIds.slice(i, i + 200).map(id => `'${id}'`).join(',');
+    const slice = tgtIds.slice(i, i + 200);
+    const lit = slice.map(id => `'${id}'`).join(',');
     let q = null;
     try {
       q = await sfQueryAll(tgtOrgUrl, tgtSid,
         `SELECT ContentDocumentId, LinkedEntityId FROM ContentDocumentLink WHERE LinkedEntityId IN (${lit})`, false);
-    } catch (_) { q = null; }
+      if (q && q.incomplete) throw new Error(`the read came back incomplete (${q.incomplete.got} of ${q.incomplete.expected})`);
+    } catch (e) {
+      tgtReadErr = tgtReadErr || ((e && e.message) || String(e));
+      for (const t of slice) tgtUnknown.add(t);
+      continue;
+    }
     const tDocIds = [...new Set((q?.records || []).map(r => r.ContentDocumentId))];
     const sums = {};
+    const docUnknown = new Set();
     for (let j = 0; j < tDocIds.length; j += 100) {
-      const dl = tDocIds.slice(j, j + 100).map(id => `'${id}'`).join(',');
+      const part = tDocIds.slice(j, j + 100);
+      const dl = part.map(id => `'${id}'`).join(',');
       try {
         const vq = await sfQueryAll(tgtOrgUrl, tgtSid,
           `SELECT ContentDocumentId, Checksum FROM ContentVersion WHERE ContentDocumentId IN (${dl}) AND IsLatest = true`, false);
+        if (vq && vq.incomplete) throw new Error(`the read came back incomplete (${vq.incomplete.got} of ${vq.incomplete.expected})`);
         for (const r of (vq.records || [])) sums[r.ContentDocumentId] = r.Checksum;
-      } catch (_) { /* unknown checksums → treated as absent → copy (safe) */ }
+      } catch (e) {
+        tgtReadErr = tgtReadErr || ((e && e.message) || String(e));
+        for (const d of part) docUnknown.add(d);
+      }
     }
     for (const r of (q?.records || [])) {
+      if (docUnknown.has(r.ContentDocumentId)) { tgtUnknown.add(r.LinkedEntityId); continue; }
       (tgtByRecord[r.LinkedEntityId] = tgtByRecord[r.LinkedEntityId] || []).push(sums[r.ContentDocumentId]);
     }
   }
+  let planFiles = srcFiles;
+  if (tgtUnknown.size) {
+    const unknownSrc = new Set(Object.keys(idMap).filter(s => tgtUnknown.has(idMap[s])));
+    planFiles = srcFiles.map(f => ({ ...f, linkedTo: (f.linkedTo || []).filter(s => !unknownSrc.has(s)) }));
+    stats.skippedUnread = unknownSrc.size;
+    errors.push(`${objType}: 📎 files NOT copied for ${unknownSrc.size} record(s) — the target's existing files on them could not be read (${tgtReadErr}), and copying blind could duplicate files already there. Run the files step again.`);
+  }
 
   // 4. Plan, disclose, execute.
-  const plan = sftkFilePlan(srcFiles, tgtByRecord, idMap, {});
+  const plan = sftkFilePlan(planFiles, tgtByRecord, idMap, {});
   stats.skippedExisting = plan.skippedExisting;
   stats.skippedSize = plan.skippedSize.length;
   if (plan.unmappedLinks) {
@@ -3680,7 +3806,7 @@ async function dispatchMessage(message) {
       // Read-only orgs are rejected by the write chokepoint; the view gates
       // this behind a typed confirmation with live counts; cancel between
       // chunks via the run port. mode: 'recycle' (default) | 'hard'.
-      _beginRun('wipe');
+      if (!_beginRun('wipe')) return { error: SFTK_RUN_BUSY };
       try {
         // PRODUCTION BELT (Seeder review wt02z57at, HIGH): hard delete is
         // disabled against production orgs at the ENGINE — no present or
@@ -3724,7 +3850,7 @@ async function dispatchMessage(message) {
       }
     }
     case 'SF_EXECUTE_PROFILE_TRANSFER': {
-      _beginRun('transfer');
+      if (!_beginRun('transfer')) return { error: SFTK_RUN_BUSY, status: 'failed', summary: {}, errors: [SFTK_RUN_BUSY] };
       try {
         const ledger = message.runId ? _runLedger(String(message.runId)) : null;
         return await executeProfileTransfer(
@@ -3738,7 +3864,7 @@ async function dispatchMessage(message) {
     case 'SF_RUN_LEDGER_CLOSE':
       return _runLedgerClose(String(message.runId || ''));
     case 'SF_EXECUTE_SEQUENCE': {
-      _beginRun('sequence');
+      if (!_beginRun('sequence')) return { error: SFTK_RUN_BUSY, status: 'failed', steps: [], errors: [SFTK_RUN_BUSY] };
       try {
         return await executeProfileSequence(
           message.profiles,
@@ -5015,6 +5141,43 @@ function sftkBulkKeyNorm(v) {
   if (/^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(s)) { const t = Date.parse(s); if (Number.isFinite(t)) return 'd' + t; }
   return s;
 }
+// A write whose per-record answer never came back (release QA 2026-11-14): the
+// call threw (HTTP error after the retry, a 30 s timeout — Salesforce may still
+// commit the batch — an expired session) or a finished Bulk job's success file
+// could not be read. Such a record is neither written nor failed: it is
+// UNCONFIRMED. The engine keeps it out of the written counts AND out of
+// ↻ Retry failed (a retry of an insert that did land duplicates it). PURE.
+function sftkUnconfirmedRows(n, why) {
+  const message = `Unconfirmed — ${why || 'Salesforce gave no per-record answer'}, so we cannot say whether this record was written. Check the target org before writing it again.`;
+  return Array.from({ length: Math.max(0, n | 0) }, () =>
+    ({ id: null, success: false, unconfirmed: true, errors: [{ message, statusCode: 'SFTK_UNCONFIRMED' }] }));
+}
+function sftkIsUnconfirmed(result) {
+  return !!(result && (result.unconfirmed === true
+    || (result.errors || []).some(e => e && e.statusCode === 'SFTK_UNCONFIRMED')));
+}
+
+// The per-row answer of a Bulk job that reached JobComplete, from whichever
+// result files could be read (null = unreadable). PURE (release QA 2026-11-14).
+//  · both read → the plain correlation;
+//  · success file unread → a row we cannot place may well be written: it is
+//    UNCONFIRMED (never "failed", never retried blind);
+//  · only the failure file unread → the success list is complete, so a row
+//    missing from it was NOT written: a failure, its reason unknown.
+function sftkBulkCompletedResults(uploadRows, columns, okRows, badRows) {
+  if (okRows === null) {
+    return sftkCorrelateBulkResults(uploadRows, columns, [], badRows || [],
+      'Unconfirmed — the Bulk job finished, but its success file could not be read, so we cannot say whether this record was written. Check the target org before writing it again.',
+      'SFTK_UNCONFIRMED');
+  }
+  if (badRows === null) {
+    return sftkCorrelateBulkResults(uploadRows, columns, okRows, [],
+      'Not written — the Bulk job did not list this record as written; its failure file could not be read, so the reason is unknown.',
+      'BULK_NO_RESULT');
+  }
+  return sftkCorrelateBulkResults(uploadRows, columns, okRows, badRows);
+}
+
 function sftkCorrelateBulkResults(uploadRows, columns, successRows, failedRows, missingMsg, missingCode) {
   const key = r => (columns || []).map(c => sftkBulkKeyNorm(r ? r[c] : undefined)).join(String.fromCharCode(1));
   const buckets = new Map();
@@ -5371,11 +5534,22 @@ async function sfBulkIngest(orgUrl, sid, opts) {
     // 5. results — successful rows carry sf__Id, failures carry sf__Error.
     // Row ORDER matches the uploaded CSV, which is how each result maps back
     // to its source record.
-    const okRes = await sfFetchWithProxy(orgUrl, sid, `${jobUrl}/successfulResults/`, { method: 'GET' });
-    const badRes = await sfFetchWithProxy(orgUrl, sid, `${jobUrl}/failedResults/`, { method: 'GET' });
-    return sftkCorrelateBulkResults(rows, columns,
-      okRes.ok ? sftkParseCsv(okRes.body) : [],
-      badRes.ok ? sftkParseCsv(badRes.body) : []);
+    // Release QA 2026-11-14: an unreadable result file used to become an empty
+    // list, so a job that WROTE every row reported every row failed, kept them
+    // out of idMap and offered them to ↻ Retry failed — which inserted them a
+    // second time. Each file is read twice at most; past that, see below.
+    const readResults = async (path) => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const r = await sfFetchWithProxy(orgUrl, sid, `${jobUrl}/${path}/`, { method: 'GET' });
+          if (r && r.ok) return sftkParseCsv(r.body);
+        } catch (_) { /* tried again once, then said */ }
+      }
+      return null;
+    };
+    const okRows  = await readResults('successfulResults');
+    const badRows = await readResults('failedResults');
+    return sftkBulkCompletedResults(rows, columns, okRows, badRows);
   } catch (e) {
     // Never leave a job open on the org — an abandoned Open/UploadComplete job
     // holds resources and shows up in Setup as a stuck load.

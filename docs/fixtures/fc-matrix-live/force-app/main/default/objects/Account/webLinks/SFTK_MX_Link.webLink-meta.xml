@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WebLink xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_MX_Link</fullName>
+    <availability>online</availability>
+    <displayType>link</displayType>
+    <encodingKey>UTF-8</encodingKey>
+    <linkType>url</linkType>
+    <masterLabel>SFTK MX Link</masterLabel>
+    <openType>newWindow</openType>
+    <position>none</position>
+    <protected>false</protected>
+    <url>https://example.com/?r={!Account.SFTK_MX_Region__c}&amp;again={!Account.SFTK_MX_Region__c}&amp;id={!Account.Id}</url>
+</WebLink>

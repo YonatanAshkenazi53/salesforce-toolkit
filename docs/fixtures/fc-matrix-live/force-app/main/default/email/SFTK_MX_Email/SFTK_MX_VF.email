@@ -1,0 +1,7 @@
+<messaging:emailTemplate subject="Region {!relatedTo.SFTK_MX_Region__c}" recipientType="Contact" relatedToType="Account">
+<messaging:plainTextEmailBody >
+Account {!relatedTo.Name}: region {!relatedTo.SFTK_MX_Region__c}.
+Again: {!relatedTo.SFTK_MX_Region__c}.
+Your own contact region: {!recipient.SFTK_MX_Region__c}.
+</messaging:plainTextEmailBody>
+</messaging:emailTemplate>

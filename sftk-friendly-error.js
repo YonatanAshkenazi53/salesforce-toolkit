@@ -12,7 +12,12 @@ function sftkDecodeEntities(s) {
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 }
 
-function sftkFriendlyError(raw) {
+// opts.where — the screen asking (2026-11-14). 'field-cleaner': a field the
+// user picked from the org's own metadata can only be "missing" from a data
+// query because the running user has no field-level access to it, so the
+// Data Studio "stale field mapping" hint would point at a screen that does
+// not exist there.
+function sftkFriendlyError(raw, opts) {
   // Phase prefixes our run composers prepend ("update: …", "push: …").
   // Inside the function so test extraction gets a self-contained unit.
   const SFTK_ERR_PHASES = {
@@ -96,6 +101,15 @@ function sftkFriendlyError(raw) {
   if (m) {
     out.type = 'missing-field';
     out.message = `Field ${m[1]} doesn't exist ${/target/i.test(s) ? 'in the target org' : 'on this object'}`;
+    if (opts && opts.where === 'field-cleaner') {
+      // Field Cleaner (QA 2026-11-14): the field exists (it was picked from
+      // the org's metadata), so the query was refused for the running user.
+      // Say what is unknown instead of guessing a count.
+      out.type = 'no-field-access';
+      out.message = `Your user can't read ${m[1]} — usually no field-level access to it, so nothing was counted (usage unknown, not zero)`;
+      out.hint = 'Give your user Read access (Setup → Object Manager → the field → Set Field-Level Security), then pick the field again.';
+      return out;
+    }
     out.hint = 'Usually a stale field mapping — open ✏ Edit → Fields & mapping and remove or remap it.';
     return out;
   }
@@ -187,6 +201,22 @@ function sftkFriendlyError(raw) {
     const tail = s.replace(/^.*CANNOT_INSERT_UPDATE_ACTIVATE_ENTITY[,:]?\s*/i, '');
     out.message = `An automation (trigger or flow) in the target org failed while saving${tail ? `: ${tail}` : ''}`;
     out.hint = 'The failure is inside the target org\'s own automation — check its flows/triggers for this object.';
+    return out;
+  }
+  // A dropped network and the org's daily API allowance (QA 2026-11-14): with
+  // no mapping, the raw "Failed to fetch" / "TotalRequests Limit exceeded"
+  // landed in the popup's session banner next to the Connect form, sending
+  // the user to reconnect when the session was fine. Name the real cause.
+  if (/REQUEST_LIMIT_EXCEEDED|TotalRequests Limit exceeded/i.test(s)) {
+    out.type = 'api-limit';
+    out.message = 'This org has used its daily API calls';
+    out.hint = 'Salesforce frees calls up again over the next 24 hours — try again later. Your session is fine; reconnecting will not help.';
+    return out;
+  }
+  if (/Failed to fetch|NetworkError when attempting to fetch|net::ERR_(INTERNET_DISCONNECTED|NETWORK_CHANGED|NAME_NOT_RESOLVED|CONNECTION_)/i.test(s)) {
+    out.type = 'network';
+    out.message = 'No connection to Salesforce';
+    out.hint = 'Check your network, then Retry.';
     return out;
   }
   if (/SESSION_EXPIRED|INVALID_SESSION_ID/i.test(s)) {

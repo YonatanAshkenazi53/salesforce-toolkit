@@ -1158,7 +1158,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
     return { issues: 1, checked: 0, unchecked: profileTree ? subtreeSize(profileTree) : 0 };
   }
 
-  async function dryRunNode(node) {
+  async function dryRunNode(node, parent) {
     const obj = node.objectType || node.childSObject;
 
     // Match the REAL executor's record scoping: picked recordIds take
@@ -1166,9 +1166,20 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
     // dry run previously used only node.where, so a "🎯 N selected"
     // profile was validated against the ENTIRE table — wrong counts,
     // null-sampling false alarms from unselected rows, missed issues.
-    const dryWhere = (Array.isArray(node.recordIds) && node.recordIds.length)
-      ? `Id IN (${node.recordIds.filter(Boolean).map(id => `'${id}'`).join(',')})`
-      : (node.where || '');
+    // 2026-11-14: a CHILD is also read inside its parents' scope, the same
+    // way previewTransfer.countNode and the engine read it. Before, an
+    // unfiltered Contact under 2 picked Accounts counted and sampled the
+    // whole Contact table — a whole-org count, and checks on rows the run
+    // never moves (false issues, or a ✅ that missed the real rows).
+    const cw = sftkChildCountWhere(node, parent);
+    const dryWhere = cw.where || '';
+    // SOQL cannot nest the semi-join (a grandchild under a scoped parent):
+    // the count and samples then cover more rows than the run moves. Say so
+    // instead of presenting them as the run's rows.
+    const countPrefix = cw.unscoped ? '≤ ' : '';
+    if (cw.unscoped) {
+      logRow('⚠', `${obj}: cannot be limited to the records under its parent in one query — the count is an upper bound and the checks below also sample rows outside this run.`, 'ds-prog-warn');
+    }
 
     // ── Step 1: count records in source ──────────────────────────
     const countRes = await sendBg({
@@ -1382,7 +1393,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
     // ── Step 4: log required-field results ───────────────────────
     if (fieldIssues.length) {
       issues += fieldIssues.length;
-      logRow('⚠️', `${obj}: ${srcCount} record(s) found — ${fieldIssues.length} required field issue(s):`, 'ds-prog-warn');
+      logRow('⚠️', `${obj}: ${countPrefix}${srcCount} record(s) found — ${fieldIssues.length} required field issue(s):`, 'ds-prog-warn');
       for (const issue of fieldIssues) {
         if (issue.droppedByMapping) {
           logRow('❌',
@@ -1402,7 +1413,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
         }
       }
     } else {
-      logRow('✅', `${obj}: ${srcCount} record(s) — all required fields present`);
+      logRow('✅', `${obj}: ${countPrefix}${srcCount} record(s) — all required fields present`);
     }
 
     // ── Step 4b: source fields the target org can't accept ───────
@@ -1703,7 +1714,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
       }
     }
 
-    for (const c of (node.children || [])) await dryRunNode(c);
+    for (const c of (node.children || [])) await dryRunNode(c, { obj, where: cw.where, semiJoin: cw.semiJoin });
   }
 
   // Owner-mapping sanity: matching without a fallback is allowed but easy
@@ -1730,7 +1741,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
     }
   }
 
-  await dryRunNode(profileTree);
+  await dryRunNode(profileTree, null);
   return { issues, checked, unchecked };
 }
 
@@ -1752,16 +1763,40 @@ function sftkRunOpFor(state, hasUpsert) {
 // table of what THIS run will do, read from the last scan. Point-in-time by
 // construction and says so; extras are omitted because a run never touches
 // them.
+// PURE — is the profile's lastScan a scan of the pair THIS run uses?
+// 2026-11-14: the run follows the Transfer org chip (_transferSrc /
+// _transferTgt), which can name another ring target than p.targetOrg, while
+// lastScan only ever describes the profile's own pair (other targets' scans
+// are summaries in ringScans, with no per-record buckets). The old test
+// compared the scan with p.targetOrg by exact string, so a run into org2 was
+// labelled Insert / DUPLICATE from org1's state. Compared by org key against
+// the RUN's orgs; a scan without a stamp is trusted only when the run uses
+// the profile's own org — otherwise we cannot know which org it read.
+function sftkRunPreviewScanFresh(scan, profile, runSrcUrl, runTgtUrl, keyFn) {
+  if (!scan || scan.status !== 'success' || !profile) return false;
+  if (scan.objectType !== profile.tree?.objectType) return false;
+  const same = (a, b) => !!a && !!b && keyFn(a) === keyFn(b);
+  const runSrc = runSrcUrl || profile.sourceOrg;
+  const runTgt = runTgtUrl || profile.targetOrg;
+  const srcOk = scan.sourceOrg ? same(scan.sourceOrg, runSrc) : (!runSrcUrl || same(runSrc, profile.sourceOrg));
+  const tgtOk = scan.targetOrg ? same(scan.targetOrg, runTgt) : (!runTgtUrl || same(runTgt, profile.targetOrg));
+  return srcOk && tgtOk;
+}
+
 function openRunRecordsPreview() {
   const p = _transferProfile;
   const scan = p?.lastScan;
   const rootObj = p?.tree?.objectType;
-  const fresh = !!(scan && scan.status === 'success' && scan.objectType === rootObj
-    && (!scan.sourceOrg || scan.sourceOrg === p.sourceOrg)
-    && (!scan.targetOrg || scan.targetOrg === p.targetOrg));
+  const runTgtUrl = _transferTgt?.orgUrl || p?.targetOrg || '';
+  const fresh = sftkRunPreviewScanFresh(scan, p, _transferSrc?.orgUrl, _transferTgt?.orgUrl, _orgKey);
   if (!fresh) {
+    // Name the org when the scan on file is of another target — "no fresh
+    // scan" alone reads like the 🔄 button would fix it for this target.
+    const otherTgt = scan && scan.targetOrg && runTgtUrl && _orgKey(scan.targetOrg) !== _orgKey(runTgtUrl);
     showModal(`<div class="ds-modal-header">📋 Records preview</div>
-      <div class="ds-modal-body">No fresh scan for this deployment — the preview reads the last 🔄 scan to know each record's state in the target. Run <strong>🔄 Refresh state</strong> on the deployment card, then reopen.</div>
+      <div class="ds-modal-body">${otherTgt
+        ? `The last 🔄 scan read ${esc(orgLabel(scan.targetOrg))}, but this run goes to <strong>${esc(orgLabel(runTgtUrl))}</strong> — no per-record scan of that org, so the preview cannot say what each record will get there. Pick ${esc(orgLabel(scan.targetOrg))} as the target, or scan ${esc(orgLabel(runTgtUrl))} as the deployment's own target, then reopen.`
+        : `No fresh scan for this deployment — the preview reads the last 🔄 scan to know each record's state in the target. Run <strong>🔄 Refresh state</strong> on the deployment card, then reopen.`}</div>
       <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Close</button></div>`);
     return;
   }
@@ -1814,7 +1849,7 @@ function openRunRecordsPreview() {
   });
   showModal(`<div class="ds-modal-header">📋 Records preview — ${esc(p.name)}</div>
     <div class="ds-modal-body">
-      <div class="ds-pk-hint" style="margin-bottom:8px">Read from the scan of ${esc(timeAgo(scan.runAt))} — a point-in-time reading, not live state. Records that exist ONLY in the target are never touched by a run and aren't listed.</div>
+      <div class="ds-pk-hint" style="margin-bottom:8px">Read from the scan of ${esc(orgLabel(runTgtUrl))}, ${esc(timeAgo(scan.runAt))} — a point-in-time reading, not live state. Records that exist ONLY in the target are never touched by a run and aren't listed.</div>
       ${html}
     </div>
     <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Close</button></div>`);

@@ -436,6 +436,27 @@ function _histSentence(run) {
   return `${isRb ? 'Rollback' : 'Deployment'} ${isRb ? 'in' : 'into'} ${tgt}: ${did}${fail}${stop}.`;
 }
 
+// The "All deployments" filter options: profileId -> the deployment's name.
+// 2026-11-14: a rollback carries its deployment's profileId but its own title
+// ("↩ Rollback of X"), and History is newest-first, so the rollback used to
+// name the option — one option that filters BOTH cards labelled as if it were
+// only the rollback. The deployment's own name wins; when only rollbacks of it
+// remain (the deployment run was purged), the prefix is stripped instead.
+function _histProfileOptions(runs) {
+  const RB = /^↩\s*Rollback of\s+/;
+  const isRb = r => r.kind === 'rollback' || RB.test(r.profileName || '');
+  const seen = new Map();
+  const fromRun = new Set();
+  for (const run of runs || []) {
+    if (!run || !run.profileId) continue;
+    const id = run.profileId;
+    if (fromRun.has(id)) continue;
+    if (!isRb(run)) { seen.set(id, run.profileName || 'Unnamed'); fromRun.add(id); continue; }
+    if (!seen.has(id)) seen.set(id, (run.profileName || '').replace(RB, '').trim() || 'Unnamed');
+  }
+  return seen;
+}
+
 function renderHistory() {
   const split = (typeof sftkHistoryStudioSplit === 'function') ? sftkHistoryStudioSplit(_history) : { mine: _history, kit: {}, kitTotal: 0 };
   const mineArch = _archShown.filter(r => typeof sftkHistoryToolTab !== 'function' || !sftkHistoryToolTab(r));
@@ -464,10 +485,7 @@ function renderHistory() {
 
   // Distinct profiles present in history — for the filter dropdown. Uses the
   // run's own stored name so deleted profiles remain filterable.
-  const profSeen = new Map();
-  for (const run of sorted) {
-    if (run.profileId && !profSeen.has(run.profileId)) profSeen.set(run.profileId, run.profileName || 'Unnamed');
-  }
+  const profSeen = _histProfileOptions(sorted);
 
   setMain(`
     ${dsViewHeader({

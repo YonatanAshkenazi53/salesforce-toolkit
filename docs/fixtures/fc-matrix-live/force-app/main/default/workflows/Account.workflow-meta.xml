@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Workflow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fieldUpdates>
+        <fullName>SFTK_MX_FU_Target</fullName>
+        <field>SFTK_MX_Region__c</field>
+        <literalValue>none</literalValue>
+        <name>SFTK MX FU Target</name>
+        <notifyAssignee>false</notifyAssignee>
+        <operation>Literal</operation>
+        <protected>false</protected>
+        <reevaluateOnChange>false</reevaluateOnChange>
+    </fieldUpdates>
+    <fieldUpdates>
+        <fullName>SFTK_MX_FU_Formula</fullName>
+        <field>SFTK_MX_Area__c</field>
+        <formula>SFTK_MX_Region__c &amp; &quot;/&quot; &amp; SFTK_MX_Region__c</formula>
+        <name>SFTK MX FU Formula</name>
+        <notifyAssignee>false</notifyAssignee>
+        <operation>Formula</operation>
+        <protected>false</protected>
+        <reevaluateOnChange>false</reevaluateOnChange>
+    </fieldUpdates>
+    <rules>
+        <fullName>SFTK_MX_WF</fullName>
+        <actions>
+            <name>SFTK_MX_FU_Formula</name>
+            <type>FieldUpdate</type>
+        </actions>
+        <active>false</active>
+        <criteriaItems>
+            <field>Account.SFTK_MX_Region__c</field>
+            <operation>equals</operation>
+            <value>zzz</value>
+        </criteriaItems>
+        <criteriaItems>
+            <field>Account.Name</field>
+            <operation>equals</operation>
+            <value>zzz_sftk_mx_never</value>
+        </criteriaItems>
+        <triggerType>onCreateOrTriggeringUpdate</triggerType>
+    </rules>
+    <rules>
+        <fullName>SFTK_MX_WF_Formula</fullName>
+        <actions>
+            <name>SFTK_MX_FU_Target</name>
+            <type>FieldUpdate</type>
+        </actions>
+        <active>false</active>
+        <formula>AND(Name = &quot;zzz_sftk_mx_never&quot;, NOT(ISBLANK(SFTK_MX_Region__c)), SFTK_MX_Region__c &lt;&gt; &quot;x&quot;)</formula>
+        <triggerType>onCreateOrTriggeringUpdate</triggerType>
+    </rules>
+</Workflow>

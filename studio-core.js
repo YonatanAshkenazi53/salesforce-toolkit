@@ -623,17 +623,45 @@ function _historyStripCountsOnly(entries) {
 // to chrome.storage while this page may hold its own copy in memory. Merge
 // what arrives from elsewhere so the next storageSaveHistory keeps it and
 // the History view shows it without a reload.
+//
+// 2026-11-14: an EXISTING tool entry can come back changed too: the popup's
+// Undo rewrites it with toolUndo.done. Only new ids used to be taken, so this
+// page kept its stale copy (no done) and its next storageSaveHistory wrote
+// that copy back, the popup offered Undo again, and the link to the undo's own
+// entry was lost. Nothing ever clears a done mark, so adopting the copy that
+// carries one is always the safe direction. addNew is false on the save-time
+// re-read: an id only storage still holds may be one this page dropped
+// (purge / retention) and must not come back.
+function _historyAdoptToolUpdates(local, incoming, addNew) {
+  if (!Array.isArray(local) || !Array.isArray(incoming)) return false;
+  let changed = false;
+  for (const e of incoming) {
+    if (!e || e.kind !== 'tool' || !e.id) continue;
+    const i = local.findIndex(h => h && h.id === e.id);
+    if (i < 0) { if (addNew) { local.push(e); changed = true; } continue; }
+    const mine = local[i];
+    const theirsDone = !!(e.toolUndo && e.toolUndo.done);
+    const mineDone = !!(mine && mine.toolUndo && mine.toolUndo.done);
+    if (theirsDone && !mineDone) { local[i] = e; changed = true; }
+  }
+  return changed;
+}
+
 try {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes.sftk_history) return;
-    const incoming = (changes.sftk_history.newValue || []).filter(e => e && e.kind === 'tool' && !_history.some(h => h && h.id === e.id));
-    if (!incoming.length) return;
-    _history.push(...incoming);
+    if (!_historyAdoptToolUpdates(_history, changes.sftk_history.newValue || [], true)) return;
     if (_currentView === 'history' && typeof renderHistory === 'function') renderHistory();
   });
 } catch (_) { /* no storage events outside the extension page */ }
 
 async function storageSaveHistory() {
+  // 2026-11-14: re-read before writing, so a done mark the popup set since the
+  // last storage event is never written over with this page's stale copy.
+  try {
+    const cur = (await chrome.storage.local.get('sftk_history')).sftk_history;
+    _historyAdoptToolUpdates(_history, cur, false);
+  } catch (_) { /* no storage to read: nothing to keep */ }
   // Two tiers (user 2026-08-11: "we can hit limits there very fast") — the
   // hot tier stays the newest 100 in chrome.storage; overflow runs are
   // ARCHIVED to IndexedDB (on-PC, GB-scale) instead of deleted forever.

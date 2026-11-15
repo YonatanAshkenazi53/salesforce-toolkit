@@ -88,7 +88,7 @@ const { sftkDryRunAgainst, sftkPiiPolicyCovers, sftkPiiRuleFor, sftkPiiDryPlan,
         sftkPiiDryPlanLine, sftkPiiMaskSampleRows } =
   extractFunctions('studio-transfer.js',
     ['sftkDryRunAgainst', 'sftkPiiPolicyCovers', 'sftkPiiRuleFor', 'sftkPiiDryPlan',
-     'sftkPiiDryPlanLine', 'sftkPiiMaskSampleRows'],
+     'sftkPiiDryPlanLine', 'sftkPiiMaskSampleRows', 'sftkChildCountWhere'],
     { 'studio-core.js': ['soqlStrLit'],
       'sftk-pii.js': ['sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiMaskValue'] });
 

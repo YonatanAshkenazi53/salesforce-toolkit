@@ -108,12 +108,25 @@ function sftkOhReadProblem(r) {
 
 // PURE. Active flows pinned 3+ releases below the org's own release.
 // max: sftkApiVerMax(...) → { version, num, label }; records: Tooling Flow rows
-// [{ ApiVersion, Definition: { DeveloperName, NamespacePrefix } }].
-// Packaged flows (a namespace) are the publisher's to change — counted, never listed.
+// [{ ApiVersion, ManageableState, Definition: { DeveloperName, NamespacePrefix, ManageableState } }].
+// Packaged flows are the publisher's to change — counted, never listed.
+// 2026-11-14: "packaged" is decided by ManageableState through sftkFlowIsLocked
+// (sftk-apiver.js), the API versions tool's own rule. A namespace alone is NOT
+// packaged: in your own namespaced dev / packaging org every flow you can edit
+// carries the namespace, and the old namespace test skipped them all and said
+// "no active flow of its own" — a false all-clear. The namespace is only the
+// fallback when the state was not read, and a flow skipped on that guess alone
+// keeps the card off the good tone.
 function sftkOhApiVerVerdict(max, records) {
-  const list = Array.isArray(records) ? records : [];
-  const own = list.filter(r => r && !(r.Definition && r.Definition.NamespacePrefix));
-  const packaged = list.filter(r => r).length - own.length;
+  const list = (Array.isArray(records) ? records : []).filter(r => r);
+  const stateOf = r => {
+    const st = r.ManageableState != null ? r.ManageableState : (r.Definition && r.Definition.ManageableState);
+    return st == null ? '' : String(st);
+  };
+  const locked = r => sftkFlowIsLocked({ ManageableState: stateOf(r) || null, NamespacePrefix: (r.Definition && r.Definition.NamespacePrefix) || null });
+  const own = list.filter(r => !locked(r));
+  const packaged = list.length - own.length;
+  const guessed = list.filter(r => locked(r) && !stateOf(r)).length;
   const behind = [];
   let unreadable = 0;
   for (const r of own) {
@@ -124,10 +137,14 @@ function sftkOhApiVerVerdict(max, records) {
   behind.sort((a, b) => b.lag - a.lag || String(a.name).localeCompare(String(b.name)));
   const lines = behind.map(b => `${b.name} — API ${b.api} · ${b.lag} releases behind`);
   if (unreadable) lines.push(`${unreadable} active flow(s) have no readable API version — not judged`);
-  if (packaged) lines.push(`${packaged} active flow(s) come from installed packages — only the publisher can change their API version, not counted`);
+  if (packaged - guessed) lines.push(`${packaged - guessed} active flow(s) come from installed packages — only the publisher can change their API version, not counted`);
+  if (guessed) lines.push(`${guessed} active flow(s) carry a namespace but Salesforce did not say whether they are installed from a package — not judged`);
   const release = `${max.label || 'this release'}, API ${max.version}`;
   if (behind.length) {
     return { tone: 'warn', headline: `${behind.length} active flow(s) pinned 3 or more releases below this org's release (${release})`, lines };
+  }
+  if (guessed) {
+    return { tone: 'warn', headline: `No judged flow is 3 or more releases behind (${release}), but ${guessed} namespaced flow(s) could not be told apart from your own — NOT an all-clear`, lines };
   }
   if (unreadable) {
     return { tone: 'warn', headline: `No judged flow is 3 or more releases behind (${release}), but ${unreadable} could not be judged — NOT an all-clear`, lines };
@@ -184,28 +201,76 @@ function sftkOhPageDescribeVerdict(descRes, pageId, devName, pages) {
   return { answered: true, isDefault: hit, error: '' };
 }
 
-// PURE. One Lightning page → 'assigned' | 'unassigned' | 'unread'.
-// { metaOk, metaError, assignments (count in the page's own metadata),
+// PURE. The Lightning apps' assignment index — the Lightning Pages tool's own
+// source (lightning-pages.js ensureAppIndex). 2026-11-14: this card used to
+// count FlexiPage.Metadata.pageAssignments, a key that does not exist (read
+// live 2026-10-04), so every Home / App page and every page assigned through
+// an app was called "assigned to nobody". App default and app + record type +
+// profile assignments live only in the apps' actionOverrides /
+// profileActionOverrides (type Flexipage, content = the page's API name).
+// listRes: the CustomApplication list query answer; reads: one
+// sftkOhBatchItems-shaped slot per listed app. → { ok, error, names }:
+// ok only when the list AND every app's definition were read.
+function sftkOhAppIndex(listRes, reads) {
+  const problem = sftkOhReadProblem(listRes);
+  if (problem) return { ok: false, error: `the list of Lightning apps could not be read (${problem})`, names: [] };
+  const apps = (listRes.records || []).filter(a => a);
+  const names = [];
+  const missing = [];
+  apps.forEach((a, i) => {
+    const r = Array.isArray(reads) ? reads[i] : null;
+    const m = r && r.ok && r.body && r.body.Metadata;
+    if (!m) { missing.push(a.Label || a.DeveloperName || a.Id || 'an app'); return; }
+    for (const o of [...(m.actionOverrides || []), ...(m.profileActionOverrides || [])]) {
+      if (o && String(o.type || '').toLowerCase() === 'flexipage' && o.content) names.push(String(o.content).toLowerCase());
+    }
+  });
+  if (missing.length) {
+    return { ok: false, names,
+      error: `${missing.length} of ${apps.length} Lightning app(s) could not be read (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''})` };
+  }
+  return { ok: true, error: '', names };
+}
+// PURE. How many app assignments name page `devName` (a packaged app may write
+// it as ns__Name — the Lightning Pages tool's own matching).
+function sftkOhAppCount(index, devName) {
+  const d = String(devName || '').toLowerCase();
+  if (!d || !index || !Array.isArray(index.names)) return 0;
+  return index.names.filter(c => c === d || c.endsWith(`__${d}`)).length;
+}
+
+// PURE. One Lightning page → 'assigned' | 'unassigned' | 'unread' | 'notjudged'.
+// { metaOk, metaError, assignments (app assignments naming it, sftkOhAppCount),
+//   appsOk, appsError (did the whole app index answer),
 //   needsProbe (the page sits on an object, so its org-default must be looked up),
 //   probe (sftkOhPageDescribeVerdict result, or null when no describe was read) }.
 // 'unassigned' only when EVERY read that could show an assignment answered and
-// found none — the same rule as the Lightning Pages tool's "Not assigned".
+// found none — the same rule as the Lightning Pages tool's "Not assigned":
+// both the object's describe and every Lightning app.
+// 2026-11-14: a page with no object (Home, App page…) is 'notjudged', as in the
+// Lightning Pages tool — the org default Home page and an app's navigation
+// items are not read here, so "nobody" can never be proved for it.
 function sftkOhPageState(x) {
   const s = x || {};
-  if (!s.metaOk) return { state: 'unread', why: `its assignments could not be read (${s.metaError || 'read failed'})` };
   if (Number(s.assignments) > 0) return { state: 'assigned', why: '' };
-  if (!s.needsProbe) return { state: 'unassigned', why: '' };
+  if (!s.metaOk) return { state: 'unread', why: `its assignments could not be read (${s.metaError || 'read failed'})` };
+  if (!s.needsProbe) return { state: 'notjudged', why: 'not tied to an object — its org default and app navigation are not read here' };
   if (!s.probe) return { state: 'unread', why: "its object could not be described, so its org-default was not looked up" };
   if (s.probe.isDefault) return { state: 'assigned', why: '' };
   if (!s.probe.answered) return { state: 'unread', why: `its object's org-default check failed (${s.probe.error || 'no answer'})` };
+  if (s.appsOk !== true) return { state: 'unread', why: `its app assignments could not be read (${s.appsError || 'the Lightning apps were not read'})` };
   return { state: 'unassigned', why: '' };
 }
 
 // PURE. Lightning pages assigned to nobody. rows: [{ label, type, object, managed, state, why }]
 // (state from sftkOhPageState); notJudged: pages of types that have no assignment
-// concept here (Flow / Login pages), counted and said.
+// concept here (Flow / Login pages), counted and said. Rows in state
+// 'notjudged' (Home / App pages, 2026-11-14) are counted and said too — never
+// listed as unassigned and never counted as checked.
 function sftkOhPagesVerdict(rows, notJudged) {
-  const list = Array.isArray(rows) ? rows : [];
+  const all = Array.isArray(rows) ? rows : [];
+  const list = all.filter(r => r.state !== 'notjudged');
+  const noObject = all.length - list.length;
   const nobody = list.filter(r => r.state === 'unassigned').sort((a, b) => String(a.label).localeCompare(String(b.label)));
   const unread = list.filter(r => r.state === 'unread').sort((a, b) => String(a.label).localeCompare(String(b.label)));
   const kind = r => `${r.type || 'page'}${r.object ? ` · ${r.object}` : ''}${r.managed ? ' · from a package' : ''}`;
@@ -215,6 +280,7 @@ function sftkOhPagesVerdict(rows, notJudged) {
     ...nobody.map(r => `${name(r)} (${kind(r)}) — assigned to nobody`),
     ...unread.map(r => `${name(r)} (${kind(r)}) — could not be checked: ${r.why} — NOT known to be assigned`),
   ];
+  if (noObject) lines.push(`${noObject} Home / App page(s) not judged — the org default Home page and app navigation are not read here, so nothing is claimed about them`);
   if (notJudged) lines.push(`${notJudged} Flow / Login page(s) not judged — they are assigned outside this mechanism`);
   const read = list.length - unread.length;
   if (nobody.length) {
@@ -222,6 +288,9 @@ function sftkOhPagesVerdict(rows, notJudged) {
   }
   if (unread.length) {
     return { tone: 'warn', headline: `No unassigned page found among the ${read} that were read, but ${unread.length} could not be checked — NOT an all-clear`, lines };
+  }
+  if (!list.length && noObject) {
+    return { tone: 'info', headline: `No record page to check — ${noObject} Home / App page(s) are not judged by this card`, lines };
   }
   return { tone: 'good', headline: list.length ? `Every one of the ${list.length} Lightning page(s) checked is assigned somewhere` : 'This org has no Lightning page to check', lines };
 }
@@ -439,7 +508,7 @@ const OH_CARDS = [
       const max = sftkApiVerMax(v);
       if (!max) throw new Error('the org listed no API versions');
       const r = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: true, _silentError: true,
-        query: "SELECT Id, ApiVersion, Status, Definition.DeveloperName, Definition.NamespacePrefix FROM Flow WHERE Status = 'Active'" });
+        query: "SELECT Id, ApiVersion, Status, ManageableState, Definition.DeveloperName, Definition.NamespacePrefix, Definition.ManageableState FROM Flow WHERE Status = 'Active'" });
       const problem = sftkOhReadProblem(r);
       if (problem) throw new Error(problem);
       return { ...sftkOhApiVerVerdict(max, r.records || []), fix: { label: 'Open ⚙ API versions', popupTab: 'dependencies' } };
@@ -448,7 +517,7 @@ const OH_CARDS = [
   {
     id: 'pages', icon: '📄', title: 'Lightning pages assigned to nobody',
     what: 'Lightning pages with no app, profile or record-type assignment and that are not their object’s org default. A page counts only when every read that could show an assignment answered; a page whose reads failed is listed as “could not be checked”, never as unassigned.',
-    calls: () => '1 + 1 per 10 pages + 1 per 200 custom objects + 1 per 5 objects with record pages',
+    calls: () => '2 + 1 per 10 pages + 1 per 10 Lightning apps + 1 per 200 custom objects + 1 per 5 objects with record pages',
     async run(sess) {
       const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: true, _silentError: true,
         query: 'SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState FROM FlexiPage ORDER BY MasterLabel' });
@@ -479,6 +548,13 @@ const OH_CARDS = [
       const bust = Date.now();
       const descReads = await _ohBatchRead(sess, objs.map(o => `services/data/v62.0/sobjects/${encodeURIComponent(o)}/describe/?_=${bust}`), 5);
       const descOf = new Map(objs.map((o, i) => [o, descReads[i]]));
+      // Pass 4 — the Lightning apps' definitions: app default and app + record
+      // type + profile assignments live there, not in the page (2026-11-14).
+      const appList = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: true, _silentError: true,
+        query: "SELECT Id, DeveloperName, Label FROM CustomApplication WHERE UiType = 'Lightning'" });
+      const appReads = sftkOhReadProblem(appList) ? []
+        : await _ohBatchRead(sess, (appList.records || []).filter(a => a).map(a => `services/data/v62.0/tooling/sobjects/CustomApplication/${encodeURIComponent(a.Id)}`), 10);
+      const appIndex = sftkOhAppIndex(appList, appReads);
       const rows = metas.map(x => {
         const api = apiOf(x);
         const needsProbe = !!x.raw;
@@ -489,7 +565,7 @@ const OH_CARDS = [
           probe = sftkOhPageDescribeVerdict(body, x.page.Id, (x.m && x.m.FullName) || x.page.DeveloperName, all);
         }
         const st = sftkOhPageState({ metaOk: x.ok, metaError: x.error, needsProbe,
-          assignments: x.ok ? ((x.m.Metadata && x.m.Metadata.pageAssignments) || []).length : 0, probe });
+          assignments: sftkOhAppCount(appIndex, x.page.DeveloperName), appsOk: appIndex.ok, appsError: appIndex.error, probe });
         return { label: x.page.MasterLabel || x.page.DeveloperName, devName: x.page.DeveloperName || '', type: x.page.Type, object: api || (x.raw ? '(object not named)' : ''),
           managed: (x.page.ManageableState || 'unmanaged') !== 'unmanaged', state: st.state, why: st.why };
       });

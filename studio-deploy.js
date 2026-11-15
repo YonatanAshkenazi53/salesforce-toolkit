@@ -923,18 +923,43 @@ function sftkDeployParentsVerdict(steps) {
   return { cls: 'ok', text: `✓ all ${s.length} parent object(s) aligned` };
 }
 
-// PURE. One numbered step per OUTSIDE object, in first-seen order, naming every
-// object.field of the deployment that needs it.
-function sftkDeployOrderSteps(objects) {
+// PURE. One numbered step per OUTSIDE object, naming every object.field of the
+// deployment that needs it. parentDeps (optional, { refObj: [outside objects it
+// points at] }) puts an outside object AFTER the outside objects it needs itself
+// (2026-11-14: PricebookEntry was step 6 above Product2, step 7 — its journey ran
+// first and every insert was refused). Otherwise first-seen order; a cycle keeps
+// first-seen order for the objects caught in it.
+function sftkDeployOrderSteps(objects, parentDeps) {
   const byRef = new Map();
   for (const o of (objects || [])) for (const g of (o.parents || [])) {
     if (!byRef.has(g.refObj)) byRef.set(g.refObj, { refObj: g.refObj, empty: !!g.empty, required: false, neededBy: [], forObj: o.obj,
-      srcCount: (g.srcCount === undefined ? null : g.srcCount) });
+      srcCount: (g.srcCount === undefined ? null : g.srcCount), dependsOn: [] });
     const s = byRef.get(g.refObj);
     s.neededBy.push({ obj: o.obj, field: g.field, required: !!g.required });
     if (g.required) s.required = true;
   }
-  return [...byRef.values()];
+  const seen = [...byRef.values()];
+  const deps = parentDeps || {};
+  for (const s of seen) s.dependsOn = (deps[s.refObj] || []).filter(r => r !== s.refObj && byRef.has(r));
+  const out = [], placed = new Set();
+  while (out.length < seen.length) {
+    // the first not-yet-placed step whose own parents are all placed; none (a cycle) → the first not placed
+    const s = seen.find(x => !placed.has(x.refObj) && x.dependsOn.every(r => placed.has(r)))
+      || seen.find(x => !placed.has(x.refObj));
+    placed.add(s.refObj); out.push(s);
+  }
+  return out;
+}
+
+// PURE. The step '← next' points at: the first unsettled step whose own parents (dependsOn) are all
+// settled; -1 when every step is settled. A cycle among the unsettled ones falls back to the first
+// unsettled step (2026-11-14: never send the user to a parent its own parents would make fail).
+function sftkDeployNextStepIdx(steps, settled) {
+  const s = steps || [];
+  const unsettled = new Set(s.filter(x => !settled(x)).map(x => x.refObj));
+  if (!unsettled.size) return -1;
+  const ready = s.findIndex(x => unsettled.has(x.refObj) && !(x.dependsOn || []).some(r => unsettled.has(r)));
+  return ready >= 0 ? ready : s.findIndex(x => unsettled.has(x.refObj));
 }
 
 async function _depPaintOrder(p, scan) {
@@ -969,7 +994,7 @@ async function _depPaintOrder(p, scan) {
     _depWireFolds(h);
     return;
   }
-  const steps = sftkDeployOrderSteps(objects).map(s => {
+  const steps = sftkDeployOrderSteps(objects, data.parentDeps).map(s => {
     const vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, s.refObj)];
     let state = sftkParentStepState(s, vd);
     // Checked on load when it is cheap; a big object waits for a click.
@@ -987,7 +1012,7 @@ async function _depPaintOrder(p, scan) {
   sftkParentGapSetGate(p, scan, rootObj ? rootObj.parents : [], (scan.missingInTarget || []).length > 0);
 
   const settled = s => s.state === 'done' || s.state === 'notneeded';
-  const nextIdx = steps.findIndex(s => !settled(s));
+  const nextIdx = sftkDeployNextStepIdx(steps, settled);
   const anyDoomed = steps.some(s => s.state === 'empty' && s.required);
   const anyEmpty = steps.some(s => s.state === 'empty');
   const need = s => s.neededBy.map(n => `${esc(n.obj)}.${esc(n.field)}${n.required ? ' <b>(required)</b>' : ''}`).join(' · ');

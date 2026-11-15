@@ -50,6 +50,11 @@
   --c-brand-light:  #1B96FF;
   --c-brand-subtle: #E8F4FD;
   --c-brand-border: #C5DBF0;
+  /* 2026-11-14: a brand-filled surface under white text (the Data Studio
+     card). Same as the brand in light; the dark theme sets a darker blue,
+     since white on its light #1B96FF brand is only 3.1:1. */
+  --c-brand-fill:       var(--c-brand);
+  --c-brand-fill-hover: var(--c-brand-hover);
 
   /* ── §A5 colour — semantic status ────────────────────────────────────── */
   --c-good-fg: #2E844A;  --c-good-bg: #EEF7EF;  --c-good-border: #B3DEB8;
@@ -158,6 +163,9 @@ body.sftk-dark {
   --c-brand-light:   #57A3F2;
   --c-brand-subtle:  #14304D;
   --c-brand-border:  #235A8C;
+  /* 2026-11-14: white on #0B5CAB is 6.7:1, on #014486 9.6:1 (QA contrast). */
+  --c-brand-fill:       #0B5CAB;
+  --c-brand-fill-hover: #014486;
   --c-good-fg: #4CCA75; --c-good-bg: #17301F; --c-good-border: #2E5A3C;
   --c-warn-fg: #F5A623; --c-warn-bg: #3A2A10; --c-warn-border: #6B4A15;
   --c-critical-fg: #FF6B6B; --c-critical-bg: #3A1518; --c-critical-border: #7A2B2B;
@@ -318,10 +326,17 @@ body {
   z-index: 10;
 }
 
+/* 2026-11-14: at 1280x720 with 150% scaling (853 CSS px) the brand name
+   wrapped to three lines and touched the top edge of the 52px bar. The brand
+   may now shrink (min-width:0) and the name stays on one line, cut with an
+   ellipsis, so the bar keeps its height on any screen and zoom. */
 .app-brand {
   display: flex;
   align-items: center;
   gap: var(--sp-5);
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-right: var(--sp-5);
 }
 
 .app-brand-name {
@@ -329,6 +344,10 @@ body {
   font-weight: var(--fw-semibold);
   color: var(--header-text);
   letter-spacing: .1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .app-topbar-actions {
@@ -1242,6 +1261,17 @@ body {
   border-color: var(--c-brand-hover);
   box-shadow: var(--sh-md);
 }
+/* 2026-11-14: the dark theme's brand (#1B96FF) and its hover (#57A3F2) are
+   light blues — white text on them is 3.1:1 and less. The white-text CTA
+   takes the darker --c-brand-fill pair there instead. */
+body.sftk-dark .home-studio-btn {
+  background: var(--c-brand-fill);
+  border-color: var(--c-brand-fill);
+}
+body.sftk-dark .home-studio-btn:hover {
+  background: var(--c-brand-fill-hover);
+  border-color: var(--c-brand-fill-hover);
+}
 .home-studio-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .home-studio-icon {
   width: 34px;
@@ -1266,9 +1296,12 @@ body {
   letter-spacing: -.1px;
   color: var(--c-text-inverse);
 }
+/* 2026-11-14: was rgba(255,255,255,.80) — 3.5:1 on the light brand blue and
+   2.5:1 on the dark one, both under 4.5:1 for 11-12px text. Solid white is
+   4.65:1 on #0176D3; the dark theme also needs its darker --c-brand-fill. */
 .home-studio-desc {
   font-size: var(--fs-sm);
-  color: rgba(255,255,255,.80);
+  color: var(--c-text-inverse);
   line-height: 1.4;
 }
 .home-studio-arrow {
