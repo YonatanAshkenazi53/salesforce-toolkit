@@ -1141,7 +1141,7 @@ const UserCopy = (() => {
       if (btn) { btn.disabled = false; btn.textContent = '📋 Copy Selected'; }
       const loadingEl = document.getElementById('ucLoading');
       if (loadingEl) { loadingEl.style.display = 'none'; loadingEl.innerHTML = sftkCatSm('Loading permissions…'); }
-      showResult(`⚠️ The copy stopped unexpectedly (${esc((e && e.message) || String(e))}). Some changes may already be written: re-open both users to check, and see History (top bar).`, true);
+      showResult(`⚠️ The copy stopped unexpectedly (${esc((e && e.message) || String(e))}). Some changes may already be written: re-open both users to check, and see Activity (top bar).`, true);
     } finally {
       copyRunning = false;
       setChipsLocked(false);
@@ -1179,7 +1179,7 @@ const UserCopy = (() => {
           '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
           '<li><b>Replaced</b><span>A profile or role change replaces the old one</span></li>' +
           `<li><b>Added</b><span>Permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)})</span></li>` +
-          '<li><b>Undo</b><span>Recorded in this tool’s History (top bar), where ↩ Undo reverses it</span></li></ol></div>', needsCheckbox: true },
+          '<li><b>Undo</b><span>Recorded in Activity (top bar), where ↩ Undo reverses it</span></li></ol></div>', needsCheckbox: true },
         confirmLabel: '📋 Copy access',
         production: gate.production ? { label: gate.label } : null,
       });

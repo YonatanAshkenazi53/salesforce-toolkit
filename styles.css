@@ -7234,6 +7234,14 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .sftk-th-inline { margin: 10px 0; border: 1px solid var(--border, #d8dde6); border-radius: 8px; padding: 6px 10px; }
 .sftk-th-inline > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 2px 0; }
 .sftk-th-inline[open] > summary { margin-bottom: 8px; }
+.sftk-th-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; margin: -2px 0 8px; }
+.sftk-th-note { flex: 1 1 240px; font-size: 12px; color: var(--subtext, #5b6472); text-align: left; overflow-wrap: anywhere; }
+.sftk-th-note-bad { color: var(--danger, #ba0517); }
+#sftkThModalNote .sftk-th-note { margin: 0 0 8px; }
+.sftk-th-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sftk-th-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-right: auto; }
+.modal-actions.sftk-th-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.sftk-th-clear { color: var(--danger, #ba0517); }
 
 /* The (?) help badge. onboarding.js gives it a bubble; without that file (the
    public build, 2026-10-06) it is a plain badge with a title tooltip. */

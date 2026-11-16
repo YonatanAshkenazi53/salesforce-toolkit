@@ -106,10 +106,15 @@ describe('the Toolkit side (sftk-toolhistory.js)', () => {
     expect(pop).toContain("if (typeof sftkToolHistorySetTab === 'function') sftkToolHistorySetTab(tabName);");
     expect(pop).toContain("if (typeof sftkToolHistorySetTab === 'function') sftkToolHistorySetTab('');   // home is no tool");
   });
-  it('the button shows only while the open tool has entries, with their number', () => {
-    expect(TH).toContain("b.style.display = n ? '' : 'none';");
-    expect(TH).toContain('const n = _tab ? (await entriesFor(_tab)).length : 0;');
-    expect(TH).toContain('return sftkHistoryForTab(all, tab);');
+  it('the top bar has one button for what was done — Activity; the tool\'s own History button is never shown (owner 2026-11-16)', () => {
+    expect(TH).toContain("function button() { const b = document.getElementById('sftkThBtn'); if (b) b.style.display = 'none'; }");
+    expect(TH).not.toContain("b.style.display = n ? '' : 'none';");
+    expect(TH).toContain('const list = sftkHistoryForTab(all, tab);');
+    // Activity is where the Toolkit's changes are backed up, restored and cleared
+    const FEED = read('sftk-feed.js');
+    expect(FEED).toContain('id="sftkFeedManage"');
+    expect(FEED).toContain('window.sftkToolHistoryManage()');
+    expect(TH).toContain("window.sftkToolHistoryManage = () => open('*');");
   });
   it('↩ Undo is the shared undo — one confirmation, every step re-read — and the list never writes by itself', () => {
     expect(TH).toContain('const r = await sftkHistoryUndo(id, {});');
@@ -133,12 +138,14 @@ describe('the Toolkit side (sftk-toolhistory.js)', () => {
     expect(TH).toContain("chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.sftk_history) refreshAll(); });");
     expect(TH).toContain("document.querySelectorAll('[data-sftk-th-inline]').forEach(h => inline(h, h.getAttribute('data-sftk-th-inline')));");
     // registered while still empty, so the first change of a session shows up
-    expect(TH.indexOf("host.setAttribute('data-sftk-th-inline', tab);")).toBeLessThan(TH.indexOf("if (!list.length) { host.innerHTML = ''; return; }"));
+    expect(TH.indexOf("host.setAttribute('data-sftk-th-inline', tab);")).toBeLessThan(TH.indexOf("// nothing listed: nothing drawn"));   // 2026-11-16: an emptied list may carry the note of a clear and ⬆ Restore
+    expect(TH.indexOf("// nothing listed: nothing drawn")).toBeGreaterThan(0);
   });
   it('Field Cleaner lists its own changes under its results; its restore points keep their own name', () => {
     const FC = read('field-cleaner.js');
     expect(FC).toContain('<div id="fcToolHist"></div>');
-    expect(FC).toContain("if (typeof sftkToolHistoryInline === 'function') sftkToolHistoryInline(eid('fcToolHist'), 'fields');");
+    // 2026-11-16: only the picked field's changes — the rest is in Activity
+    expect(FC).toContain("if (typeof sftkToolHistoryInline === 'function') sftkToolHistoryInline(eid('fcToolHist'), 'fields', { subject: _fcSubject });");
     expect(FC).toContain('↩ Restore points — ${mine.length} piece${mine.length === 1 ? \'\' : \'s\'} of metadata saved before a fix');
     expect(FC).not.toContain('🧾 Cleanup history —');
   });

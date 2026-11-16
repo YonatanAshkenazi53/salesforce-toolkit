@@ -19,7 +19,7 @@ describe('executeCopy — the confirmation comes first', () => {
     expect(fn).toMatch(/\.uc-psg-cb:checked/);
     expect(fn).toMatch(/\.uc-grp-cb:checked/);
     expect(fn).toContain("Permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)})");
-    expect(fn).toContain("Recorded in this tool’s History (top bar), where ↩ Undo reverses it");   // campaign 3 phase 3: History undo — shown in the tool since 2026-10-05
+    expect(fn).toContain("Recorded in Activity (top bar), where ↩ Undo reverses it");   // campaign 3 phase 3: History undo — shown in the tool since 2026-10-05
     expect(fn).toMatch(/needsCheckbox: true/);
     expect(fn).toMatch(/confirmLabel: '📋 Copy access'/);
     expect(fn).toMatch(/if \(!sure\) return;/);

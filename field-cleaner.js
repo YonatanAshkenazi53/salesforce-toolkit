@@ -1159,6 +1159,8 @@ const FieldCleaner = (() => {
 
   function selectField(field) {
     _selField = field;
+    // the lists under the results are about the picked field (owner 2026-11-16): they follow the pick
+    try { if (typeof renderSnapshotLog === 'function') renderSnapshotLog(); } catch (_) { /* a view */ }
 
     const pill = eid('fcPill');
     if (pill) {
@@ -9640,7 +9642,7 @@ const FieldCleaner = (() => {
     renderUndoAll();
     // 🧾 what Field Cleaner changed, with ↩ Undo — listed here, in the tool
     // (user 2026-10-05: "it should show under the field cleaner")
-    if (typeof sftkToolHistoryInline === 'function') sftkToolHistoryInline(eid('fcToolHist'), 'fields');
+    if (typeof sftkToolHistoryInline === 'function') sftkToolHistoryInline(eid('fcToolHist'), 'fields', { subject: _fcSubject });   // only this field's changes (owner 2026-11-16); the rest is in Activity
     const el = eid('fcSnapLog');
     if (!el) return;
     const store = await chrome.storage.local.get(SNAP_KEY);

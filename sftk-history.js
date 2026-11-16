@@ -442,10 +442,91 @@ function sftkHistoryToolTab(entry) {
 function sftkHistoryTabLabel(tab) {
   return Object.prototype.hasOwnProperty.call(SFTK_TOOLKIT_TAB_LABELS, String(tab)) ? SFTK_TOOLKIT_TAB_LABELS[String(tab)] : '';
 }
+// Is the entry one of this tab's? '*' = any Toolkit tool (Activity works on all of them at once, 2026-11-16). PURE.
+function sftkHistoryInTab(e, tab) {
+  const t = sftkHistoryToolTab(e);
+  return String(tab) === '*' ? !!t : (!!t && t === String(tab));
+}
+// The entries about one subject (Field Cleaner: "Account.Field__c"): by the entry's own `subject`; one written before
+// entries carried a subject belongs when its title names the subject as a whole word. PURE.
+function sftkHistoryForSubject(list, subject) {
+  const subj = String(subject || '');
+  if (!subj) return [];
+  const word = new RegExp('(^|[^A-Za-z0-9_.])' + subj.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^A-Za-z0-9_])');
+  return (Array.isArray(list) ? list : []).filter(e => e && (e.subject ? e.subject === subj : word.test(String(e.profileName || ''))));
+}
 // One tool's entries, newest first. PURE.
 function sftkHistoryForTab(all, tab) {
-  return (Array.isArray(all) ? all : []).filter(e => sftkHistoryToolTab(e) === String(tab))
+  return (Array.isArray(all) ? all : []).filter(e => sftkHistoryInTab(e, tab))
     .sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
+}
+// Clear one tool's History (owner 2026-11-16: "we should add a button that clears the history"). What stays: every
+// entry of another tool, every deployment. PURE.
+function sftkHistoryWithoutTab(all, tab) {
+  return (Array.isArray(all) ? all : []).filter(e => !sftkHistoryInTab(e, tab));
+}
+// → how many entries were removed. Nothing in an org is touched: only the record of the changes, and with it their ↩ Undo.
+async function sftkHistoryClearTab(tab) {
+  if (String(tab) !== '*' && !sftkHistoryTabLabel(tab)) return 0;
+  if (_sftkHistStudio()) {
+    const keep = sftkHistoryWithoutTab(_history, tab), n = _history.length - keep.length;
+    if (n) { _history.splice(0, _history.length, ...keep); await storageSaveHistory(); }
+    return n;
+  }
+  let list = [];
+  try { list = (await chrome.storage.local.get('sftk_history')).sftk_history || []; } catch (_) { list = []; }
+  const keep = sftkHistoryWithoutTab(list, tab);
+  if (keep.length !== list.length) await chrome.storage.local.set({ sftk_history: keep });
+  return list.length - keep.length;
+}
+// ── A backup file of one tool's History, WITH its undo (owner 2026-11-16: "and a way for users to backup their
+// activity … along with undo") ──────────────────────────────────────────────────────────────────────────────────
+// The file is the entries as they are stored — the earlier state each ↩ Undo writes back is inside the entry — so a
+// restored entry can be undone exactly like one that never left. PURE.
+const SFTK_HISTORY_BACKUP_FORMAT = 'sftk-history-backup';
+function sftkHistoryBackupOf(all, tab, nowIso) {
+  const entries = sftkHistoryForTab(all, tab);
+  return { format: SFTK_HISTORY_BACKUP_FORMAT, version: 1, tab: String(tab), tool: String(tab) === '*' ? 'Toolkit' : sftkHistoryTabLabel(tab), exportedAt: String(nowIso || ''), count: entries.length, entries };
+}
+// The text of a file → { ok, entries, dropped, why }. Only this tool's own entries are taken: an entry of another
+// tool, a deployment, or anything that is not a history entry is counted in `dropped` and left out. PURE.
+function sftkHistoryBackupRead(text, tab) {
+  let j;
+  try { j = JSON.parse(String(text || '')); } catch (_) { return { ok: false, entries: [], dropped: 0, why: 'This file is not a History backup (it is not JSON).' }; }
+  if (!j || j.format !== SFTK_HISTORY_BACKUP_FORMAT || !Array.isArray(j.entries)) return { ok: false, entries: [], dropped: 0, why: 'This file is not a History backup made by the Toolkit.' };
+  if (Number(j.version) > 1) return { ok: false, entries: [], dropped: 0, why: 'This backup was made by a newer version of the Toolkit. Update the Toolkit, then restore it.' };
+  // a backup of everything can be read by one tool (it takes its own); one tool's backup by Activity; never tool A's by tool B
+  if (String(tab) !== '*' && String(j.tab) !== '*' && String(j.tab) !== String(tab)) return { ok: false, entries: [], dropped: 0, why: `This is a backup of ${sftkHistoryTabLabel(j.tab) || 'another tool'} — restore it from Activity.` };
+  const good = j.entries.filter(e => e && typeof e === 'object' && typeof e.id === 'string' && e.id && typeof e.startedAt === 'string'
+    && typeof e.targetOrg === 'string' && sftkHistoryInTab(e, tab));
+  if (!good.length) return { ok: false, entries: [], dropped: j.entries.length, why: String(tab) === '*' ? 'This backup holds no change made with a Toolkit tool.' : 'This backup holds no change of this tool.' };
+  return { ok: true, entries: good, dropped: j.entries.length - good.length, why: '' };
+}
+// What is already in History stays as it is (it may have been undone since the backup); the rest is added, marked
+// with the date it came back from a file. → { list (oldest first), added, skipped }. PURE.
+function sftkHistoryMergeBackup(list, entries, nowIso) {
+  const base = Array.isArray(list) ? list : [], inc = Array.isArray(entries) ? entries : [];
+  const have = new Set(base.map(e => e && e.id));
+  const add = [];
+  for (const e of inc) { if (!e || have.has(e.id)) continue; have.add(e.id); add.push({ ...e, restoredFromBackup: String(nowIso || '') || true }); }
+  const out = [...base, ...add].sort((a, b) => String((a && a.startedAt) || '').localeCompare(String((b && b.startedAt) || '')));
+  return { list: add.length ? out : base, added: add.length, skipped: inc.length - add.length };
+}
+// → { added, skipped, archived }: archived = older entries the list had no room for (they go to the on-PC archive).
+async function sftkHistoryRestoreBackup(entries, nowIso) {
+  if (_sftkHistStudio()) {
+    const m = sftkHistoryMergeBackup(_history, entries, nowIso);
+    if (m.added) { _history.splice(0, _history.length, ...m.list); await storageSaveHistory(); }
+    return { added: m.added, skipped: m.skipped, archived: 0 };
+  }
+  let list = [];
+  try { list = (await chrome.storage.local.get('sftk_history')).sftk_history || []; } catch (_) { list = []; }
+  const m = sftkHistoryMergeBackup(list, entries, nowIso);
+  if (!m.added) return { added: 0, skipped: m.skipped, archived: 0 };
+  const split = (typeof sftkHistorySplit === 'function') ? sftkHistorySplit(m.list, SFTK_HISTORY_CAP) : { keep: m.list.slice(-SFTK_HISTORY_CAP), overflow: [] };
+  if (split.overflow.length && typeof sftkArchPut === 'function') { try { await sftkArchPut(split.overflow); } catch (_) {} }
+  await chrome.storage.local.set({ sftk_history: split.keep });
+  return { added: m.added, skipped: m.skipped, archived: split.overflow.length };
 }
 // Data Studio's side of the split: its own entries, and how many live in which Toolkit tab. PURE.
 function sftkHistoryStudioSplit(all) {
