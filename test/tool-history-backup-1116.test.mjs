@@ -23,7 +23,7 @@ function load(initial) {
     sftkHistorySplit: (list, cap) => (list.length <= cap ? { keep: list, overflow: [] } : { keep: list.slice(-cap), overflow: list.slice(0, list.length - cap) }),
     sftkArchPut: async l => { archived.push(...l); },
   });
-  vm.runInContext(read('sftk-history.js') + '\nglobalThis.__x = { sftkHistoryWithoutTab, sftkHistoryClearTab, sftkHistoryBackupOf, sftkHistoryBackupRead, sftkHistoryMergeBackup, sftkHistoryRestoreBackup, sftkToolUndoState, sftkHistoryForSubject, SFTK_HISTORY_CAP };', ctx);
+  vm.runInContext(read('sftk-history.js') + '\nglobalThis.__x = { sftkHistoryWithoutTab, sftkHistoryClearTab, sftkHistoryBackupOf, sftkHistoryBackupRead, sftkHistoryMergeBackup, sftkHistoryRestoreBackup, sftkToolUndoState, sftkHistoryForSubject, sftkHistoryUndoableForRow, SFTK_HISTORY_CAP };', ctx);
   return { H: ctx.__x, store, archived };
 }
 const fc = (n, extra) => ({ id: `fc_${n}`, kind: 'tool', tool: 'Field Cleaner', profileName: `change ${n}`, subject: 'Account.F__c', targetOrg: 'https://a.my.salesforce.com',
@@ -145,6 +145,18 @@ describe('everything at once (Activity) and one field at a time (inside the tool
     expect(H.sftkHistoryForSubject(list, 'Account.F__c').map(e => e.id)).toEqual(['fc_1', 'fc_3']);
     expect(H.sftkHistoryForSubject(list, 'Account.Other__c').map(e => e.id)).toEqual(['fc_2']);
     expect(H.sftkHistoryForSubject(list, '')).toEqual([]);
+  });
+});
+
+describe('a row\'s own changes', () => {
+  it('only that row\'s, only what can still be undone, newest first', async () => {
+    const { H } = load([]);
+    const list = [fc(1, { row: 'A' }), fc(2, { row: 'B' }), fc(3, { row: 'A', startedAt: '2026-11-30T10:00:00.000Z' }), fc(4, { row: 'A', toolUndo: { steps: [{}], done: { ok: true } } }), fc(5)];
+    const q = { tool: 'Field Cleaner', orgUrl: 'https://a.my.salesforce.com', subject: 'Account.F__c' };
+    expect(H.sftkHistoryUndoableForRow(list, { ...q, row: 'A' }).map(e => e.id)).toEqual(['fc_3', 'fc_1']);
+    expect(H.sftkHistoryUndoableForRow(list, { ...q, row: 'B' }).map(e => e.id)).toEqual(['fc_2']);
+    expect(H.sftkHistoryUndoableForRow(list, { ...q, row: '' })).toEqual([]);
+    expect(H.sftkHistoryUndoableForRow(list, { ...q, row: 'A', subject: 'Account.Other__c' })).toEqual([]);
   });
 });
 

@@ -40,7 +40,8 @@ describe('is it the walk of what is on the page?', () => {
 
 describe('the bar\'s sentence', () => {
   it('says which walk, when, where it stopped, how many are left and how many were skipped', () => {
-    expect(fcWalkPausedText(W(), 23)).toBe('⏸ ✂ Remove all was paused on 2026-11-16 at item 7 of 30 — 23 left, 1 skipped by you.');
+    expect(fcWalkPausedText(W(), 24)).toBe(   // 24 open rows, one of them skipped by the user
+      '⏸ ✂ Remove all was paused on 2026-11-16 at item 7 of 30 — 23 left, 1 skipped by you.');
     expect(fcWalkPausedText(W({ swap: true, repl: 'A__c', skipped: [], when: '' }), 1)).toBe('⏸ ⇄ Replace all was paused at item 7 of 30 — 1 left.');
   });
 });

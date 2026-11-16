@@ -1052,17 +1052,19 @@ const PATH_KEYFIELDS = PATH.replace('<fieldNames>Industry</fieldNames>', '<field
 
 // 2026-11-16 (owner: "we said all items must have a delete/remove"): a Path is edited and deleted here — it was a
 // mention with nothing to press. Live: scripts/dev/live/fc-every-row-acts.mjs.
-describe('Path — FULL DELETE: offered', () => {
-  it('a Path is a mention with 🗑, and ✂ / ⇄ for a step\'s key field', () => {
+describe('Path — FULL DELETE: not offered (Salesforce refuses it through its APIs, live 2026-11-16)', () => {
+  it('a Path is a mention with ✂ / ⇄ for a step\'s key field, and no 🗑', () => {
     expect(TYPE_CFG.PathAssistant).toMatchObject({ fixable: false, sev: 'silent' });
-    expect(M.sftkMdDeleteSpec('PathAssistant')).toMatchObject({ mdType: 'PathAssistant', what: 'path' });
+    expect(M.sftkMdDeleteSpec('PathAssistant')).toMatchObject({ mdType: 'PathAssistant', what: 'path', noDelete: true });
     expect(M.sftkMdEditWays('PathAssistant')).toEqual({ remove: true, replace: true });
     expect(M.sftkMdCodeWays('PathAssistant')).toBeNull();
     expect(M.sftkMdPackageFiles('PathAssistant', 'Account_Status_Path', PATH)).not.toBeNull();
-    expect(offered('PathAssistant')).toEqual({ known: true, remove: true, replace: true, del: true });
+    expect(offered('PathAssistant').remove).toBe(true);
+    expect(offered('PathAssistant').replace).toBe(true);
+    expect(FC).toContain('const del = (spec && !spec.noDelete &&');
   });
   it('the delete walk cannot be asked to delete it either: the engine answers that it is not deleted from here', () => {
-    expect(FC).toContain('if (!spec) throw new Error(`A ${cfg.label || type} is not deleted from here — clear it in Setup.`);');
+    expect(FC).toContain('if (!spec || spec.noDelete) throw new Error(`A ${cfg.label || type} is not deleted from here — clear it in Setup.`);');
   });
 });
 

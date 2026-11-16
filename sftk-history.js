@@ -54,6 +54,16 @@ function _sftkHistOrgKey(u) {
 // picked field), so every entry it begins carries it without each call site saying so; an explicit opts.subject wins.
 const _sftkHistSubjects = {};
 function sftkHistorySubjectFor(tool, fn) { if (tool && typeof fn === 'function') _sftkHistSubjects[String(tool)] = fn; }
+// …and which ROW of the tool's list the change was made from (Field Cleaner: the component's id), so the row's own
+// ↩ Undo takes back exactly that change (owner 2026-11-16: "After deletion, we will show an undo button near the
+// deleted/removed metadata items"). Same registry idea: one function per tool, '' when no row is being worked on.
+const _sftkHistRows = {};
+function sftkHistoryRowFor(tool, fn) { if (tool && typeof fn === 'function') _sftkHistRows[String(tool)] = fn; }
+function _sftkHistRow(o) {
+  if (o.row) return String(o.row);
+  const fn = _sftkHistRows[String(o.tool || '')];
+  try { return fn ? String(fn() || '') : ''; } catch (_) { return ''; }
+}
 function _sftkHistSubject(o) {
   if (o.subject) return String(o.subject);
   const fn = _sftkHistSubjects[String(o.tool || '')];
@@ -66,6 +76,7 @@ function sftkHistoryBegin(opts) {
     kind: 'tool',
     tool: String(o.tool || 'tool'),
     profileName: String(o.title || o.tool || 'change'),
+    row: _sftkHistRow(o),               // the row of the tool's list it was made from — that row's ↩ Undo reads it (2026-11-16)
     subject: _sftkHistSubject(o),       // what the change is about (Field Cleaner: "Account.Field__c") — "undo all for this field" reads it (2026-11-15)
     startedAt: new Date().toISOString(),
     completedAt: null,
@@ -394,6 +405,12 @@ function sftkHistoryUndoableFor(all, o) {
       && (e.subject ? e.subject === subj : word.test(String(e.profileName || '')))
       && !e.undoOf && !sftkToolUndoState(e).disabled)
     .sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
+}
+// The changes one row made that can still be undone, newest first. PURE.   o: { tool, orgUrl, subject, row }
+function sftkHistoryUndoableForRow(all, o) {
+  const row = String((o && o.row) || '');
+  if (!row) return [];
+  return sftkHistoryUndoableFor(all, o).filter(e => String(e.row || '') === row);
 }
 // Run them one after the other, with no dialog of their own — the caller asked once for the whole list.
 //   opts: { send?, onStart(i, n, entry), onLog(line), onEnd(i, n, entry, result), undo? (for tests) }

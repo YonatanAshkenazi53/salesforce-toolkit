@@ -489,7 +489,7 @@ describe('Field Cleaner — the choice is made per item, by the button pressed',
   it('the run follows the button, not the mode: replace mode alone moves nothing', () => {
     expect(FC).toContain('function _swapOn() { return _fixSwap === true && _replOn(); }');
     expect(FC).toContain('_fixSwap = !!swap && _replOn();');
-    expect(FC).toContain("finally { _fixSwap = null; _fixWay = ''; }");
+    expect(FC).toContain("finally { _fixSwap = null; _fixWay = ''; _fixingRow = ''; }");   // 2026-11-16: the row a fix works on is cleared with it
     // every fix path asks _swapOn(), none asks the mode
     expect((FC.match(/const swap = _swapOn\(\);/g) || []).length).toBe(4);                 // layout, Lightning page, report, report type
     expect(FC).toContain("const swap = _swapOn() && (type !== 'Flow' || flowPlan.plan.mode === 'active');");

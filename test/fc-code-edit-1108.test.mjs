@@ -126,7 +126,7 @@ describe('the wiring in Field Cleaner', () => {
     expect(FC).toContain("el.outerHTML = _fixEveryHtml(Math.max(_openPairs(root), _walkPairs(root)), _openPairs(root, true), _walkPairs(root));");   // ⇄ and ✂ counted apart
     expect(FC).toContain("if (swap) way = c ? 'code' : 'edit';");
     // 2026-11-11: one take — a kind with no ✂ is no longer left out, the walk asks to delete each as a whole
-    expect(FC).toContain("else if (typeof sftkMdDeleteSpec === 'function' && sftkMdDeleteSpec(type)) way = 'askdelete';");
+    expect(FC).toContain("else if (canDel) way = 'askdelete';");
     expect(FC).toContain("if (r && r.refusedWhy) return _walkDeleteInstead(type, componentId, componentName, r.refusedWhy);");
     expect(FC).toContain("if (!sure) return (why && !_walkStop) ? 'skip' : 'cancel';");
     // the confirm's XML (and a code file's text) can be edited before the deploy (user 2026-11-08: "we can't edit here")

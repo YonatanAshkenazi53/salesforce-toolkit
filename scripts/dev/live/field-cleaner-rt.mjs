@@ -68,7 +68,7 @@ export default async function (h) {
   h.log('FIXED LABELS:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-item-ok')].map(e => e.innerText)`)));
   h.log('INLINE ERRORS:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-inline-error, .fc-item-err, [class*=inline-err]')].map(e => e.innerText.slice(0, 600))`)));
   h.log('snap log:', await dump(h, '#fcSnapLog', 600));
-  h.log('tool history:', await dump(h, '#fcToolHist', 900));
+  h.log('tool history: (not on the page since 2026-11-16 — Activity lists it)');
   await h.eval(`document.querySelector('.fc-item-ok')?.scrollIntoView({ block: 'center' })`);
   await h.sleep(400);
   await h.shot(h.shots + '/fc-rt-after.png');

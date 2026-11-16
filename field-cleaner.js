@@ -307,7 +307,7 @@ function fcWalkResumeWhy(saved, now) {
 function fcWalkPausedText(w, left) {
   const verb = w.swap ? '⇄ Replace all' : '✂ Remove all';
   const d = /^\d{4}-\d\d-\d\d/.test(w.when) ? ` on ${w.when.slice(0, 10)}` : '';
-  return `⏸ ${verb} was paused${d} at item ${Math.min(w.at, w.total).toLocaleString('en-US')} of ${w.total.toLocaleString('en-US')} — ${left.toLocaleString('en-US')} left${w.skipped.length ? `, ${w.skipped.length.toLocaleString('en-US')} skipped by you` : ''}.`;
+  return `⏸ ${verb} was paused${d} at item ${Math.min(w.at, w.total).toLocaleString('en-US')} of ${w.total.toLocaleString('en-US')} — ${Math.max(0, left - w.skipped.length).toLocaleString('en-US')} left${w.skipped.length ? `, ${w.skipped.length.toLocaleString('en-US')} skipped by you` : ''}.`;
 }
 // A custom setting's text value with the field's name taken out (owner 2026-11-16: "we said all items must have a
 // delete/remove"). The value may be the name alone, or a list of names: only "Object.Field" and a bare "Field" go
@@ -807,8 +807,8 @@ const FieldCleaner = (() => {
         <!-- Results area -->
         <div id="fcUndoAll"></div>
         <div id="fcResults"></div>
-        <div id="fcToolHist"></div>
-        <div id="fcSnapLog"></div>
+        <!-- 2026-11-16 (owner: "we should remove history from field cleaner page. same for the restore points. we have
+             the activity tab for them"): the list of changes and the restore points are in Activity (top bar). -->
 
       </div>`;
 
@@ -1320,7 +1320,7 @@ const FieldCleaner = (() => {
         + (ways.remove && !_preWhy(id) ? `<button class="btn btn-secondary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="0" data-way="edit" title="Take the field out of this — only the field’s own places in the XML change (refused, with the reason, when what is left would not work); a restore point is kept">✂ Remove</button>` : '')
       : '';
     // the lead mapping's 🗑 only ever removed the field's line — ✂ Remove is that, said plainly
-    const del = (spec && !(ways && ways.remove && type === 'LeadConvertSettings')) ? `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete this ${esc(spec.what)} from the org — its definition is kept as a restore point; ↩ Undo deploys it back">🗑 Delete ${esc(spec.what)}</button>` : '';
+    const del = (spec && !spec.noDelete && !(ways && ways.remove && type === 'LeadConvertSettings')) ? `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete this ${esc(spec.what)} from the org — its definition is kept as a restore point; ↩ Undo deploys it back">🗑 Delete ${esc(spec.what)}</button>` : '';
     if (!cfgT.fixable) return codeEdits + edits + del;
     const rm = `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Take the field’s reference out of this">✂ Remove</button>`;
     if (!_replOn()) return rm + del;
@@ -1371,7 +1371,7 @@ const FieldCleaner = (() => {
     const tip = 'Goes through every item below that has this way, one by one — the flows, layouts and pages, and every blocker with ✂ / ⇄ inside it, in both lists. Each still asks before it changes anything; ⏸ Pause in any dialog stops the walk, and ▶ Continue goes on from that item — also after this window was closed.';
     const onlySwap = nRp >= 2 && _replOn() && nRm >= 2 && nRp > nRm ? nRp - nRm : 0;
     const whyTip = `${onlySwap} can only be replaced, not removed: Apex, Visualforce, LWC and Aura, formula fields, buttons and links, restriction rules, field updates and inactive validation rules. Cut the field out of one of those and it stops compiling or has nothing left to do — ⇄ swaps the field, ✎ edits by hand.`;
-    return `<span id="fcFixEvery" class="fc-every"><span class="fc-every-lbl" title="${tip}">⚡ Everything at once</span>${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}${onlySwap ? `<span class="fc-every-why" title="${esc(whyTip)}">${onlySwap} only ⇄ — code, formulas, buttons, field updates</span>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}${pw ? `<span class="fc-every-paused"><span>${esc(fcWalkPausedText(pw.saved, _walkLeft(pw.saved.swap, pw.saved.scope)))}${pw.why ? ` ${esc(pw.why[0].toUpperCase() + pw.why.slice(1))}.` : ''}</span><button class="btn btn-primary btn-sm fc-walk-continue" ${pw.why ? 'disabled' : ''} title="Goes on with the same choices, from the first item that is still open — the ones you skipped are not asked again">▶ Continue</button><button class="btn btn-secondary btn-sm fc-walk-end" title="Forgets where the walk stopped. Nothing in the org changes">✕ End</button></span>` : ''}</span>`;
+    return `<span id="fcFixEvery" class="fc-every"><span class="fc-every-lbl" title="${tip}">⚡ Everything at once</span>${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}${onlySwap ? `<span class="fc-every-why" title="${esc(whyTip)}">${onlySwap} only ⇄ — code, formulas, buttons, field updates</span>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}${pw ? `<span class="fc-every-paused"><span>${esc(pw.why ? fcWalkPausedText(pw.saved, 0).replace(/ — [\d,]+ left/, '') : fcWalkPausedText(pw.saved, _walkLeft(pw.saved.swap, pw.saved.scope)))}${pw.why ? ` ${esc(pw.why[0].toUpperCase() + pw.why.slice(1))}.` : ''}</span><button class="btn btn-primary btn-sm fc-walk-continue" ${pw.why ? 'disabled' : ''} title="Goes on with the same choices, from the first item that is still open — the ones you skipped are not asked again">▶ Continue</button><button class="btn btn-secondary btn-sm fc-walk-end" title="Forgets where the walk stopped. Nothing in the org changes">✕ End</button></span>` : ''}</span>`;
   }
   // The saved walk, when it is this org's and this field's: { saved, why } — why = what must be done first ('' = ready)
   let _walkSaved = null, _walk = null;
@@ -1507,12 +1507,13 @@ const FieldCleaner = (() => {
           // lose the field; a Replace-only kind on a Remove walk is left out and named
           const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(type) : null;
           const c = typeof sftkMdCodeWays === 'function' ? sftkMdCodeWays(type) : null;
-          const canDel = typeof sftkMdDeleteSpec === 'function' && !!sftkMdDeleteSpec(type);
+          const dSpec = typeof sftkMdDeleteSpec === 'function' ? sftkMdDeleteSpec(type) : null;
+          const canDel = !!dSpec && !dSpec.noDelete;   // a kind Salesforce does not let be deleted through its API (a path) is never offered as a whole
           if (!w && !c && (swap || !canDel) && !(type === 'CustomSettingRecord' && !swap)) { if (!swap && cfg.sev === 'blocker') skipped.push(cfg.label || type); continue; }
           if (swap) way = c ? 'code' : 'edit';
           else if (w && w.remove) way = 'edit';
           else if (type === 'CustomSettingRecord') way = 'delete';   // its ✂ is the delete engine's own way (the name out of the value)
-          else if (typeof sftkMdDeleteSpec === 'function' && sftkMdDeleteSpec(type)) way = 'askdelete';   // no ✂ for this kind: say so, offer the whole component
+          else if (canDel) way = 'askdelete';   // no ✂ for this kind: say so, offer the whole component
           else { skipped.push(cfg.label || type); continue; }
         }
         if ((await fixAll(type, fieldId, swap, way)) === 'cancel') { stopped = true; break; }
@@ -2788,7 +2789,7 @@ const FieldCleaner = (() => {
     ProcessBuilder: { icon: '⚙', label: 'Process Builder',  fixable: false, sev: 'blocker',
                       note: 'Open the process in Setup (Process Automation → Process Builder), take the field out of its criteria and actions or deactivate and delete the process, then re-scan. Listed under Flows; not edited here.' },
     PathAssistant:  { icon: '🛤', label: 'Paths',            fixable: false, sev: 'silent',
-                      note: 'A path that runs on the field: the delete goes through and the Path stays active on a field that no longer exists (live-tested). 🗑 deletes the path (a restore point is kept), or re-point it in Setup → Path Settings first. A path that shows the field as a key field of a step is listed too: ✂ takes the field out of that step.' },
+                      note: 'A path that runs on the field: the delete goes through and the Path stays active on a field that no longer exists (live-tested). Delete or re-point the Path in Setup → Path Settings first (Salesforce does not let a path be deleted from outside Setup). A path that shows the field as a key field of a step is listed too: ✂ takes the field out of that step, ⇄ points it at the replacement.' },
     // Both come from Salesforce's own dependency index — the same one behind
     // "Where is this used?" — so they cost nothing extra to find (user
     // 2026-09-01: "one of the metadata items that we scan everytime").
@@ -4701,11 +4702,37 @@ const FieldCleaner = (() => {
     if (_fixSwap !== null) return;
     // a new attempt starts clean: the message of the last one would read as this one's result (seen live 2026-11-10)
     eid(`fcItem_${componentId}`)?.querySelectorAll('.fc-item-err').forEach(e => e.remove());
+    _fixingRow = String(componentId);
     _fixSwap = !!swap && _replOn();
     _fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code' || way === 'askdelete') ? way : '';
     // 'cancel' = the user said no in the dialog (a bulk walk stops there)
     try { return await _fixOneRun(type, componentId, componentName, fieldId); }
-    finally { _fixSwap = null; _fixWay = ''; }
+    finally { _fixSwap = null; _fixWay = ''; _fixingRow = ''; }
+  }
+  // the row a fix is working on: every History entry begun meanwhile carries it (sftkHistoryRowFor), so the row's
+  // ↩ Undo takes back exactly what that row did
+  let _fixingRow = '';
+  if (typeof sftkHistoryRowFor === 'function') sftkHistoryRowFor('Field Cleaner', () => _fixingRow);
+  // ↩ Undo on a cleared row (owner 2026-11-16: "After deletion, we will show an undo button near the deleted/removed
+  // metadata items"): the change(s) that row made are undone right here — one confirmation, each step re-read — and
+  // the list is read again from the org. A row whose change is not found (made before entries carried their row,
+  // or already undone) opens Activity on this tool, where every change is listed.
+  async function undoRow(componentId, btn) {
+    const subj = _fcSubject();
+    const list = typeof sftkHistoryUndoableForRow === 'function'
+      ? sftkHistoryUndoableForRow(await sftkHistoryAll(), { tool: 'Field Cleaner', orgUrl: _orgUrl, subject: subj, row: String(componentId) }) : [];
+    if (!list.length) { if (typeof window.sftkToolHistoryOpen === 'function') window.sftkToolHistoryOpen('fields'); return; }
+    if (list.length > 1) { undoAllForField(list, subj); return; }
+    if (btn) btn.disabled = true;
+    const r = await sftkHistoryUndo(list[0].id, {});
+    if (btn && btn.isConnected) btn.disabled = false;
+    if (!r || r.cancelled) return;
+    const item = eid(`fcItem_${componentId}`);
+    if (!r.ok) { appendInlineError(componentId, `The undo did not finish — ${r.text || 'no answer'}`); return; }
+    if (item) { const ok = item.querySelector('.fc-item-ok'); if (ok) ok.textContent = `↩ Undone — ${r.text || 'put back, verified by re-reading the org'}`; item.querySelector('.fc-item-undo')?.remove(); }
+    // what the page lists is from before the undo: scan again, so nothing shown is assumed
+    const scan = eid('fcScanBtn');
+    if (scan && !scan.disabled && subj === _fcSubject()) scan.click();
   }
   async function _fixOneRun(type, componentId, componentName, fieldId) {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
@@ -4832,9 +4859,9 @@ const FieldCleaner = (() => {
         : [{ label: componentName, sub: type }],
       revOverride: {
         html: type === 'Flow'
-          ? `⚠ <strong>Flow versions that mention the field are deleted</strong> — Salesforce locks the field per version. A restore point of each is kept first: ↩ Undo in Activity puts the version that was active back as the active version, and ↩ Restore points below the results hold every deleted version.${_flowPlanBoxHtml(asks && !activeMode ? null : activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : { rows: flowPlan.rows, lines: flowPlan.lines })}`
+          ? `⚠ <strong>Flow versions that mention the field are deleted</strong> — Salesforce locks the field per version. A restore point of each is kept first: ↩ Undo in Activity puts the version that was active back as the active version, and ↩ Restore points in Activity hold every deleted version.${_flowPlanBoxHtml(asks && !activeMode ? null : activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : { rows: flowPlan.rows, lines: flowPlan.lines })}`
           : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${type === 'SearchLayout' ? 'The layout as it is now is kept: ↩ Undo in Activity puts it back.' : ['Report', 'ReportType', 'Layout', 'FlexiPage'].includes(type)
-              ? 'A <strong>restore point</strong> is saved first — ↩ Restore points, under the results, can put the previous version back.'
+              ? 'A <strong>restore point</strong> is saved first — ↩ Restore points, in Activity, can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
         needsCheckbox: type === 'Flow',
       },
@@ -5031,8 +5058,8 @@ const FieldCleaner = (() => {
     if (changed && _lastScan) _lastScan.cleared = true;   // the next ask gives Salesforce time to catch up
     item.innerHTML = `
       <span class="fc-item-name">${esc(name)}</span>
-      <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>${changed ? '<button type="button" class="btn btn-secondary btn-sm fc-item-undo" title="Opens Field Cleaner’s changes in Activity — this change is the first entry, with ↩ Undo">↩ Undo</button>' : ''}${detailHtml}`;
-    item.querySelector('.fc-item-undo')?.addEventListener('click', () => { if (typeof window.sftkToolHistoryOpen === 'function') window.sftkToolHistoryOpen('fields'); });
+      <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>${changed ? '<button type="button" class="btn btn-secondary btn-sm fc-item-undo" title="Takes this change back — it asks first, each step is re-read from the org, and the list is scanned again">↩ Undo</button>' : ''}${detailHtml}`;
+    item.querySelector('.fc-item-undo')?.addEventListener('click', ev => undoRow(componentId, ev.currentTarget));
     // Close any open XML inspector for this item
     const xmlPanel = eid(`fcXml_${componentId}`);
     if (xmlPanel) {
@@ -5709,10 +5736,10 @@ const FieldCleaner = (() => {
                     bad: `${flowName}: the deploy was accepted, but the org shows no new active version yet` } },
         }],
         // the undo's result prints this after "not restored:" — so it opens with what stays out
-        note: `${[gone.length > 1 ? `the other ${gone.length - 1} deleted version(s), kept under ↩ Restore points below the Field Cleaner's results` : '', out.interviewsDeleted ? `${out.interviewsDeleted} deleted flow interview(s), which cannot be re-created` : ''].filter(Boolean).join('; ') || 'nothing else — one version was deleted'}. What comes back: v${plan.active.num}, the one that was active, as the active version (Salesforce numbers it anew)${out.newVersion ? `; the fixed v${out.newVersion} stays as an obsolete version` : ''}.${zipNote}`,
+        note: `${[gone.length > 1 ? `the other ${gone.length - 1} deleted version(s), kept under ↩ Restore points in Activity` : '', out.interviewsDeleted ? `${out.interviewsDeleted} deleted flow interview(s), which cannot be re-created` : ''].filter(Boolean).join('; ') || 'nothing else — one version was deleted'}. What comes back: v${plan.active.num}, the one that was active, as the active version (Salesforce numbers it anew)${out.newVersion ? `; the fixed v${out.newVersion} stays as an obsolete version` : ''}.${zipNote}`,
       };
     } else {
-      out.undo = { none: `the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points below the Field Cleaner's results, from where a version can be put back as a draft.${zipNote}` };
+      out.undo = { none: `the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points in Activity, from where a version can be put back as a draft.${zipNote}` };
     }
     return out;
   }
@@ -6903,7 +6930,7 @@ const FieldCleaner = (() => {
       : type === 'LookupFilter' ? { type, mdType: 'CustomField', what: 'lookup filter', special: 'lookupFilter' }
       : (sftkMdDeleteSpec(type) || _extraDeleteSpec(type, componentId));
     const engType = spec && spec.asType ? spec.asType : type;   // the kind the delete engine reads and deploys
-    if (!spec) throw new Error(`A ${cfg.label || type} is not deleted from here — clear it in Setup.`);
+    if (!spec || spec.noDelete) throw new Error(`A ${cfg.label || type} is not deleted from here — clear it in Setup.`);
     const obj = _selObj.api, field = _selField.api;
     const gate = await sftkOrgWriteGate(_orgUrl);
     // a custom setting value: read now, so the confirmation shows the value as it is and as it will be
@@ -6916,14 +6943,14 @@ const FieldCleaner = (() => {
       ? `✂ <strong>Only the field’s name is taken out of the value</strong> — the record and whatever else the value holds stay. This is a write to the record’s data; the value as it is now is kept, and ↩ Undo in Activity writes it back.`
         + `<div class="sftk-cf-plan"><ol class="sftk-cf-rows">${prePlan.shown.map(x => `<li><b>${esc(x.col)}</b><span><code>${esc(x.before)}</code> → ${x.after ? `<code>${esc(x.after)}</code>` : '<i>empty</i>'}</span></li>`).join('')}</ol></div>`
       : spec.special === 'lookupFilter'
-      ? `✂ <strong>Only the filter is removed from the lookup field</strong> — the field itself and its data stay. The field’s definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, under the results) puts the filter back.`
+      ? `✂ <strong>Only the filter is removed from the lookup field</strong> — the field itself and its data stay. The field’s definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, in Activity) puts the filter back.`
       : spec.edit === 'leadMapping'
-        ? `✂ <strong>Only the mapping line of ${esc(obj)}.${esc(field)} is removed</strong> — the other mappings and the conversion settings stay. The settings are read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, under the results) puts the line back.`
+        ? `✂ <strong>Only the mapping line of ${esc(obj)}.${esc(field)} is removed</strong> — the other mappings and the conversion settings stay. The settings are read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, in Activity) puts the line back.`
         : spec.special === 'pb'
-          ? `🗑 <strong>Every version of the process is deleted</strong> — it is switched off first if it runs. Its latest version is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, under the results) deploys it back as a new, inactive version — activate it in Setup if you need it to run again.`
+          ? `🗑 <strong>Every version of the process is deleted</strong> — it is switched off first if it runs. Its latest version is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, in Activity) deploys it back as a new, inactive version — activate it in Setup if you need it to run again.`
           : type === 'EmailAlertViaTemplate'
-            ? `🗑 <strong>The email alert is deleted from the org</strong>. It does not name ${esc(obj)}.${esc(field)} itself — it sends a template that does; fixing the template (under Email Templates) keeps the alert. Salesforce refuses the delete while a workflow rule, a flow or an approval process still uses the alert. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, under the results) deploys it back.`
-          : `🗑 <strong>The ${esc(spec.what)} is deleted from the org</strong> — not just its reference to ${esc(obj)}.${esc(field)}. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, under the results) deploys it back.${spec.code ? ' In a production org Salesforce may run the org’s Apex tests before it deletes code.' : ''}${type === 'MatchingRule' ? ' A matching rule a duplicate rule still uses is refused by Salesforce — delete that duplicate rule first.' : ''}${type === 'DuplicateRule' ? ' <strong>A duplicate rule guards the org’s data</strong> — nothing here switches one off or edits one behind a deployment; deleting it is yours to decide, here, with a way back.' : ''}`;
+            ? `🗑 <strong>The email alert is deleted from the org</strong>. It does not name ${esc(obj)}.${esc(field)} itself — it sends a template that does; fixing the template (under Email Templates) keeps the alert. Salesforce refuses the delete while a workflow rule, a flow or an approval process still uses the alert. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, in Activity) deploys it back.`
+          : `🗑 <strong>The ${esc(spec.what)} is deleted from the org</strong> — not just its reference to ${esc(obj)}.${esc(field)}. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, in Activity) deploys it back.${spec.code ? ' In a production org Salesforce may run the org’s Apex tests before it deletes code.' : ''}${type === 'MatchingRule' ? ' A matching rule a duplicate rule still uses is refused by Salesforce — delete that duplicate rule first.' : ''}${type === 'DuplicateRule' ? ' <strong>A duplicate rule guards the org’s data</strong> — nothing here switches one off or edits one behind a deployment; deleting it is yours to decide, here, with a way back.' : ''}`;
     const verb = (spec.special === 'lookupFilter' || spec.edit) ? 'Remove' : 'Delete';
     const sure = await sftkConfirmDestructive({
       title: `${verb} ${spec.what} — ${cfg.label || type}`,
@@ -7138,7 +7165,7 @@ const FieldCleaner = (() => {
       // an edit with a restore point is not "permanent": the badge says where the way back is
       revOverride: { html: vrChoice
         ? `${ico} <strong>Choose what happens to the rule.</strong> The rule as it is now is kept as a <strong>restore point</strong>: ↩ Undo in Activity puts it back.`
-        : `${ico} <strong>${esc(ed.how.join('; '))}.</strong> Only the field’s own places change — everything else in the ${esc(spec.what)} is deployed back exactly as Salesforce returned it. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in Activity (or ↩ Restore points, under the results) deploys it back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+        : `${ico} <strong>${esc(ed.how.join('; '))}.</strong> Only the field’s own places change — everything else in the ${esc(spec.what)} is deployed back exactly as Salesforce returned it. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in Activity (or ↩ Restore points, in Activity) deploys it back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
       undoHint: 'Undo in Activity',
       extraHtml: vrChoice ? `${vrWays}${cfEdit.html}` : `${diffHd}${_xmlDiffHtml(rec.innerXml, ed.xml)}${cfEdit.html}`,
       confirmLabel: vrChoice ? vrGo[vrMode] : `${ico} ${verb} in the ${spec.what}`,
@@ -8584,7 +8611,7 @@ const FieldCleaner = (() => {
       // purge them so the field delete isn't blocked (see purgeOldFlowVersions).
       return await purgeOldFlowVersions(flowId, flowName, journal);
     } finally {
-      await sftkHistoryEnd(journal, { undo: { none: 'the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points below the Field Cleaner\'s results, from where a version can be put back as a draft' } });
+      await sftkHistoryEnd(journal, { undo: { none: 'the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points in Activity, from where a version can be put back as a draft' } });
     }
   }
 
@@ -8719,7 +8746,7 @@ const FieldCleaner = (() => {
       title: `Deploy your XML — ${spec.what} “${componentName}”`,
       icon: '⬆',
       items: [{ label: componentName, sub: spec.what }],
-      revOverride: { html: `⬆ <strong>Your edited XML is deployed as the ${esc(spec.what)}</strong> — ${diff.filter(x => x.op !== ' ').length} line(s) differ from what the org holds now. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in Activity (or ↩ Restore points, under the results) deploys it back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+      revOverride: { html: `⬆ <strong>Your edited XML is deployed as the ${esc(spec.what)}</strong> — ${diff.filter(x => x.op !== ' ').length} line(s) differ from what the org holds now. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in Activity (or ↩ Restore points, in Activity) deploys it back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
       undoHint: 'Undo in Activity',
       extraHtml: `<div class="fc-xml-diff-hd">The XML — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as you wrote it</span></div>${_xmlDiffHtml(ctx.xml, text)}`,
       confirmLabel: '⬆ Deploy',
@@ -8892,7 +8919,7 @@ const FieldCleaner = (() => {
       icon: o.ico,
       items: [{ label: componentName, sub: spec.what }],
       onRender: () => edits.forEach(e => e.onRender()),
-      revOverride: { html: `${o.ico} <strong>${esc(o.how)}.</strong> The ${esc(spec.what)} is deployed back with ${changed.length === 1 ? 'this file' : `these ${changed.length} files`} changed and ${code.sources.length > changed.length ? 'the rest' : 'its metadata'} exactly as the org holds ${code.sources.length > changed.length ? 'them' : 'it'}. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in Activity (or ↩ Restore points, under the results) deploys it back.${apex && gate.production ? ' <strong>In a production org Salesforce runs the org’s Apex tests before it accepts code.</strong>' : ''}`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+      revOverride: { html: `${o.ico} <strong>${esc(o.how)}.</strong> The ${esc(spec.what)} is deployed back with ${changed.length === 1 ? 'this file' : `these ${changed.length} files`} changed and ${code.sources.length > changed.length ? 'the rest' : 'its metadata'} exactly as the org holds ${code.sources.length > changed.length ? 'them' : 'it'}. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in Activity (or ↩ Restore points, in Activity) deploys it back.${apex && gate.production ? ' <strong>In a production org Salesforce runs the org’s Apex tests before it accepts code.</strong>' : ''}`, needsCheckbox: false, cls: 'sftk-rev-newver' },
       undoHint: 'Undo in Activity',
       extraHtml: diffs,
       confirmLabel: o.confirmLabel,
@@ -9115,7 +9142,7 @@ const FieldCleaner = (() => {
         title: o.title || `${o.ico} ${kind} — ${componentName}`,
         icon: o.ico || '✉️',
         items: [{ label: componentName, sub: kind }],
-        revOverride: { html: `${o.ico || '✉️'} <strong>${esc(o.how)}.</strong> The template's other fields are not touched. Its texts as they are now are kept as a <strong>restore point</strong>: ↩ Undo in Activity (or ↩ Restore points, under the results) puts them back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+        revOverride: { html: `${o.ico || '✉️'} <strong>${esc(o.how)}.</strong> The template's other fields are not touched. Its texts as they are now are kept as a <strong>restore point</strong>: ↩ Undo in Activity (or ↩ Restore points, in Activity) puts them back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
         undoHint: 'Undo in Activity',
         extraHtml: changed.map((k, i) => `<div class="fc-xml-diff-hd"><code>${esc(k)}</code> — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>${_textDiffHtml(rec[k], next[k])}${edits[i].html}`).join(''),
         confirmLabel: o.confirmLabel || '⬆ Deploy',
@@ -9767,17 +9794,17 @@ const FieldCleaner = (() => {
 
   async function renderSnapshotLog() {
     renderUndoAll();
-    // 🧾 what Field Cleaner changed, with ↩ Undo — listed here, in the tool
-    // (user 2026-10-05: "it should show under the field cleaner")
-    if (typeof sftkToolHistoryInline === 'function') sftkToolHistoryInline(eid('fcToolHist'), 'fields', { subject: _fcSubject });   // only this field's changes (owner 2026-11-16); the rest is in Activity
+    // The list of changes and the restore points are not on this page any more (owner 2026-11-16: "we have the
+    // activity tab for them"): Activity lists the changes; its ↩ Restore points button opens the window below,
+    // which holds the #fcSnapLog this function fills.
     const el = eid('fcSnapLog');
     if (!el) return;
     const store = await chrome.storage.local.get(SNAP_KEY);
     const all = store[SNAP_KEY] || [];
     const mine = _orgUrl ? all.filter(s => s.orgKey === sftkOrgKey(_orgUrl)) : all;
-    if (!mine.length) { el.innerHTML = ''; return; }
+    if (!mine.length) { el.innerHTML = '<div class="sftk-th-sub">No restore point is kept for this org.</div>'; return; }
     el.innerHTML = `
-      <details class="fc-snaplog">
+      <details class="fc-snaplog" open>
         <summary>↩ Restore points — ${mine.length} piece${mine.length === 1 ? '' : 's'} of metadata saved before a fix</summary>
         <div class="fc-snap-rows">
           ${mine.map(s => `
@@ -9807,6 +9834,20 @@ const FieldCleaner = (() => {
       });
     });
   }
+
+  // ↩ Restore points, opened from Activity: the metadata saved before each fix, with ↩ Restore. A flow's deleted
+  // versions other than the one ↩ Undo brings back are only here.
+  function openRestorePoints() {
+    if (typeof showModal !== 'function') return;
+    showModal(`<div class="modal-header">↩ Restore points — Field Cleaner</div>
+      <div class="sftk-th-intro">${_orgUrl ? 'The metadata saved before each fix in this org. ↩ Restore deploys a piece back exactly as it was — it asks first.' : 'Open Field Cleaner on an org first: a restore point is deployed back to the org it came from.'}</div>
+      <div id="fcSnapLog" class="sftk-th-modal"></div>
+      <div class="modal-actions"><button class="btn btn-secondary" id="fcSnapClose">Close</button></div>`);
+    const box = document.getElementById('modalBox'); if (box) box.style.width = 'min(860px, 94vw)';
+    document.getElementById('fcSnapClose')?.addEventListener('click', () => closeModal());
+    if (_orgUrl) renderSnapshotLog();
+  }
+  if (typeof window !== 'undefined') window.sftkFcRestorePoints = openRestorePoints;
 
   async function restoreSnapshot(snap, btn) {
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Restoring…'; }

@@ -95,7 +95,7 @@ describe('the wiring every case below leans on', () => {
   it('a known kind gets ✂ / ⇄ from its ways and 🗑 from its spec; the lead mapping’s 🗑 is its ✂', () => {
     expect(FC).toContain("const knownKind = !cfgT.fixable && (cfgT.sev === 'blocker' || cfgT.sev === 'silent');");
     expect(FC).toContain("const ways = (knownKind && typeof sftkMdEditWays === 'function') ? sftkMdEditWays(type) : null;");
-    expect(FC).toContain("const del = (spec && !(ways && ways.remove && type === 'LeadConvertSettings')) ?");
+    expect(FC).toContain("const del = (spec && !spec.noDelete && !(ways && ways.remove && type === 'LeadConvertSettings')) ?");
     expect(FC).toContain("const zipDel = plan.deployFiles ? _zipOf(plan.deployFiles) : (plan.patch || plan.pb) ? null : _zipOf(sftkMdDestructiveFiles([[spec.mdType, fullName]]));");
     expect(FC).toContain('const ed = sftkMdEditField(type, rec.innerXml, obj, field, nf);');
     for (const t of ['FieldSet', 'ListView', 'CompactLayout', 'QuickAction', 'CustomMetadataRecord', 'LeadConvertSettings', 'AssignmentRule', 'AutoResponseRule', 'EscalationRule', 'ApprovalProcess']) {
@@ -405,7 +405,7 @@ describe('LeadConvertSettings', () => {
     expect(FC).toMatch(/^\s*LeadConvertSettings:\s*\{[^\n]*fixable: false, sev: 'blocker'/m);
     const spec = M.sftkMdDeleteSpec('LeadConvertSettings');
     expect(spec).toMatchObject({ mdType: 'LeadConvertSettings', folder: 'LeadConvertSettings', suffix: 'LeadConvertSetting', what: 'lead field mapping', edit: 'leadMapping' });
-    expect(FC).toContain("const del = (spec && !(ways && ways.remove && type === 'LeadConvertSettings')) ?");   // no 🗑 button
+    expect(FC).toContain("const del = (spec && !spec.noDelete && !(ways && ways.remove && type === 'LeadConvertSettings')) ?");   // no 🗑 button
     expect(FC).toContain("if (spec.edit === 'leadMapping') {");                                                    // the delete path edits
     expect(FC).toContain('deployFiles: sftkMdPackageFiles(type, fullName, res.xml), removed: res.removed,');
     // what that path deploys: the settings without the line — never a destructive manifest

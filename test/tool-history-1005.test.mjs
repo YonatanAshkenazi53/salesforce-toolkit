@@ -143,11 +143,19 @@ describe('the Toolkit side (sftk-toolhistory.js)', () => {
     expect(TH.indexOf("host.setAttribute('data-sftk-th-inline', tab);")).toBeLessThan(TH.indexOf("// nothing listed: nothing drawn"));   // 2026-11-16: an emptied list may carry the note of a clear and ⬆ Restore
     expect(TH.indexOf("// nothing listed: nothing drawn")).toBeGreaterThan(0);
   });
-  it('Field Cleaner lists its own changes under its results; its restore points keep their own name', () => {
+  // 2026-11-16 (owner: "we should remove history from field cleaner page. same for the restore points. we have the
+  // activity tab for them"): neither is on the page; Activity lists the changes and opens the restore points.
+  it('Field Cleaner\'s page carries no list of changes and no restore points; Activity opens the restore points', () => {
     const FC = read('field-cleaner.js');
-    expect(FC).toContain('<div id="fcToolHist"></div>');
-    // 2026-11-16: only the picked field's changes — the rest is in Activity
-    expect(FC).toContain("if (typeof sftkToolHistoryInline === 'function') sftkToolHistoryInline(eid('fcToolHist'), 'fields', { subject: _fcSubject });");
+    expect(FC).not.toContain('<div id="fcToolHist"></div>');
+    expect(FC).not.toContain('<div id="fcSnapLog"></div>');
+    expect(FC).not.toContain("sftkToolHistoryInline(eid('fcToolHist')");
+    expect(FC).toContain('window.sftkFcRestorePoints = openRestorePoints;');
+    expect(FC).toContain('<div id="fcSnapLog" class="sftk-th-modal"></div>');
+    const FEED = read('sftk-feed.js');
+    expect(FEED).toContain('id="sftkFeedSnaps"');
+    expect(FEED).toContain("addEventListener('click', () => window.sftkFcRestorePoints());");
+    expect(FC).not.toMatch(/Restore points,? (under|below) the/);
     expect(FC).toContain('↩ Restore points — ${mine.length} piece${mine.length === 1 ? \'\' : \'s\'} of metadata saved before a fix');
     expect(FC).not.toContain('🧾 Cleanup history —');
   });

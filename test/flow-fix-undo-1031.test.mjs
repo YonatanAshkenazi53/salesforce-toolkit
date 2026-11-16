@@ -28,17 +28,17 @@ describe('fixFlowExecute: the undo statement', () => {
   });
   it('the note says what comes back and what else exists: the fixed version, the restore points, the interviews, the backup zip', () => {
     expect(exec).toContain("const zipNote = opts && opts.backup ? ' A backup zip of every deleted version was downloaded before the fix.' : '';");
-    expect(exec).toContain("kept under ↩ Restore points below the Field Cleaner's results` : '', out.interviewsDeleted ? `${out.interviewsDeleted} deleted flow interview(s), which cannot be re-created` : ''].filter(Boolean).join('; ') || 'nothing else — one version was deleted'}. What comes back: v${plan.active.num}, the one that was active, as the active version (Salesforce numbers it anew)");
+    expect(exec).toContain("kept under ↩ Restore points in Activity` : '', out.interviewsDeleted ? `${out.interviewsDeleted} deleted flow interview(s), which cannot be re-created` : ''].filter(Boolean).join('; ') || 'nothing else — one version was deleted'}. What comes back: v${plan.active.num}, the one that was active, as the active version (Salesforce numbers it anew)");
     expect(exec).toContain("; the fixed v${out.newVersion} stays as an obsolete version` : ''}.${zipNote}`,");
   });
   it('otherwise says why there is no undo, and where the metadata is', () => {
-    expect(exec).toContain("out.undo = { none: `the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points below the Field Cleaner's results, from where a version can be put back as a draft.${zipNote}` };");
+    expect(exec).toContain("out.undo = { none: `the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points in Activity, from where a version can be put back as a draft.${zipNote}` };");
   });
 });
 
 describe('the confirmation and the disabled undo say it', () => {
   it('the flow confirmation says a restore point is kept and that Undo in Activity puts the active version back', () => {
-    expect(FC).toContain('A restore point of each is kept first: ↩ Undo in Activity puts the version that was active back as the active version, and ↩ Restore points below the results hold every deleted version.');
+    expect(FC).toContain('A restore point of each is kept first: ↩ Undo in Activity puts the version that was active back as the active version, and ↩ Restore points in Activity hold every deleted version.');
     expect(FC).not.toContain('are deleted for good</strong>');
   });
   it('a disabled undo prints its reason next to the button — the feed, History, the tool list', () => {

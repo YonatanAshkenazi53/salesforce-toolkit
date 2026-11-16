@@ -616,8 +616,11 @@ function _sftkMdDeleteTable() {
   ValidationRuleInactive:  { mdType: 'ValidationRule',   parent: 'CustomObject',     tag: 'validationRules',      folder: 'objects',           suffix: 'object',           what: 'validation rule',            tooling: 'ValidationRule' },
   LeadConvertSettings:     { folder: 'LeadConvertSettings', suffix: 'LeadConvertSetting', what: 'lead field mapping', edit: 'leadMapping' },
   ProcessBuilder:          { mdType: 'Flow',             folder: 'flows',             suffix: 'flow',             what: 'Process Builder process' },
-  // a path that shows the field as a key field of a step, or runs on it (owner 2026-11-16: "we said all items must have a delete/remove")
-  PathAssistant:           { mdType: 'PathAssistant',    folder: 'pathAssistants',    suffix: 'pathAssistant',    what: 'path',                       tooling: 'PathAssistant' },
+  // a path that shows the field as a key field of a step (owner 2026-11-16: "we said all items must have a
+  // delete/remove"): EDITED here, never deleted — Salesforce refuses the delete of a path through its APIs. Live
+  // 2026-11-16 (npc2): a destructive deploy and a Tooling DELETE both answer "insufficient access rights on
+  // cross-reference id", for an active path, an inactive one, and one on a standard object. noDelete: no 🗑 is drawn.
+  PathAssistant:           { mdType: 'PathAssistant',    folder: 'pathAssistants',    suffix: 'pathAssistant',    what: 'path',                       tooling: 'PathAssistant', noDelete: true },
   };
 }
 // What the delete needs to know about a type; null = not deletable here
@@ -1502,7 +1505,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       if (ent && !sftkMdIsOwnObj(ent, ownApi)) { refuse(`the path is on ${ent} — its ${fieldApi} is ${ent}’s same-named field, so there is nothing of this field to edit`); break; }
       // a path that RUNS on the field is refused whole, key fields and all: with its steps cleaned it would still
       // stand on the field, and the row would read as cleared
-      if (_sftkMdFieldIs(String(sftkMdChildText(xml, 'fieldName') || '').trim(), ownApi, fieldApi)) { refuse('the path runs on the field itself — its steps are that field’s values; 🗑 delete the path, or pick another field for it in Setup → Path Settings'); break; }
+      if (_sftkMdFieldIs(String(sftkMdChildText(xml, 'fieldName') || '').trim(), ownApi, fieldApi)) { refuse('the path runs on the field itself — its steps are that field’s values; delete the path or pick another field for it in Setup → Path Settings'); break; }
       const c = texts(xml, 'fieldNames');
       if (!c.n) { refuse('the path does not show the field in a step — edit it in Setup → Path Settings'); break; }
       xml = c.xml; how.push(`${plural(c.n, 'key field')} of the path’s steps ${verb}`);

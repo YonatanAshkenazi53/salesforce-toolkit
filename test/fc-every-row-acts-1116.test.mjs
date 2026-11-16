@@ -42,9 +42,12 @@ describe('a custom setting value without the field', () => {
 
 describe('a path', () => {
   const path = (ent, runs, steps) => `<fullName>P</fullName><active>true</active><entityName>${ent}</entityName><fieldName>${runs}</fieldName><masterLabel>P</masterLabel>${steps.map(([v, fs]) => `<pathAssistantSteps>${fs.map(f => `<fieldNames>${f}</fieldNames>`).join('')}<info>i</info><picklistValueName>${v}</picklistValueName></pathAssistantSteps>`).join('')}<recordTypeName>__MASTER__</recordTypeName>`;
-  it('is edited and deleted here', () => {
+  it('is edited here, and never deleted: Salesforce refuses a path\'s delete through its APIs (live 2026-11-16)', () => {
     expect(M.sftkMdEditWays('PathAssistant')).toEqual({ remove: true, replace: true });
-    expect(M.sftkMdDeleteSpec('PathAssistant')).toMatchObject({ mdType: 'PathAssistant', folder: 'pathAssistants', suffix: 'pathAssistant', what: 'path' });
+    expect(M.sftkMdDeleteSpec('PathAssistant')).toMatchObject({ mdType: 'PathAssistant', folder: 'pathAssistants', suffix: 'pathAssistant', what: 'path', noDelete: true });
+    expect(FC).toContain('const del = (spec && !spec.noDelete &&');
+    expect(FC).toContain('const canDel = !!dSpec && !dSpec.noDelete;');
+    expect(FC).toContain('if (!spec || spec.noDelete) throw new Error(');
   });
   it('✂ takes the field out of every step and nothing else', () => {
     const before = path('Account', 'Stage__c', [['New', ['Region__c', 'Type']], ['Won', ['Region__c']]]);

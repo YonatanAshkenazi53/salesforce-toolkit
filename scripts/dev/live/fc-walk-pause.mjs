@@ -27,7 +27,7 @@ async function openAndScan(h) {
 }
 const dark = async (h, on) => { await h.eval(`(() => { document.body.classList.toggle('sftk-dark', ${on}); return true; })()`); await h.sleep(300); };
 const both = async (h, name) => { await h.shot(h.shots + '/' + name + '.png'); await dark(h, true); await h.shot(h.shots + '/' + name + '-dark.png'); await dark(h, false); };
-const dialog = h => h.eval(`(() => { const b = document.getElementById('modalBox'); const c = document.getElementById('sftkConfirmCancel'); return { pos: b?.querySelector('.fc-walk-pos')?.textContent || '', cancel: c?.textContent.trim() || '', stop: document.getElementById('fcWalkStop')?.textContent || '', item: (b?.querySelector('.sftk-cf-item-label, .sftk-cf-items li, .sftk-cf-list li')?.textContent || '').trim().slice(0, 80), title: (b?.querySelector('h3, .modal-header')?.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 90) }; })()`);
+const dialog = h => h.eval(`(() => { const b = document.getElementById('modalBox'); const c = document.getElementById('sftkConfirmCancel'); return { pos: b?.querySelector('.fc-walk-pos')?.textContent || '', cancel: c?.textContent.trim() || '', stop: document.getElementById('fcWalkStop')?.textContent || '', item: (b?.querySelector('.sftk-cf-item-label, .sftk-cf-items li, .sftk-cf-list li')?.textContent || '').trim().slice(0, 80), title: (b?.innerText || '').replace(/\\s+/g, ' ').replace(/^.*?item \\d+ of \\d+\\s*/, '').trim().slice(0, 90) }; })()`);
 const waitDialog = h => h.waitFor("!!document.getElementById('sftkConfirmCancel')", 120000, 300);
 const pause = async h => { await h.eval(`(() => { const s = document.getElementById('fcWalkStop'); if (s) s.click(); else document.getElementById('sftkConfirmCancel').click(); return true; })()`); await h.waitFor("!document.getElementById('sftkConfirmCancel') && !!document.querySelector('.fc-every-paused')", 60000, 300); await h.sleep(400); };
 const bar = h => h.eval(`(document.querySelector('.fc-every-paused')?.innerText || '').replace(/\\s+/g, ' ').trim()`);
@@ -43,7 +43,9 @@ export default async function (h) {
   // 1 — start, pause on the first item
   await h.eval(`(() => { document.querySelector('.fc-fix-every[data-swap="0"]').click(); return true; })()`);
   await h.waitFor("!!document.getElementById('fcScopeAll') || !!document.getElementById('sftkConfirmCancel')", 30000, 200);
-  if (await h.eval(`!!document.getElementById('fcScopeAll')`)) await h.eval(`(() => { document.getElementById('fcScopeAll').click(); return true; })()`);
+  // SCOPE=must walks only what blocks the delete — there the first item is one with no ✂ (Skip is offered)
+  const SCOPE_BTN = process.env.SCOPE === 'must' ? 'fcScopeMust' : 'fcScopeAll';
+  if (await h.eval(`!!document.getElementById('fcScopeAll')`)) await h.eval(`(() => { document.getElementById('${SCOPE_BTN}').click(); return true; })()`);
   await waitDialog(h); await h.sleep(500);
   const d1 = await dialog(h);
   h.log('1 first dialog:', JSON.stringify(d1));

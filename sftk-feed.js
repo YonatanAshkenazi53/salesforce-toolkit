@@ -212,6 +212,7 @@ function sftkFeedTime(iso) {
           <input type="search" class="${cls.input}" id="sftkFeedQ" placeholder="🔍 find — a tool, a deployment, an org…" aria-label="Find in the activity">
           <span class="sftk-feed-apps">${['', 'Data Studio', 'Toolkit'].map(a => `<button class="${cls.btnX} sftk-feed-app-btn${filter.app === a ? ' sftk-feed-app-on' : ''}" data-feed-app="${esc(a)}">${a || 'Everything'}</button>`).join('')}</span>
           <span class="sftk-feed-sp"></span><span class="sftk-feed-count" id="sftkFeedCount"></span>
+          ${studio() || typeof window.sftkFcRestorePoints !== 'function' ? '' : `<button class="${cls.btnX}" id="sftkFeedSnaps" title="Field Cleaner’s restore points: the metadata saved before each fix, with ↩ Restore">↩ Restore points</button>`}
           ${studio() ? '' : `<button class="${cls.btnX}" id="sftkFeedManage" title="The Toolkit's changes in one list: download a backup with every Undo, restore one, or clear the list">⬇ Back up · ⬆ Restore · 🗑 Clear</button>`}
           <button class="${cls.btnX}" id="sftkFeedExport" title="${studio() ? 'Download every retained run as a JSON or CSV audit file — for change-management records' : 'Download every entry as one JSON file'}">⬇ Export all</button>
         </div>
@@ -222,6 +223,7 @@ function sftkFeedTime(iso) {
     const box = document.getElementById(studio() ? 'dsModalBox' : 'modalBox'); if (box) { box.style.width = 'min(960px, 94vw)'; box.style.maxWidth = '94vw'; }
     document.getElementById('sftkFeedClose')?.addEventListener('click', () => closeModal());
     document.getElementById('sftkFeedExport')?.addEventListener('click', exportAll);
+    document.getElementById('sftkFeedSnaps')?.addEventListener('click', () => window.sftkFcRestorePoints());
     document.getElementById('sftkFeedManage')?.addEventListener('click', () => { if (typeof window.sftkToolHistoryManage === 'function') window.sftkToolHistoryManage(); });
     const q = document.getElementById('sftkFeedQ');
     let timer = null;

@@ -354,10 +354,18 @@ describe('a fixed row offers ↩ Undo; a row that was only settled does not', ()
     expect(changed('✅ Nothing uses the field here — Salesforce lists it because its description mentions the name')).toBe(false);
     expect(changed('✅ No version of this flow references the field any more')).toBe(false);
   });
-  it('markFixed draws the button and opens this tool\'s History', () => {
+  it('markFixed draws the button; it undoes that row\'s own change (2026-11-16), and opens the tool\'s list only when the change is not found', () => {
     const i = FC.indexOf('  function markFixed('), body = FC.slice(i, i + 1800);
     expect(body).toContain('fc-item-undo');
-    expect(body).toContain("window.sftkToolHistoryOpen('fields')");
+    expect(body).toContain("addEventListener('click', ev => undoRow(componentId, ev.currentTarget));");
+    const SRC = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8');
+    const u = SRC.slice(SRC.indexOf('async function undoRow(componentId, btn) {'), SRC.indexOf('async function _fixOneRun('));
+    expect(u).toContain("sftkHistoryUndoableForRow(await sftkHistoryAll(), { tool: 'Field Cleaner', orgUrl: _orgUrl, subject: subj, row: String(componentId) })");
+    expect(u).toContain("if (!list.length) { if (typeof window.sftkToolHistoryOpen === 'function') window.sftkToolHistoryOpen('fields'); return; }");
+    expect(u).toContain('const r = await sftkHistoryUndo(list[0].id, {});');          // its own confirmation, every step re-read
+    expect(u).toContain('if (list.length > 1) { undoAllForField(list, subj); return; }');
+    expect(u).toContain("if (scan && !scan.disabled && subj === _fcSubject()) scan.click();");
+    expect(SRC).toContain("if (typeof sftkHistoryRowFor === 'function') sftkHistoryRowFor('Field Cleaner', () => _fixingRow);");
   });
 });
 

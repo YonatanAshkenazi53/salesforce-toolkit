@@ -16,17 +16,14 @@ export default async function (h) {
   await h.watchErrors();
   await h.waitFor("!!document.querySelector('#fcObjInput')", 60000, 500);
   await h.eval(`chrome.storage.local.set({ sftk_history: ${JSON.stringify(SEED)} }).then(() => true)`);
-  await h.waitFor("!!document.querySelector('#fcToolHist details')", 20000, 300);
-  await h.eval(`(() => { const d = document.querySelector('#fcToolHist details'); d.open = true; d.scrollIntoView({ block: 'start' }); return true; })()`);
-  await h.sleep(500);
+  await h.sleep(800);
 
-  // 1 — the top bar: Activity only; under the tool: the field changed last, nothing else
-  const top = await h.eval(`({ history: !!document.getElementById('sftkThBtn'), activity: !!document.getElementById('sftkFeedBtn') })`);
-  if (top.history || !top.activity) throw new Error('FAILED: the top bar must show Activity and no History button — ' + JSON.stringify(top));
-  const inl = await h.eval(`({ head: document.querySelector('#fcToolHist summary').textContent.trim(), cards: document.querySelectorAll('#fcToolHist .sftk-th-card').length, note: document.querySelector('#fcToolHist .sftk-th-note')?.textContent.trim(), acts: document.querySelectorAll('#fcToolHist [data-th-clear], #fcToolHist [data-th-backup]').length })`);
-  h.log('under the tool:', JSON.stringify(inl));
-  if (inl.cards !== 2 || !/SFTK_New__c/.test(inl.head) || inl.acts) throw new Error('FAILED: only the two changes of the field changed last belong under the tool');
-  await both(h, 'th-1-one-field');
+  // 1 — the top bar: Activity only; the Field Cleaner page carries no list of changes (2026-11-16: "we should remove
+  // history from field cleaner page … we have the activity tab for them")
+  const top = await h.eval(`({ history: !!document.getElementById('sftkThBtn'), activity: !!document.getElementById('sftkFeedBtn'), inline: !!document.getElementById('fcToolHist') || !!document.querySelector('.sftk-th-inline') })`);
+  if (top.history || top.inline || !top.activity) throw new Error('FAILED: the top bar must show Activity, no History button, and no list on the page — ' + JSON.stringify(top));
+  h.log('top bar and page:', JSON.stringify(top));
+
 
   // 2 — Activity → the Toolkit's changes
   await h.eval(`(() => { document.getElementById('sftkFeedBtn').click(); return true; })()`);
@@ -62,7 +59,7 @@ export default async function (h) {
   await h.sleep(1200);
   const left = await h.eval(`chrome.storage.local.get('sftk_history').then(r => (r.sftk_history || []).length)`);
   if (left !== 0) throw new Error('FAILED: entries left after the clear — ' + left);
-  h.log('after clear: under the tool →', JSON.stringify(await h.eval(`(document.querySelector('#fcToolHist')?.innerText || '').trim()`)));
+  h.log('after clear: nothing left in storage');
 
   // ⬆ Restore from Activity's window: hand the caught file to the picker the button opens
   await h.eval(`(() => { window.sftkToolHistoryManage(); return true; })()`);
@@ -85,5 +82,5 @@ export default async function (h) {
   h.log('wrong file:', bad);
   if (!/not an Activity backup/.test(bad)) throw new Error('FAILED: a wrong file must be refused with a reason');
   await h.eval(`chrome.storage.local.set({ sftk_history: [] }).then(() => true)`);
-  h.log('✓ tool-history-backup: one Activity button · one field under the tool · back up 8 → clear → restore 8 with undo · wrong file refused');
+  h.log('✓ tool-history-backup: one Activity button · no list on the page · back up 8 → clear → restore 8 with undo · wrong file refused');
 }
