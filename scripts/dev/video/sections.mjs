@@ -103,8 +103,11 @@ const typedConfirm = (c, word) => confirmShared(c, { word });
 // ↩ Undo the newest change of the open tool, from the tool's own History (top bar)
 async function undoInTool(c, caption) {
   const { h, rec } = c;
-  await h.waitFor("document.querySelector('#sftkThBtn') && document.querySelector('#sftkThBtn').style.display !== 'none'", 30000, 500);
-  await rec.click('#sftkThBtn', 900);
+  // 2026-11-16: no History button — Activity (top bar), then "this tool only"
+  await h.waitFor("!!document.querySelector('#sftkFeedBtn')", 30000, 500);
+  await rec.click('#sftkFeedBtn', 900);
+  await h.waitFor("!!document.querySelector('[data-feed-tool]')", 30000, 300);
+  await rec.click('[data-feed-tool]', 900);
   await h.waitFor("document.querySelectorAll('#sftkThModalList .sftk-th-card').length > 0", 30000, 300);
   await rec.say(caption, 5500);
   const undo = '#sftkThModalList [data-th-undo]:not([disabled])';

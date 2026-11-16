@@ -101,13 +101,15 @@ describe('the Toolkit side (sftk-toolhistory.js)', () => {
     const html = read('popup.html');
     expect(html.indexOf('<script src="sftk-toolhistory.js"></script>')).toBeGreaterThan(html.indexOf('<script src="sftk-confirm.js"></script>'));
     expect(html.indexOf('<script src="sftk-toolhistory.js"></script>')).toBeGreaterThan(html.indexOf('<script src="sftk-history.js"></script>'));
-    expect(html).toContain('<button id="sftkThBtn" class="dbg-btn" style="display:none"');
+    expect(html).not.toContain('sftkThBtn');   // 2026-11-16: one button for what was done — Activity
+    expect(html).toContain('<button id="sftkFeedBtn" class="dbg-btn"');
     const pop = read('popup.js');
     expect(pop).toContain("if (typeof sftkToolHistorySetTab === 'function') sftkToolHistorySetTab(tabName);");
     expect(pop).toContain("if (typeof sftkToolHistorySetTab === 'function') sftkToolHistorySetTab('');   // home is no tool");
   });
   it('the top bar has one button for what was done — Activity; the tool\'s own History button is never shown (owner 2026-11-16)', () => {
-    expect(TH).toContain("function button() { const b = document.getElementById('sftkThBtn'); if (b) b.style.display = 'none'; }");
+    expect(TH).not.toContain('sftkThBtn');
+    expect(read('styles.css')).not.toContain('sftkThBtn');
     expect(TH).not.toContain("b.style.display = n ? '' : 'none';");
     expect(TH).toContain('const list = sftkHistoryForTab(all, tab);');
     // Activity is where the Toolkit's changes are backed up, restored and cleared

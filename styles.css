@@ -600,9 +600,6 @@ body {
 @media (max-width: 847px) {
   .app-topbar-actions:has(#homeBtn:not([style*="display:none"]):not([style*="display: none"])) :is(#homeBtn, #sftkFeedBtn, #dataStudioBtn, #sftkTermsBtn) { width: 28px; padding: 0; gap: 0; font-size: 0; }
 }
-@media (max-width: 939px) {
-  .app-topbar-actions:has(#homeBtn:not([style*="display:none"]):not([style*="display: none"])):has(#sftkThBtn:not([style*="display:none"]):not([style*="display: none"])) :is(#homeBtn, #sftkFeedBtn, #dataStudioBtn, #sftkTermsBtn) { width: 28px; padding: 0; gap: 0; font-size: 0; }
-}
 
 /* The bar spends no accent on itself — the one brand-filled control on the
    home page is the Data Studio card, and two of them competed. */

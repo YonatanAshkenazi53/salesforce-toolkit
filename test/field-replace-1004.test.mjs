@@ -417,7 +417,7 @@ describe('stored values — the wiring keeps the laws', () => {
     expect(FC).toContain('const FC_COPY_UNDO = 1000;');
     expect(run).toContain('if (wr && wr.accepted && wrote.length && wrote.length <= FC_COPY_UNDO) {');
     expect(run).toContain('[to]: t.was == null ? null : t.was');
-    expect(run).toContain('History keeps no undo at that size; the receipt CSV lists every record');
+    expect(run).toContain('Activity keeps no undo at that size; the receipt CSV lists every record');
   });
 });
 

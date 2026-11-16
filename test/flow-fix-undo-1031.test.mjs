@@ -1,4 +1,4 @@
-// 2026-10-31 — the Field Cleaner's flow fix carries a real ↩ Undo in History (user: "do it"):
+// 2026-10-31 — the Field Cleaner's flow fix carries a real ↩ Undo in Activity (user: "do it"):
 // the version that used the field is redeployed from its restore point as the active version,
 // the way the Flows page's delete undoes itself; the note says what else exists (restore
 // points under the results, the backup zip when one was ticked); a disabled undo shows its
@@ -37,8 +37,8 @@ describe('fixFlowExecute: the undo statement', () => {
 });
 
 describe('the confirmation and the disabled undo say it', () => {
-  it('the flow confirmation says a restore point is kept and that Undo in History puts the active version back', () => {
-    expect(FC).toContain('A restore point of each is kept first: ↩ Undo in History puts the version that was active back as the active version, and ↩ Restore points below the results hold every deleted version.');
+  it('the flow confirmation says a restore point is kept and that Undo in Activity puts the active version back', () => {
+    expect(FC).toContain('A restore point of each is kept first: ↩ Undo in Activity puts the version that was active back as the active version, and ↩ Restore points below the results hold every deleted version.');
     expect(FC).not.toContain('are deleted for good</strong>');
   });
   it('a disabled undo prints its reason next to the button — the feed, History, the tool list', () => {

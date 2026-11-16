@@ -127,7 +127,7 @@ export default async function (h) {
   h.log(`CLI TraceFlags after Stop: ${after.length}`);
   if (after.some(f => f.LogType === 'USER_DEBUG' && new Date(f.ExpirationDate).getTime() > Date.now())) throw new Error('the USER_DEBUG TraceFlag is still in the org after Stop Trace');   // an expired flag from before is not the Toolkit's
   // the tool's History
-  await h.click('#sftkThBtn');
+  await h.eval('(() => { window.sftkToolHistoryOpen("debugger"); return true; })()');   // 2026-11-16: no History button
   await h.waitFor("!!document.querySelector('#sftkThModalList')", 15000, 300);
   await h.sleep(500);
   const hist = await h.eval("[...document.querySelectorAll('#sftkThModalList .sftk-th-card')].slice(0, 3).map(c => c.innerText.replace(/\\s+/g, ' ').trim().slice(0, 220))");

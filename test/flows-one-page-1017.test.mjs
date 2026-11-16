@@ -99,7 +99,7 @@ describe('whole flows, interviews and the restore point', () => {
     expect(MAN.permissions).toContain('unlimitedStorage');
   });
   it('the confirmation no longer calls the delete permanent', () => {
-    expect(PJ).toContain("revOverride: { html: 'A restore point of every flow is kept in History before anything is deleted;");
+    expect(PJ).toContain("revOverride: { html: 'A restore point of every flow is kept in Activity before anything is deleted;");
     expect(PJ).not.toContain("Only flows you backed up (⬇) can come back");
   });
 });

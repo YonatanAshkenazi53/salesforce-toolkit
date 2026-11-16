@@ -52,8 +52,8 @@ export default async function (h) {
       await reachConfirm(h, '2. interviews delete');
     } else { h.log('2. interviews delete: no interviews on the fixture flow — skipped'); }
     // 4: the undo of a tool change
-    if (await h.eval(`!!document.querySelector('#sftkThBtn') && document.querySelector('#sftkThBtn').style.display !== 'none'`)) {
-      await h.eval(`document.querySelector('#sftkThBtn').click()`); await h.sleep(1200);
+    {   // 2026-11-16: no History button — the open tool's window
+      await h.eval(`(() => { window.sftkToolHistoryOpen(); return true; })()`); await h.sleep(1200);
       if (await h.eval(`!!document.querySelector('#sftkThModalList [data-th-undo]:not([disabled])')`)) {
         await h.eval(`document.querySelector('#sftkThModalList [data-th-undo]:not([disabled])').click()`); await h.sleep(1500);
         await reachConfirm(h, '4. undo from the tool History');

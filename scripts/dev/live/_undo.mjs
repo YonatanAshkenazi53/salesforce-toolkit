@@ -35,9 +35,11 @@ async function walkDialog(h, opts, box) {
 async function undoInTool(h, tab, opts) {
   h.log(`── ↩ UNDO (Toolkit › ${tab} › 🧾 History) ──`);
   await h.popup(tab);
-  await h.waitFor("document.querySelector('#sftkThBtn') && document.querySelector('#sftkThBtn').style.display !== 'none'", 30000, 500);
-  h.log('history button:', await h.eval(`document.querySelector('#sftkThBtn').textContent`));
-  await h.eval(`document.querySelector('#sftkThBtn').click()`);
+  // 2026-11-16: no History button — Activity (top bar) › "this tool only" opens the tool's window
+  await h.waitFor("!!document.querySelector('#sftkFeedBtn')", 30000, 500);
+  await h.eval(`document.querySelector('#sftkFeedBtn').click()`);
+  await h.waitFor(`!!document.querySelector('[data-feed-tool="${tab}"]')`, 30000, 300);
+  await h.eval(`document.querySelector('[data-feed-tool="${tab}"]').click()`);
   await h.waitFor("document.querySelectorAll('#sftkThModalList .sftk-th-card').length > 0", 30000, 300);
   await h.sleep(400);
   h.log('tool cards (newest first):', JSON.stringify(await h.eval(`[...document.querySelectorAll('#sftkThModalList .sftk-th-card')].slice(0, 3).map(c => c.innerText.split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ').slice(0, 400))`)));

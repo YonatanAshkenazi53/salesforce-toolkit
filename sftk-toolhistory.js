@@ -16,7 +16,7 @@
 // and delete another field, it should display only the new field … and all
 // of them under the activity or history, i prefer to remain with the
 // activity" — so the top bar has ONE button, Activity; the "History (N)"
-// button is never shown, and the list inside a tool is about the thing in
+// button is gone, and the list inside a tool is about the thing in
 // front of the user (inline's `subject`), not about everything ever done.
 // Data Studio › History lists deployments, rollbacks and Data Studio's own
 // changes, and says how many Toolkit changes live in which tool.
@@ -152,9 +152,9 @@
     const undoable = list.filter(e => !e.undoOf && typeof sftkToolUndoState === 'function' && !sftkToolUndoState(e).disabled).length;
     const label = labelOf(tab), n = list.length, s = n === 1 ? '' : 's';
     const sure = typeof sftkConfirmDestructive !== 'function' ? true : await sftkConfirmDestructive({
-      title: `Clear history — ${n.toLocaleString('en-US')} change${s} made with ${label}`,
+      title: `Clear activity — ${n.toLocaleString('en-US')} change${s} made with ${label}`,
       icon: '🗑',
-      items: [{ label: `${n.toLocaleString('en-US')} history entr${n === 1 ? 'y' : 'ies'} of ${label}`, sub: 'in every org' }],
+      items: [{ label: `${n.toLocaleString('en-US')} activity entr${n === 1 ? 'y' : 'ies'} of ${label}`, sub: 'in every org' }],
       revOverride: {
         html: 'Removes the <strong>record</strong> of these changes from this browser. Nothing in Salesforce is changed.'
           + (undoable ? ' To keep their Undo in a file, cancel and use ⬇ Back up first.' : '') + (undoable ? ` <strong>${undoable.toLocaleString('en-US')} of them can still be undone</strong> — after this, ${undoable === 1 ? 'it' : 'they'} cannot: the earlier state is kept in the entry.` : ' None of them can be undone any more.')
@@ -162,12 +162,12 @@
         needsCheckbox: undoable > 0,
         ack: 'I understand the Undo of these changes goes with them',
       },
-      confirmLabel: '🗑 Clear history',
+      confirmLabel: '🗑 Clear activity',
     });
     if (!sure) { if (typeof after === 'function') after(false); return; }
     const gone = await sftkHistoryClearTab(tab);
     _showAll.delete(tab); _said.clear();
-    say(tab, `🗑 History cleared — ${gone.toLocaleString('en-US')} entr${gone === 1 ? 'y' : 'ies'} removed from this browser. Nothing in Salesforce was changed.`);
+    say(tab, `🗑 Activity cleared — ${gone.toLocaleString('en-US')} entr${gone === 1 ? 'y' : 'ies'} removed from this browser. Nothing in Salesforce was changed.`);
     if (typeof after === 'function') after(true);
   }
 
@@ -196,7 +196,7 @@
     host.innerHTML = `<details class="sftk-th-inline" ${open ? 'open' : ''}>
         <summary>🧾 ${subject !== undefined
           ? `Changes made here for <code>${esc(subject)}</code> — ${list.length.toLocaleString('en-US')}`
-          : `History — ${list.length.toLocaleString('en-US')} change${list.length === 1 ? '' : 's'} made with ${esc(sftkHistoryTabLabel(tab))}`}</summary>
+          : `Activity — ${list.length.toLocaleString('en-US')} change${list.length === 1 ? '' : 's'} made with ${esc(sftkHistoryTabLabel(tab))}`}</summary>
         ${subject !== undefined ? `<div class="sftk-th-bar"><span class="sftk-th-note">Only this field's changes are listed here${rest ? ` — ${rest.toLocaleString('en-US')} more, made for other fields, are in Activity` : ''}.</span><button type="button" class="btn btn-sm btn-secondary" data-th-activity="1" title="Everything the Toolkit and Data Studio did — undo, back up, restore, clear">🧾 Open Activity</button></div>` : ''}
         <div class="sftk-th-list"></div>
       </details>`;
@@ -204,16 +204,15 @@
     await render(host.querySelector('.sftk-th-list'), tab, () => inline(host, tab), subject);
   }
 
-  // ── the top bar ── one button for what was done: Activity (owner 2026-11-16). The tool's own "History (N)" button
-  // is kept hidden; its markup stays for the top bar's width rules.
-  function button() { const b = document.getElementById('sftkThBtn'); if (b) b.style.display = 'none'; }
+  // ── the top bar ── one button for what was done: Activity (owner 2026-11-16); the tool's own "History (N)" button
+  // is gone. This window is opened from Activity ("this tool only"), from a row's ↩ Undo, and by a link from Data Studio.
   async function open(tab) {
     const t = tab || _tab; if (!t || typeof showModal !== 'function') return;
     if (t !== '*' && !sftkHistoryTabLabel(t)) return;
     showModal(`<div class="modal-header">🧾 ${t === '*' ? 'Toolkit changes — back up, restore, clear' : `History — ${esc(sftkHistoryTabLabel(t))}`}</div>
       <div class="sftk-th-intro">${t === '*' ? 'Every change made with a Toolkit tool, newest first. Deployments are in Data Studio › History.' : 'Every change this tool made, newest first. A change made by another tool is in that tool; deployments are in Data Studio › History.'}</div>
       <div id="sftkThModalNote">${noteHtml(t)}</div><div class="sftk-th-list sftk-th-modal" id="sftkThModalList"></div>
-      <div class="modal-actions sftk-th-actions"><span class="sftk-th-acts"><button class="btn btn-secondary" id="sftkThBackup" style="display:none" title="${TIP_BACKUP}">⬇ Back up</button><button class="btn btn-secondary" id="sftkThRestore" title="${TIP_RESTORE}">⬆ Restore a backup</button><button class="btn btn-secondary sftk-th-clear" id="sftkThClear" style="display:none" title="${TIP_CLEAR}">🗑 Clear history</button></span><button class="btn btn-secondary" id="sftkThClose">Close</button></div>`);
+      <div class="modal-actions sftk-th-actions"><span class="sftk-th-acts"><button class="btn btn-secondary" id="sftkThBackup" style="display:none" title="${TIP_BACKUP}">⬇ Back up</button><button class="btn btn-secondary" id="sftkThRestore" title="${TIP_RESTORE}">⬆ Restore a backup</button><button class="btn btn-secondary sftk-th-clear" id="sftkThClear" style="display:none" title="${TIP_CLEAR}">🗑 Clear activity</button></span><button class="btn btn-secondary" id="sftkThClose">Close</button></div>`);
     const box = document.getElementById('modalBox'); if (box) box.style.width = 'min(860px, 94vw)';
     document.getElementById('sftkThClose')?.addEventListener('click', () => closeModal());
     const n = await render(document.getElementById('sftkThModalList'), t, () => open(t));
@@ -226,24 +225,22 @@
   }
 
   // The popup tells this module which tool is open (navigateToTab / showHomePage).
-  function setTab(tab) { _tab = sftkHistoryTabLabel(tab) ? String(tab) : ''; button(); }
+  function setTab(tab) { _tab = sftkHistoryTabLabel(tab) ? String(tab) : ''; }
 
   function refreshAll() {
-    button();
     document.querySelectorAll('[data-sftk-th-inline]').forEach(h => inline(h, h.getAttribute('data-sftk-th-inline')));
     const m = document.getElementById('sftkThModalList'); if (m && m.getAttribute('data-sftk-th')) open(m.getAttribute('data-sftk-th'));
   }
 
   if (typeof document !== 'undefined') {
     document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('sftkThBtn')?.addEventListener('click', () => open());
       // Data Studio › History links here: popup.html?tab=fields&history=1
       try {
         const q = new URLSearchParams(location.search);
         if (q.get('history') === '1' && sftkHistoryTabLabel(q.get('tab'))) {
           const want = q.get('tab'); let tries = 0;
           const t = setInterval(() => {
-            if (document.querySelector(`.tab-btn.active[data-tab="${want}"]`) && !document.getElementById('sftkConfirmGo')) { clearInterval(t); _tab = want; button(); open(want); }
+            if (document.querySelector(`.tab-btn.active[data-tab="${want}"]`) && !document.getElementById('sftkConfirmGo')) { clearInterval(t); _tab = want; open(want); }
             else if (++tries > 40) clearInterval(t);
           }, 250);
         }

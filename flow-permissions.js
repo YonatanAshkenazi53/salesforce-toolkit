@@ -895,7 +895,7 @@ const FlowPermissions = (() => {
     }
     const inPlace = before.size + alreadyThere;
     const undoLine = ins.created.length
-      ? `<p style="margin-top:8px;font-size:11px">↩ Undo in History removes the ${n(ins.created.length)} grant${ins.created.length !== 1 ? 's' : ''} this run created.</p>`
+      ? `<p style="margin-top:8px;font-size:11px">↩ Undo in Activity removes the ${n(ins.created.length)} grant${ins.created.length !== 1 ? 's' : ''} this run created.</p>`
       : '';
 
     // ✅ only when the re-read shows every pair.

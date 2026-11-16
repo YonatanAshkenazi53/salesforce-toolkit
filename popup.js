@@ -1375,7 +1375,7 @@ async function deleteFlowInterviews(label, list, which) {
   sftkDialog({
     icon: r.failed ? '⚠' : '✅', title: r.failed ? `${r.deleted} deleted, ${r.failed} refused` : `${r.deleted} interview${r.deleted === 1 ? '' : 's'} deleted`,
     sev: r.failed ? 'amber' : 'good',
-    bodyHtml: r.failed ? `<ul class="modal-list">${r.errors.slice(0, 10).map(e => `<li>${escHtml(e)}</li>`).join('')}</ul>` : '<p>Verified by re-reading the org. History keeps this change.</p>',
+    bodyHtml: r.failed ? `<ul class="modal-list">${r.errors.slice(0, 10).map(e => `<li>${escHtml(e)}</li>`).join('')}</ul>` : '<p>Verified by re-reading the org. Activity keeps this change.</p>',
     actions: [{ id: 'modalCancel', label: 'Close', kind: 'secondary' }],
   });
   document.getElementById('modalCancel')?.addEventListener('click', () => closeModal());
@@ -1550,7 +1550,7 @@ function buildGroupElement(label, versions, depMap, o) {
   wholeBtn.className = 'flow-whole-btn';
   wholeBtn.textContent = currentMode === 'delete' ? '🗑 whole flow' : '✓ all versions';
   wholeBtn.title = currentMode === 'delete'
-    ? `Select every version of ${label} — the flow itself is deleted, after a restore point is kept in History`
+    ? `Select every version of ${label} — the flow itself is deleted, after a restore point is kept in Activity`
     : `Select every version of ${label}`;
   wholeBtn.addEventListener('click', e => {
     e.stopPropagation();
@@ -1834,14 +1834,14 @@ async function onDeleteClick() {
     })),
     // user 2026-10-17 ("rollback"): a restore point of every version is kept in History first, and ↩ Undo
     // brings it back as a Draft version — so this is not the permanent delete it was
-    revOverride: { html: 'A restore point of every flow is kept in History before anything is deleted; <strong>↩ Undo</strong> brings each flow back as one version — the one that was active, active again, or its newest as a Draft. Its other versions stay deleted (⬇ Backup keeps them all). A flow whose restore point cannot be taken is <strong>not</strong> deleted.'
+    revOverride: { html: 'A restore point of every flow is kept in Activity before anything is deleted; <strong>↩ Undo</strong> brings each flow back as one version — the one that was active, active again, or its newest as a Draft. Its other versions stay deleted (⬇ Backup keeps them all). A flow whose restore point cannot be taken is <strong>not</strong> deleted.'
       + (_pendingInterviews.length ? ` ${_pendingInterviews.length} flow interview(s) are deleted first and cannot be re-created.` : ''), cls: 'sftk-rev-undo', ack: 'I understand what is deleted and how it comes back' },
     confirmLabel: `🗑 Delete ${toDelete.length}`,
     // The subflow check above may have run against a map that was never fully
     // built, or against one whose edges came from the stored cache — say which
     // here rather than let the summary imply an all-clear it did not earn.
     undoHint: deleteCheckProvenance()
-      + 'History keeps the restore points; ⬇ Backup still gives you a file of your own.',
+      + 'Activity keeps the restore points; ⬇ Backup still gives you a file of your own.',
     production: gate.production ? { label: gate.label } : null,
   });
   if (!finalOk) return;
@@ -2031,7 +2031,7 @@ async function askScanBeforeDelete() {
       title: `The subflow check has no data`,
       sev: 'red',
       bodyHtml: `
-        <p>${escHtml(coverage)} Without that map the toolkit cannot tell whether another flow calls the versions you are about to delete — and a deleted flow comes back from History as one version only.</p>
+        <p>${escHtml(coverage)} Without that map the toolkit cannot tell whether another flow calls the versions you are about to delete — and a deleted flow comes back from Activity as one version only.</p>
         <p class="modal-warning-text">Finishing the scan reads ${left.reads} flow version(s) in ${left.calls} batched API call(s) (${escHtml(left.estLabel)}). You can stop it at any point.</p>
       `,
       actions: [{ id: 'modalCancel', label: `Cancel delete`, kind: 'secondary' }, { id: 'modalSkip', label: `Delete without checking`, kind: 'danger' }, { id: 'modalScan', label: `Scan now (${left.calls} call${left.calls === 1 ? '' : 's'})`, kind: 'primary' }],
@@ -2054,7 +2054,7 @@ async function askStaleBeforeDelete(reason) {
       sev: 'red',
       bodyHtml: `
         <p>Part of this org's dependency map was reused from the stored cache, and ${escHtml(String(reason || 'it could not be re-checked against the org'))}.</p>
-        <p class="modal-warning-text">That means “nothing calls these flows” has <b>not</b> been confirmed against the org as it is right now, and a deleted flow comes back from History as one version only. Reopening the popup (or resuming the scan) re-reads the org from scratch.</p>
+        <p class="modal-warning-text">That means “nothing calls these flows” has <b>not</b> been confirmed against the org as it is right now, and a deleted flow comes back from Activity as one version only. Reopening the popup (or resuming the scan) re-reads the org from scratch.</p>
       `,
       actions: [{ id: 'modalCancel', label: `Cancel delete`, kind: 'secondary' }, { id: 'modalSkip', label: `Delete without a verified check`, kind: 'danger' }],
     });
@@ -2223,7 +2223,7 @@ async function showActiveWarningModal(activeFlows) {
         <p style="margin-bottom:8px;font-size:12px">Optionally download a backup before deleting:</p>
         <ul class="modal-list backup-list">${rows}</ul>
         <button class="btn btn-secondary btn-sm" id="backupAllBtn" style="margin:6px 0 10px">⬇ Download All Backups</button>
-        <p class="modal-warning-text">Deleting active flows may break automations, processes, or user-facing screens that depend on them. A restore point of every version is kept in History first; ↩ Undo brings a version back as a Draft, not active.</p>
+        <p class="modal-warning-text">Deleting active flows may break automations, processes, or user-facing screens that depend on them. A restore point of every version is kept in Activity first; ↩ Undo brings a version back as a Draft, not active.</p>
       `,
       actions: [{ id: 'modalCancel', label: `Cancel`, kind: 'secondary' }, { id: 'modalConfirm', label: `I understand, delete anyway`, kind: 'danger' }],
     });

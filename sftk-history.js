@@ -180,12 +180,12 @@ function sftkToolUndoState(entry) {
   if (!u) return { show: true, disabled: true, label: '↩ no undo', title: 'This entry has no undo statement (the action was cut short before it ended).' };
   if (u.done) {
     return { show: true, disabled: true, label: u.done.ok ? '↩ Undone' : '↩ Undo attempted',
-      title: u.done.ok ? `Undone and verified on ${u.done.at}. The undo has its own entry in History.` : `An undo was run on ${u.done.at} but not every step was confirmed — see the undo's own entry in History.` };
+      title: u.done.ok ? `Undone and verified on ${u.done.at}. The undo has its own entry in Activity.` : `An undo was run on ${u.done.at} but not every step was confirmed — see the undo's own entry in Activity.` };
   }
   if (u.none) return { show: true, disabled: true, label: '↩ no undo', title: `Cannot be undone from here — ${u.none}` };
   const n = (u.steps || []).length;
   return { show: true, disabled: false, label: `↩ Undo (${n} step${n === 1 ? '' : 's'})`,
-    title: `Writes the previous state back${u.note ? ` — ${u.note}` : ''}. Each step is re-read to confirm it; the undo is recorded in History.` };
+    title: `Writes the previous state back${u.note ? ` — ${u.note}` : ''}. Each step is re-read to confirm it; the undo is recorded in Activity.` };
 }
 
 // ── The verify spec, evaluated against a query's answer (pure) ──────────
@@ -285,7 +285,7 @@ async function sftkHistoryUndo(entryId, opts) {
   const log = typeof o.onLog === 'function' ? o.onLog : () => {};
   const all = await sftkHistoryAll();
   const entry = all.find(h => h && h.id === entryId && h.kind === 'tool');
-  if (!entry) return { ok: false, text: 'This entry is no longer in History.' };
+  if (!entry) return { ok: false, text: 'This entry is no longer in Activity.' };
   const st = sftkToolUndoState(entry);
   if (st.disabled) return { ok: false, text: st.title || 'This entry cannot be undone.' };
   const steps = entry.toolUndo.steps;
@@ -303,7 +303,7 @@ async function sftkHistoryUndo(entryId, opts) {
         html: `Writes the previous state back in <strong>${(sess.label || _sftkHistOrgKey(orgUrl)).replace(/</g, '&lt;')}</strong>. An undo has no undo.` +
           '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
           '<li><b>Steps</b><span>One at a time; each step is re-read to confirm it</span></li>' +
-          '<li><b>Recorded</b><span>The whole undo is recorded in History</span></li>' +
+          '<li><b>Recorded</b><span>The whole undo is recorded in Activity</span></li>' +
           '<li><b>Redo</b><span>To redo the change, use the tool again</span></li></ol>' +
           (entry.toolUndo.note ? `<details class="sftk-cf-more"><summary>Note from the tool</summary>${String(entry.toolUndo.note).replace(/</g, '&lt;')}</details>` : '') + '</div>',
         needsCheckbox: true,
@@ -375,7 +375,7 @@ async function sftkHistoryUndo(entryId, opts) {
   const okN = stepsRun.filter(x => x.ok).length;
   const tail = note ? ` · not restored: ${note}` : '';
   sftkHistoryUndoAnnounce(entry, { ok: okAll });   // the open tool re-reads the org (2026-11-15)
-  return { ok: okAll, text: (okAll ? `Undone — ${okN} step${okN === 1 ? '' : 's'} verified by re-reading the org` : `Undo ran: ${okN} of ${stepsRun.length} step${stepsRun.length === 1 ? '' : 's'} verified — see the undo's entry in History`) + tail, entry, undoEntry };
+  return { ok: okAll, text: (okAll ? `Undone — ${okN} step${okN === 1 ? '' : 's'} verified by re-reading the org` : `Undo ran: ${okN} of ${stepsRun.length} step${stepsRun.length === 1 ? '' : 's'} verified — see the undo's entry in Activity`) + tail, entry, undoEntry };
 }
 
 // ── Undo all the changes a tool made about one subject (owner 2026-11-15: "we need an undo all. without going over
@@ -492,8 +492,8 @@ function sftkHistoryBackupOf(all, tab, nowIso) {
 // tool, a deployment, or anything that is not a history entry is counted in `dropped` and left out. PURE.
 function sftkHistoryBackupRead(text, tab) {
   let j;
-  try { j = JSON.parse(String(text || '')); } catch (_) { return { ok: false, entries: [], dropped: 0, why: 'This file is not a History backup (it is not JSON).' }; }
-  if (!j || j.format !== SFTK_HISTORY_BACKUP_FORMAT || !Array.isArray(j.entries)) return { ok: false, entries: [], dropped: 0, why: 'This file is not a History backup made by the Toolkit.' };
+  try { j = JSON.parse(String(text || '')); } catch (_) { return { ok: false, entries: [], dropped: 0, why: 'This file is not an Activity backup (it is not JSON).' }; }
+  if (!j || j.format !== SFTK_HISTORY_BACKUP_FORMAT || !Array.isArray(j.entries)) return { ok: false, entries: [], dropped: 0, why: 'This file is not an Activity backup made by the Toolkit.' };
   if (Number(j.version) > 1) return { ok: false, entries: [], dropped: 0, why: 'This backup was made by a newer version of the Toolkit. Update the Toolkit, then restore it.' };
   // a backup of everything can be read by one tool (it takes its own); one tool's backup by Activity; never tool A's by tool B
   if (String(tab) !== '*' && String(j.tab) !== '*' && String(j.tab) !== String(tab)) return { ok: false, entries: [], dropped: 0, why: `This is a backup of ${sftkHistoryTabLabel(j.tab) || 'another tool'} — restore it from Activity.` };

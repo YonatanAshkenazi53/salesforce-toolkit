@@ -88,7 +88,7 @@ export default async function (h) {
     'Licenses tab': await h.eval("!!document.querySelector('[data-tab=\"licenses\"], #tab-licenses')"),
     'onboarding (SFTKOnboard)': await h.eval("typeof window.SFTKOnboard !== 'undefined'"),
     'Licence button': await h.eval("!!document.querySelector('#sftkTermsBtn')"),
-    'History button': await h.eval("!!document.querySelector('#sftkThBtn')"),
+    'Activity button': await h.eval("!!document.querySelector('#sftkFeedBtn')"),
   };
   h.log('popup:', JSON.stringify(popupChecks));
   for (const [k, v] of Object.entries(popupChecks)) if (/Licence button|History button/.test(k) ? !v : v) throw new Error(`popup: ${k} — ${v}`);

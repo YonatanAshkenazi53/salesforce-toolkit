@@ -235,7 +235,7 @@ describe('sftkHistoryUndo — the steps run through the write discipline', () =>
     const send2 = async m => { sent.push(m); if (m.type === 'GET_ALL_SF_SESSIONS') return { sessions }; if (m.type === 'SF_QUERY') return { records: [{ ActiveVersionId: null }] }; return {}; };
     const r = await H.sftkHistoryUndo('e1', { send: send2 });
     expect(r.ok).toBe(false);
-    expect(r.text).toBe('Undo ran: 0 of 1 step verified — see the undo\'s entry in History');
+    expect(r.text).toBe('Undo ran: 0 of 1 step verified — see the undo\'s entry in Activity');
     expect(storage.store.sftk_history[0].toolUndo.done.ok).toBe(false);
     expect(storage.store.sftk_history[1].status).toBe('partial');
   });

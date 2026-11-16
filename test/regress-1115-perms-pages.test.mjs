@@ -178,7 +178,7 @@ describe('B. a partial insert is reported per pair', () => {
     expect(assigned).not.toContain('Set 2');
     expect(failed).toContain('<strong>Flow A → Set 2</strong>: insufficient access rights on cross-reference id');
     expect(failed).toContain('<strong>Flow B → Set 2</strong>: insufficient access rights on cross-reference id');
-    expect(m).toContain('Undo in History removes the 2 grants this run created');
+    expect(m).toContain('Undo in Activity removes the 2 grants this run created');
     expect(h.calls.historyEnd[0].undo.steps.map(s => s.describe)).toEqual(['Flow A → Set 1: remove flow access', 'Flow B → Set 1: remove flow access']);
     // History's sentence carries the true count too.
     expect(h.calls.notes[0].out.ok).toBe(false);
@@ -189,7 +189,7 @@ describe('B. a partial insert is reported per pair', () => {
     await h.fns.doAssign([flowA], [set1]);
     expect(h.heading()).toBe('0 of 1 grant made');
     expect(h.modal()).toContain('<strong>Flow A → Set 1</strong>: no access');
-    expect(h.modal()).not.toContain('Undo in History');
+    expect(h.modal()).not.toContain('Undo in Activity');
     expect(h.calls.reads).toBe(1);               // the read before the write only
     expect(h.calls.notes[0].out.accepted).toBe(false);
     expect(h.calls.historyEnd[0].undo.none).toBeTruthy();

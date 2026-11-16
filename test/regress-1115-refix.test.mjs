@@ -683,20 +683,20 @@ describe('J. with a tool open the action row ends inside the window from 780 px 
   const btnGap = px(decl('.app-topbar .dbg-btn', 'gap'));
   const ICON = 14, SQUARE = 28;
   const LABELS = { homeBtn: 'Home', sftkFeedBtn: 'Activity', dataStudioBtn: 'Data Studio', sftkTermsBtn: 'Licence' };
-  const TOOL = 758, TOOL_HISTORY = 850;
+  const TOOL = 758;   // 2026-11-16: the tool's History button is gone — one row width, one rule
   // the icon-only rules: [{ max, history, ids }]
   const TOOL_OPEN = ':has(#homeBtn:not([style*="display:none"]):not([style*="display: none"]))';
-  const HIST_SHOWN = ':has(#sftkThBtn:not([style*="display:none"]):not([style*="display: none"]))';
   const rules = [...CSS.matchAll(/@media \(max-width: (\d+)px\) \{\s*\.app-topbar-actions(:has\([^{]*?\)) :is\(([^)]*)\) \{([^}]*)\}\s*\}/g)]
     .map(m => ({ max: +m[1], cond: m[2], ids: m[3].split(',').map(s => s.trim().replace(/^#/, '')), body: m[4] }));
   const saving = ids => ids.reduce((t, id) => t + (2 * btnPad + ICON + btnGap + 5 * LABELS[id].length - SQUARE), 0);
   const actionsAt = (width, row, history) => {
-    const r = rules.find(x => width <= x.max && (x.cond === TOOL_OPEN || (history && x.cond === TOOL_OPEN + HIST_SHOWN)));
+    const r = rules.find(x => width <= x.max && x.cond === TOOL_OPEN);
     return r ? row - saving(r.ids) : row;
   };
 
-  it('the sheet has the two rules: tool open, and tool open with its History button', () => {
-    expect(rules.map(r => r.cond).sort()).toEqual([TOOL_OPEN, TOOL_OPEN + HIST_SHOWN].sort());
+  it('the sheet has the one rule: a tool is open (the tool\'s History button is gone)', () => {
+    expect(rules.map(r => r.cond)).toEqual([TOOL_OPEN]);
+    expect(CSS).not.toContain('sftkThBtn');
     for (const r of rules) {
       expect(r.ids.sort()).toEqual(Object.keys(LABELS).sort());
       expect(r.body).toMatch(/width:\s*28px/);
@@ -711,17 +711,16 @@ describe('J. with a tool open the action row ends inside the window from 780 px 
     expect(padX + floor + margin + TOOL).toBe(822);                                   // the review's arithmetic, labels kept
     expect(padX + floor + margin + actionsAt(800, TOOL, false)).toBeLessThanOrEqual(800 - padX);
   });
-  it('every width from 780 (the body minimum) to 1366 px, with and without the tool’s History button', () => {
-    for (const [row, history] of [[TOOL, false], [TOOL_HISTORY, true]]) {
+  it('every width from 780 (the body minimum) to 1366 px', () => {
+    for (const [row, history] of [[TOOL, false]]) {
       for (let w = 780; w <= 1366; w++) {
         const right = padX + floor + margin + actionsAt(w, row, history);
         if (right > w - padX) throw new Error(`the action row ends at ${right}px in a ${w}px window (row ${row}px)`);
       }
     }
   });
-  it('where the whole row fits the labels stay: 853 px without History, 940 px with it; the home page is never touched', () => {
+  it('where the whole row fits the labels stay: from 853 px; the home page is never touched', () => {
     expect(actionsAt(853, TOOL, false)).toBe(TOOL);
-    expect(actionsAt(940, TOOL_HISTORY, true)).toBe(TOOL_HISTORY);
     for (const r of rules) expect(r.cond.startsWith(TOOL_OPEN)).toBe(true);
     // #homeBtn is shown by clearing its inline display and hidden with display none — what the selector reads
     const pj = read('popup.js');

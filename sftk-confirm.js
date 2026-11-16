@@ -121,7 +121,7 @@ function sftkConfirmDestructive(opts) {
   const sev = rev.needsCheckbox ? 'red' : (!opts.revOverride && (reversibility === 'recycle' || reversibility === 'new-version')) ? 'blue' : 'amber';
   const revWord = opts.revWord ? String(opts.revWord)
     : rev.needsCheckbox ? 'Permanent' : reversibility === 'recycle' && !opts.revOverride ? 'Recycle Bin · 15 days'
-    : reversibility === 'new-version' && !opts.revOverride ? 'Reversible' : (undoHint && /undo/i.test(undoHint) ? 'Undo in History' : 'Writes');
+    : reversibility === 'new-version' && !opts.revOverride ? 'Reversible' : (undoHint && /undo/i.test(undoHint) ? 'Undo in Activity' : 'Writes');
   const facts = [
     items.length ? `${items.length} ${items.length === 1 ? 'item' : 'items'}` : null,
     revWord,

@@ -116,7 +116,7 @@ function sftkFeedTime(iso) {
     if (g.app === 'Toolkit' && g.tab) {
       return studio()
         ? `<a class="sftk-feed-where" href="popup.html?tab=${encodeURIComponent(g.tab)}&history=1" target="_blank" rel="noopener" title="Opens the Toolkit on that tool's history — undo and reports live there">open in the Toolkit ↗</a>`
-        : `<button class="sftk-feed-where sftk-feed-link" data-feed-tool="${esc(g.tab)}" title="That tool's own history — undo and reports live there">open the tool's history</button>`;
+        : `<button class="sftk-feed-where sftk-feed-link" data-feed-tool="${esc(g.tab)}" title="Only this tool’s changes — with back up, restore and clear">this tool only</button>`;
     }
     return studio()
       ? `<button class="sftk-feed-where sftk-feed-link" data-feed-studio="history" title="The full cards of these runs — per-object counts, the failed records by name, filters">details</button>`

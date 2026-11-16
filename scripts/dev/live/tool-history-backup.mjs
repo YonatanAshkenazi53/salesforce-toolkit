@@ -21,7 +21,7 @@ export default async function (h) {
   await h.sleep(500);
 
   // 1 — the top bar: Activity only; under the tool: the field changed last, nothing else
-  const top = await h.eval(`({ history: document.getElementById('sftkThBtn')?.style.display !== 'none', activity: !!document.getElementById('sftkFeedBtn') })`);
+  const top = await h.eval(`({ history: !!document.getElementById('sftkThBtn'), activity: !!document.getElementById('sftkFeedBtn') })`);
   if (top.history || !top.activity) throw new Error('FAILED: the top bar must show Activity and no History button — ' + JSON.stringify(top));
   const inl = await h.eval(`({ head: document.querySelector('#fcToolHist summary').textContent.trim(), cards: document.querySelectorAll('#fcToolHist .sftk-th-card').length, note: document.querySelector('#fcToolHist .sftk-th-note')?.textContent.trim(), acts: document.querySelectorAll('#fcToolHist [data-th-clear], #fcToolHist [data-th-backup]').length })`);
   h.log('under the tool:', JSON.stringify(inl));
@@ -83,7 +83,7 @@ export default async function (h) {
   await h.sleep(800);
   const bad = await h.eval(`document.querySelector('#sftkThModalNote .sftk-th-note-bad')?.textContent || ''`);
   h.log('wrong file:', bad);
-  if (!/not a History backup/.test(bad)) throw new Error('FAILED: a wrong file must be refused with a reason');
+  if (!/not an Activity backup/.test(bad)) throw new Error('FAILED: a wrong file must be refused with a reason');
   await h.eval(`chrome.storage.local.set({ sftk_history: [] }).then(() => true)`);
   h.log('✓ tool-history-backup: one Activity button · one field under the tool · back up 8 → clear → restore 8 with undo · wrong file refused');
 }

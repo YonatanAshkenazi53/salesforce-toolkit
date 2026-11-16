@@ -3,7 +3,7 @@
 //   1. Field Cleaner's full metadata scan listed a picklist whose DESCRIPTION names the scanned field as
 //      'Formula & Roll-up Fields | formula' — a blocker that joined the list with "Delete formula or roll-up field".
 //      Salesforce accepts the delete with it in place. Documentation text is a mention, never a blocker, never joined.
-//   2. Flow Access kept the old grants on screen after an Undo run from the tool's History.
+//   2. Flow Access kept the old grants on screen after an Undo run from Activity.
 //   3. A Data Deployment dry run stopped midway: (a) the engine's notes spoke of a real run ("not inserted", "made
 //      it into the target", "still to deploy"); (b) the headline counted only the records built when the stop came
 //      ("0 of 13 … 13 not reached" with 35 selected).
