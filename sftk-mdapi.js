@@ -616,6 +616,8 @@ function _sftkMdDeleteTable() {
   ValidationRuleInactive:  { mdType: 'ValidationRule',   parent: 'CustomObject',     tag: 'validationRules',      folder: 'objects',           suffix: 'object',           what: 'validation rule',            tooling: 'ValidationRule' },
   LeadConvertSettings:     { folder: 'LeadConvertSettings', suffix: 'LeadConvertSetting', what: 'lead field mapping', edit: 'leadMapping' },
   ProcessBuilder:          { mdType: 'Flow',             folder: 'flows',             suffix: 'flow',             what: 'Process Builder process' },
+  // a path that shows the field as a key field of a step, or runs on it (owner 2026-11-16: "we said all items must have a delete/remove")
+  PathAssistant:           { mdType: 'PathAssistant',    folder: 'pathAssistants',    suffix: 'pathAssistant',    what: 'path',                       tooling: 'PathAssistant' },
   };
 }
 // What the delete needs to know about a type; null = not deletable here
@@ -1493,6 +1495,19 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       xml = c.xml; how.push(`${plural(c.n, 'field')} ${verb}`);
       break;
     }
+    case 'PathAssistant': {
+      // a step's <fieldNames> are bare field names of the path's own object, its <entityName>; the path's <fieldName>
+      // is the picklist it RUNS on — that one is never taken out (a path without it is no path)
+      const ent = String(sftkMdChildText(xml, 'entityName') || '').trim();
+      if (ent && !sftkMdIsOwnObj(ent, ownApi)) { refuse(`the path is on ${ent} — its ${fieldApi} is ${ent}’s same-named field, so there is nothing of this field to edit`); break; }
+      // a path that RUNS on the field is refused whole, key fields and all: with its steps cleaned it would still
+      // stand on the field, and the row would read as cleared
+      if (_sftkMdFieldIs(String(sftkMdChildText(xml, 'fieldName') || '').trim(), ownApi, fieldApi)) { refuse('the path runs on the field itself — its steps are that field’s values; 🗑 delete the path, or pick another field for it in Setup → Path Settings'); break; }
+      const c = texts(xml, 'fieldNames');
+      if (!c.n) { refuse('the path does not show the field in a step — edit it in Setup → Path Settings'); break; }
+      xml = c.xml; how.push(`${plural(c.n, 'key field')} of the path’s steps ${verb}`);
+      break;
+    }
     case 'QuickAction': {
       // the layout and the predefined values hold fields of the record the action works on: its <targetObject> (a
       // Create / Log a Call action on Account makes a Contact / Task), else the action's own object (its <fullName>).
@@ -1575,7 +1590,7 @@ function sftkMdEditWays(type) {
     WorkflowRule: 'rr', SharingCriteriaRule: 'rr', MatchingRule: 'rr', WorkflowAlert: 'rr', WorkflowOutboundMessage: 'rr', FieldSet: 'rr',
     AssignmentRule: 'rr', AutoResponseRule: 'rr', EscalationRule: 'rr', ApprovalProcess: 'rr', DuplicateRule: 'rr',
     CustomMetadataRecord: 'rr', LeadConvertSettings: 'rr',
-    ListView: 'rr', CompactLayout: 'rr', QuickAction: 'rr', ValidationRuleInactive: 'r',
+    ListView: 'rr', CompactLayout: 'rr', QuickAction: 'rr', ValidationRuleInactive: 'r', PathAssistant: 'rr',
   }[type];
   return t ? { remove: t === 'rr', replace: true } : null;
 }

@@ -80,10 +80,10 @@ describe('the packages', () => {
 
 describe('the wiring', () => {
   it('every blocker kind with a spec gets a 🗑 button, with or without Remove/Replace; the button is a third way of a fix', () => {
-    expect(FC).toContain("const spec = (knownKind && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;");   // the 👀 mention kinds too (2026-11-08)
+    expect(FC).toContain("const spec = (knownKind && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null) || _extraDeleteSpec(type, id)) : null;");   // the 👀 mention kinds too (2026-11-08)
     expect(FC).toContain('data-way="delete" title="Delete this ${esc(spec.what)} from the org');
     expect(FC).toContain('if (!cfgT.fixable) return codeEdits + edits + del;');   // ✂/⇄ inside the blocker come first; code's ⇄ before them (2026-11-08)
-    expect(FC).toContain("const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');");   // the 👀 mention kinds the engine knows get 🗑 too (2026-11-08)
+    expect(FC).toContain("const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter' || !!_extraDeleteSpec(type, id));");   // the 👀 mention kinds the engine knows get 🗑 too (2026-11-08)
     expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code' || way === 'askdelete') ? way : '';");
     expect(FC).toContain("if (_fixWay === 'delete') {");
   });

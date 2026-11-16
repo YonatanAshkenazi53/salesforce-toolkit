@@ -286,6 +286,19 @@ function fcAbsentFeatureError(err) {
 }
 // The steps of a path that show the field among their key fields. PURE.
 //   metadata: a PathAssistant's Metadata (Tooling) · same(fieldName) → is it the scanned field
+// A custom setting's text value with the field's name taken out (owner 2026-11-16: "we said all items must have a
+// delete/remove"). The value may be the name alone, or a list of names: only "Object.Field" and a bare "Field" go
+// (whole word; a bare name written after another object's dot is that object's field and stays), and the separators
+// left behind are tidied. PURE. → the new text ('' when nothing else was in it)
+function fcSettingValueWithout(text, obj, field) {
+  const esc = x => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const o = esc(obj), f = esc(field);
+  let v = String(text == null ? '' : text)
+    .replace(new RegExp('(^|[^A-Za-z0-9_.])' + o + '\\.' + f + '(?![A-Za-z0-9_])', 'gi'), '$1')
+    .replace(new RegExp('(^|[^A-Za-z0-9_.])' + f + '(?![A-Za-z0-9_])', 'gi'), '$1');
+  v = v.replace(/[ \t]*([,;|])(?:[ \t]*[,;|])+[ \t]*/g, '$1 ').replace(/^[\s,;|]+|[\s,;|]+$/g, '');
+  return v;
+}
 function fcPathStepsWith(metadata, same) {
   const steps = (metadata && Array.isArray(metadata.pathAssistantSteps)) ? metadata.pathAssistantSteps : [];
   return steps.filter(st => st && [].concat(st.fieldNames || []).some(f => same(String(f || ''))))
@@ -1267,7 +1280,8 @@ const FieldCleaner = (() => {
     // a blocker, or a 👀 mention the engine knows (list views, compact layouts, quick actions, inactive rules — user
     // 2026-11-08: "why here we can't do anything?")
     const knownKind = !cfgT.fixable && (cfgT.sev === 'blocker' || cfgT.sev === 'silent');
-    const spec = (knownKind && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;
+    const spec = (knownKind && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null) || _extraDeleteSpec(type, id)) : null;
+    if (spec && spec.special === 'settingValue') return `<button class="btn btn-secondary btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Take the field’s name out of this record’s value — the value as it is now is shown first and kept; ↩ Undo writes it back">✂ Remove</button>`;
     // ✂ / ⇄ inside the component — the ways its kind has (user 2026-11-07: "remove, replace the field in the metadata
     // items without breaking them. While showing XML"). A duplicate rule too (user 2026-11-08: "למה אין החלפה פה…
     // צריך להיות בכולם"): the owner's own click, the diff confirmed, a restore point kept — nothing here ever switches
@@ -2299,7 +2313,7 @@ const FieldCleaner = (() => {
         const r = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true, _silentError: true, query: `SELECT Id, Name, FIELDS(CUSTOM) FROM ${st.QualifiedApiName} LIMIT 200` });
         for (const row of ((r && !r.error && r.records) || [])) {
           const cols = Object.entries(row).filter(([k, v]) => k !== 'attributes' && k !== 'Id' && typeof v === 'string' && re.test(v)).map(([k]) => k);
-          if (cols.length) add('CustomSettingRecord', row.Id, `${st.Label || st.QualifiedApiName} · ${row.Name || row.Id} (${cols.join(', ')})`);
+          if (cols.length) { add('CustomSettingRecord', row.Id, `${st.Label || st.QualifiedApiName} · ${row.Name || row.Id} (${cols.join(', ')})`); _csRows.set(String(row.Id).slice(0, 15), { sobject: st.QualifiedApiName, cols }); }
         }
       }
       if (sets.length > MAXS) add('CustomSettingRecord', 'cs_unread_more', `${sets.length - MAXS} more custom settings were not read — the scan reads the first ${MAXS}`);
@@ -2655,7 +2669,7 @@ const FieldCleaner = (() => {
     WorkflowAlert:  { icon: '📨', label: 'Email Alerts',     fixable: false, sev: 'blocker',
                       note: 'The alert sends to this field. Change its recipient in Setup (Workflow Actions → Email Alerts) or delete the alert.' },
     EmailAlertViaTemplate: { icon: '📨', label: 'Email Alerts (send a template that uses the field)', fixable: false, sev: 'silent',
-                      note: 'The alert itself does not name the field — it sends an email template that does. Deleting the field goes through; the alert keeps sending, with that merge field empty. Fix the template (under Email Templates) and the alert needs nothing.' },
+                      note: 'The alert itself does not name the field — it sends an email template that does. Deleting the field goes through; the alert keeps sending, with that merge field empty. Fix the template (under Email Templates) and the alert needs nothing; 🗑 deletes the alert itself (a restore point is kept).' },
     SearchLayout:   { icon: '🔎', label: 'Search Layouts', fixable: true, sev: 'silent',
                       note: 'The object’s search layout lists the field as a column. The delete goes through and the column goes with it; ✂ takes it out now.',
                       doneLabel: '✅ Search layout updated',
@@ -2679,7 +2693,7 @@ const FieldCleaner = (() => {
     ServiceChannel: { icon: '🎧', label: 'Service Channels', fixable: false, sev: 'blocker',
                       note: 'The Omni-Channel service channel uses the field as its secondary routing priority — Salesforce refuses the delete (live-tested). 🗑 deletes the channel (a restore point is kept), or pick another priority field on the channel.' },
     CustomSettingRecord: { icon: '🧾', label: 'Custom Setting Records', fixable: false, sev: 'silent',
-                      note: 'A record of a custom setting holds the field’s name as text. The delete goes through; whatever reads that value — Apex, a flow, a formula — then looks for a field that is gone. Change the value in the custom setting.' },
+                      note: 'A record of a custom setting holds the field’s name as text. The delete goes through; whatever reads that value — Apex, a flow, a formula — then looks for a field that is gone. ✂ takes the field’s name out of the value (↩ Undo writes it back), or change the value in the custom setting.' },
     CustomMetadataRecord: { icon: '🗂', label: 'Custom Metadata Records', fixable: false, sev: 'blocker',
                       note: 'A record holds the field’s name. When that value is a Field Definition relationship Salesforce refuses the delete; a plain text value only breaks whatever reads it. Edit the record in Setup → Custom Metadata Types → Manage Records.' },
     LeadConvertSettings: { icon: '🔀', label: 'Lead Field Mapping', fixable: false, sev: 'blocker',
@@ -2710,7 +2724,7 @@ const FieldCleaner = (() => {
     ProcessBuilder: { icon: '⚙', label: 'Process Builder',  fixable: false, sev: 'blocker',
                       note: 'Open the process in Setup (Process Automation → Process Builder), take the field out of its criteria and actions or deactivate and delete the process, then re-scan. Listed under Flows; not edited here.' },
     PathAssistant:  { icon: '🛤', label: 'Paths',            fixable: false, sev: 'silent',
-                      note: 'A path that runs on the field: the delete goes through and the Path stays active on a field that no longer exists (live-tested). Delete or re-point the Path in Setup → Path Settings first. A path that shows the field as a key field of a step is listed too: take the field out of that step in Path Settings.' },
+                      note: 'A path that runs on the field: the delete goes through and the Path stays active on a field that no longer exists (live-tested). 🗑 deletes the path (a restore point is kept), or re-point it in Setup → Path Settings first. A path that shows the field as a key field of a step is listed too: ✂ takes the field out of that step.' },
     // Both come from Salesforce's own dependency index — the same one behind
     // "Where is this used?" — so they cost nothing extra to find (user
     // 2026-09-01: "one of the metadata items that we scan everytime").
@@ -4526,7 +4540,7 @@ const FieldCleaner = (() => {
       : '';
 
     // a blocker the delete engine knows gets its 🗑 button even when nothing else is fixable here
-    const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');
+    const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter' || !!_extraDeleteSpec(type, id));
     if (fixable || canDel) {
       return `
         <div class="fc-item" id="fcItem_${esc(id)}">
@@ -6668,6 +6682,16 @@ const FieldCleaner = (() => {
   // The full name the Metadata API knows the row by: the legs that read by
   // name put it in the id; an index row carries a Tooling Id, which answers
   // with its FullName; a matching rule is a plain record with a developer name.
+  // custom setting record rows of the last scan: id15 → { sobject, cols } (what ✂ Remove needs to read and write)
+  const _csRows = new Map();
+  // Two 👀 kinds the delete engine's table does not hold (owner 2026-11-16: "we said all items must have a
+  // delete/remove"): an email alert that only SENDS a template naming the field is deleted as the email alert it is;
+  // a custom setting record gets the field's name taken out of its value (a data write, undone by writing it back).
+  function _extraDeleteSpec(type, id) {
+    if (type === 'EmailAlertViaTemplate') { const w = typeof sftkMdDeleteSpec === 'function' ? sftkMdDeleteSpec('WorkflowAlert') : null; return w ? { ...w, asType: 'WorkflowAlert' } : null; }
+    if (type === 'CustomSettingRecord' && _csRows.has(String(id || '').slice(0, 15))) return { type, mdType: 'CustomSettingRecord', what: 'custom setting value', special: 'settingValue', edit: 'settingValue' };
+    return null;
+  }
   async function _deleteFullName(type, componentId, spec) {
     const row = (_lastScan?.deps || []).find(d => d.MetadataComponentType === type && d.MetadataComponentId === componentId);
     if (row && row._fullName) return row._fullName;
@@ -6715,6 +6739,26 @@ const FieldCleaner = (() => {
     // a lookup filter: only the filter goes, the lookup field and its data stay. Live 2026-11-07: a Tooling
     // PATCH of the field is refused ("insufficient access rights on cross-reference id"); a deploy of the
     // field inside its object file WITHOUT the <lookupFilter> removes it, and the original XML puts it back.
+    if (spec.special === 'settingValue') {
+      const info = _csRows.get(String(componentId).slice(0, 15));
+      if (!info || !/^[A-Za-z0-9_]+$/.test(info.sobject) || !info.cols.every(c => /^[A-Za-z0-9_]+$/.test(c))) throw new Error('this custom setting record is not in the last scan — re-scan');
+      const q = `SELECT Id, ${info.cols.join(', ')} FROM ${info.sobject} WHERE Id = '${String(componentId).replace(/[^A-Za-z0-9]/g, '')}'`;
+      const read = async () => { const a = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true, query: q }); return (a && !a.error) ? ((a.records || [])[0] || false) : null; };
+      const rec = await read();
+      if (rec === null) throw new Error('the custom setting record could not be read — nothing is changed without the value to put back');
+      if (!rec) throw new Error('the custom setting record is not there any more — re-scan');
+      const shown = [], before = {}, after = {};
+      for (const c of info.cols) {
+        const was = rec[c], now = fcSettingValueWithout(was, obj, field);
+        if (typeof was !== 'string' || now === was) continue;
+        shown.push({ col: c, before: was, after: now }); before[c] = was; after[c] = now === '' ? null : now;
+      }
+      if (!shown.length) throw new Error('the value does not hold the field’s name any more — re-scan');
+      const path = `services/data/v62.0/sobjects/${info.sobject}/${rec.Id}`;
+      return { files: null, patch: { path, body: after }, undoPatch: { path, body: before }, shown,
+        verify: { query: q, tooling: false, pick: 'records.0', field: shown[0].col, equals: shown[0].before },
+        gone: async () => { const a = await read(); return !!a && shown.every(x => (a[x.col] == null ? '' : String(a[x.col])) === x.after); } };
+    }
     if (spec.special === 'lookupFilter') {
       if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(fullName)) throw new Error(`the lookup field behind "${fullName}" could not be worked out — re-scan`);
       const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'CustomField', fullNames: [fullName], _suppressError: true });
@@ -6787,16 +6831,28 @@ const FieldCleaner = (() => {
     const pbCard = type === 'Flow' ? _flowCards.find(c => c.primaryId === String(componentId) && c.pb) : null;
     const spec = pbCard ? { type: 'Flow', mdType: 'Flow', what: 'Process Builder process', special: 'pb', card: pbCard }
       : type === 'LookupFilter' ? { type, mdType: 'CustomField', what: 'lookup filter', special: 'lookupFilter' }
-      : sftkMdDeleteSpec(type);
+      : (sftkMdDeleteSpec(type) || _extraDeleteSpec(type, componentId));
+    const engType = spec && spec.asType ? spec.asType : type;   // the kind the delete engine reads and deploys
     if (!spec) throw new Error(`A ${cfg.label || type} is not deleted from here — clear it in Setup.`);
     const obj = _selObj.api, field = _selField.api;
     const gate = await sftkOrgWriteGate(_orgUrl);
-    const special = spec.special === 'lookupFilter'
+    // a custom setting value: read now, so the confirmation shows the value as it is and as it will be
+    let prePlan = null;
+    if (spec.special === 'settingValue') {
+      try { prePlan = await _deleteRestorePlan(engType, componentId, String(componentId), spec); }
+      catch (e) { appendInlineError(componentId, e.message); return; }
+    }
+    const special = spec.special === 'settingValue'
+      ? `✂ <strong>Only the field’s name is taken out of the value</strong> — the record and whatever else the value holds stay. This is a write to the record’s data; the value as it is now is kept, and ↩ Undo in History writes it back.`
+        + `<div class="sftk-cf-plan"><ol class="sftk-cf-rows">${prePlan.shown.map(x => `<li><b>${esc(x.col)}</b><span><code>${esc(x.before)}</code> → ${x.after ? `<code>${esc(x.after)}</code>` : '<i>empty</i>'}</span></li>`).join('')}</ol></div>`
+      : spec.special === 'lookupFilter'
       ? `✂ <strong>Only the filter is removed from the lookup field</strong> — the field itself and its data stay. The field’s definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) puts the filter back.`
       : spec.edit === 'leadMapping'
         ? `✂ <strong>Only the mapping line of ${esc(obj)}.${esc(field)} is removed</strong> — the other mappings and the conversion settings stay. The settings are read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) puts the line back.`
         : spec.special === 'pb'
           ? `🗑 <strong>Every version of the process is deleted</strong> — it is switched off first if it runs. Its latest version is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back as a new, inactive version — activate it in Setup if you need it to run again.`
+          : type === 'EmailAlertViaTemplate'
+            ? `🗑 <strong>The email alert is deleted from the org</strong>. It does not name ${esc(obj)}.${esc(field)} itself — it sends a template that does; fixing the template (under Email Templates) keeps the alert. Salesforce refuses the delete while a workflow rule, a flow or an approval process still uses the alert. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back.`
           : `🗑 <strong>The ${esc(spec.what)} is deleted from the org</strong> — not just its reference to ${esc(obj)}.${esc(field)}. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back.${spec.code ? ' In a production org Salesforce may run the org’s Apex tests before it deletes code.' : ''}${type === 'MatchingRule' ? ' A matching rule a duplicate rule still uses is refused by Salesforce — delete that duplicate rule first.' : ''}${type === 'DuplicateRule' ? ' <strong>A duplicate rule guards the org’s data</strong> — nothing here switches one off or edits one behind a deployment; deleting it is yours to decide, here, with a way back.' : ''}`;
     const verb = (spec.special === 'lookupFilter' || spec.edit) ? 'Remove' : 'Delete';
     const sure = await sftkConfirmDestructive({
@@ -6820,8 +6876,8 @@ const FieldCleaner = (() => {
     _rowBusy(componentId, '⏳ reading…');
     let fullName, plan;
     try {
-      fullName = await _deleteFullName(type, componentId, spec);
-      plan = await _deleteRestorePlan(type, componentId, fullName, spec);
+      fullName = prePlan ? String(componentId) : await _deleteFullName(engType, componentId, spec);
+      plan = prePlan || await _deleteRestorePlan(engType, componentId, fullName, spec);
     } catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message); return; }
     await _snapshotFix('MdDelete', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, files: plan.files || null, patch: plan.undoPatch || null, verify: plan.verify });
     _rowBusy(componentId, verb === 'Remove' ? '⏳ removing…' : '⏳ deleting…');
@@ -6853,6 +6909,7 @@ const FieldCleaner = (() => {
       });
       if (wr.accepted && wr.ok) {
         _afterDelete(spec.special === 'pb' ? 'ProcessBuilder' : type);
+        if (spec.special === 'settingValue') return `✅ Removed — the field’s name is out of ${plan.shown.map(x => x.col).join(', ')}; the record stays — verified by re-reading the org`;
         if (spec.special === 'lookupFilter') return `✅ Removed — the lookup filter is gone, the field stays — verified by re-reading the org`;
         if (spec.edit === 'leadMapping') return `✅ Removed — ${plan.removed} mapping line${plan.removed === 1 ? '' : 's'} of ${obj}.${field} gone, the other mappings kept — verified by re-reading the org`;
         if (spec.special === 'pb') return `✅ Deleted — all ${plan.pb.versions.length} version${plan.pb.versions.length === 1 ? '' : 's'} of the process gone${plan.pb.active ? ' (it was switched off first)' : ''} — verified by re-reading the org`;

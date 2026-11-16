@@ -107,7 +107,7 @@ describe('email templates: the three storages through one record', () => {
 describe('the wiring in Field Cleaner', () => {
   it('a mention kind the engine knows gets ✂ / ⇄ / 🗑 and 🔍 like a blocker; a template has its own fix and inspector', () => {
     expect(FC).toContain("const knownKind = !cfgT.fixable && (cfgT.sev === 'blocker' || cfgT.sev === 'silent');");
-    expect(FC).toContain("const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');");
+    expect(FC).toContain("const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter' || !!_extraDeleteSpec(type, id));");
     expect(FC).toContain("if ((type === 'MatchingRule' || type === 'DuplicateRule' || type === 'ListView') && looksLikeId) {");   // a list view's 00B id → Object.DeveloperName
     expect(FC).toContain("if (type === 'EmailTemplate') label = (await fixEmailTemplate(componentId, componentName, swap)) || label;");
     expect(FC).toContain("if (type === 'EmailTemplate') { await _tplInspect(componentId, componentName, panel, inspBtn); return; }");

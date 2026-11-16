@@ -63,7 +63,7 @@ describe('ValidationRule', () => {
     });
     it('offered: ✂ and ⇄ and 🗑', () => {
       expect(M.sftkMdEditWays('ValidationRule')).toEqual({ remove: true, replace: true });
-      expect(FC).toContain("const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');");
+      expect(FC).toContain("const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter' || !!_extraDeleteSpec(type, id));");
     });
   });
 

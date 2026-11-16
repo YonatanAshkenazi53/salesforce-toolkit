@@ -62,7 +62,7 @@ const offered = type => {
 describe('the row renderer rule this file leans on is the one in the product', () => {
   it('🗑 is for a kind that is NOT fixable and that the delete engine knows; a fixable kind gets ✂ / ⇄ only', () => {
     expect(FC).toContain("const knownKind = !cfgT.fixable && (cfgT.sev === 'blocker' || cfgT.sev === 'silent');");
-    expect(FC).toContain("const spec = (knownKind && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;");
+    expect(FC).toContain("const spec = (knownKind && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null) || _extraDeleteSpec(type, id)) : null;");
     expect(FC).toContain('if (!cfgT.fixable) return codeEdits + edits + del;');
   });
 });
@@ -1050,15 +1050,16 @@ const PATH = `<fullName>Account_Status_Path</fullName>
     <recordTypeName>__MASTER__</recordTypeName>`;
 const PATH_KEYFIELDS = PATH.replace('<fieldNames>Industry</fieldNames>', '<fieldNames>Status_Code__c</fieldNames>').replace('<fieldNames>Rating</fieldNames>', '<fieldNames>Rating</fieldNames>\n        <fieldNames>Status_Code__c</fieldNames>');
 
-describe('Path — FULL DELETE: not offered', () => {
-  it('a Path is listed as a mention with nothing to press: no delete spec, no ✂ / ⇄ ways, not fixable', () => {
+// 2026-11-16 (owner: "we said all items must have a delete/remove"): a Path is edited and deleted here — it was a
+// mention with nothing to press. Live: scripts/dev/live/fc-every-row-acts.mjs.
+describe('Path — FULL DELETE: offered', () => {
+  it('a Path is a mention with 🗑, and ✂ / ⇄ for a step\'s key field', () => {
     expect(TYPE_CFG.PathAssistant).toMatchObject({ fixable: false, sev: 'silent' });
-    expect(M.sftkMdDeleteSpec('PathAssistant')).toBeNull();
-    expect(M.sftkMdEditWays('PathAssistant')).toBeNull();
+    expect(M.sftkMdDeleteSpec('PathAssistant')).toMatchObject({ mdType: 'PathAssistant', what: 'path' });
+    expect(M.sftkMdEditWays('PathAssistant')).toEqual({ remove: true, replace: true });
     expect(M.sftkMdCodeWays('PathAssistant')).toBeNull();
-    expect(M.sftkMdPackageFiles('PathAssistant', 'Account_Status_Path', PATH)).toBeNull();
-    expect(offered('PathAssistant')).toEqual({ known: true, remove: false, replace: false, del: false });
-    expect(TYPE_CFG.PathAssistant.note).toMatch(/Delete or re-point the Path in Setup → Path Settings/);
+    expect(M.sftkMdPackageFiles('PathAssistant', 'Account_Status_Path', PATH)).not.toBeNull();
+    expect(offered('PathAssistant')).toEqual({ known: true, remove: true, replace: true, del: true });
   });
   it('the delete walk cannot be asked to delete it either: the engine answers that it is not deleted from here', () => {
     expect(FC).toContain('if (!spec) throw new Error(`A ${cfg.label || type} is not deleted from here — clear it in Setup.`);');
@@ -1069,13 +1070,13 @@ describe('Path — REMOVE / REPLACE, ONE MENTION and SEVERAL: refused, the XML u
   it('one mention (the path’s own picklist): the product sees it, ✂ and ⇄ are refused, nothing changes', () => {
     expect(count(PATH)).toBe(1);
     expect(M.sftkMdMentionsField(PATH, OBJ, F)).toBe(true);
-    for (const nf of [null, NEW]) expect(M.sftkMdEditField('PathAssistant', PATH, OBJ, F, nf)).toEqual({ xml: PATH, changed: false, how: [], refused: 'this kind is not edited here — 🗑 delete it, or edit it in Setup' });
+    for (const nf of [null, NEW]) { const r = M.sftkMdEditField('PathAssistant', PATH, OBJ, F, nf); expect(r.xml).toBe(PATH); expect(r.changed).toBe(false); expect(r.refused).toMatch(/the path runs on the field itself/); }
   });
   it('several mentions (the picklist and a key field in two steps): refused as a whole, not one of them is touched', () => {
     expect(count(PATH_KEYFIELDS)).toBe(3);
     for (const nf of [null, NEW]) {
       const r = M.sftkMdEditField('PathAssistant', PATH_KEYFIELDS, OBJ, F, nf);
-      expect(r.refused).toMatch(/not edited here/);
+      expect(r.refused).toMatch(/the path runs on the field itself/);
       expect(r.xml).toBe(PATH_KEYFIELDS);
       expect(r.changed).toBe(false);
     }
