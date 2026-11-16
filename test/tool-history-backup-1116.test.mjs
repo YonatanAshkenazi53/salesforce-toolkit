@@ -161,11 +161,12 @@ describe('a row\'s own changes', () => {
 });
 
 describe('the buttons', () => {
-  it('the window carries Back up, Restore and Clear; the list inside a tool does not (it is about one field)', () => {
+  it('the window carries Back up, Restore and Clear; nothing draws a list inside a tool\'s page', () => {
     for (const a of ['sftkThBackup', 'sftkThRestore', 'sftkThClear']) expect(TH).toContain(a);
-    const inl = TH.slice(TH.indexOf('async function inline(host, tab, opts)'), TH.indexOf('// ── the top bar ──'));
-    for (const a of ['data-th-backup', 'data-th-restore', 'data-th-clear']) expect(inl).not.toContain(a);
-    expect(inl).toContain('data-th-activity');
+    for (const a of ['data-th-backup', 'data-th-restore', 'data-th-clear', 'data-th-activity', 'async function inline(']) expect(TH).not.toContain(a);
+  });
+  it('a backup file is named with the local day, and never with a character Windows refuses', () => {
+    expect(TH).toContain("a.download = `toolkit-history-${String(tab) === '*' ? 'all' : String(tab)}-${sftkLocalDay()}.json`;");
   });
   it('Clear asks first, ticks a box only when an undo is lost, and never touches an org', () => {
     const body = TH.slice(TH.indexOf('async function clear(tab, after)'), TH.indexOf('// ── inside a tool ──'));

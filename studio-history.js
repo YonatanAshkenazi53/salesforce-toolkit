@@ -1110,7 +1110,7 @@ async function _histFillArchBar() {
       const entries = [...arch, ..._history.filter(h => !archIds.has(h.id))]
         .sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
       const nowIso = new Date().toISOString();
-      const stamp = `${nowIso.slice(0, 10)}-${nowIso.slice(11, 19).replace(/:/g, '')}`;
+      const stamp = sftkLocalStamp();   // the file is named with the local day and time
       const payload = histExportPayload(entries, _settings, { labels: _histLabelsMap(entries), nowIso, fullChanges: await sftkFcLoad(entries.map(h => h.id)) });
       _histDownload(`sftk-history-full-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
       showToast(`Exported ${entries.length} run(s) — retained + archived`, 'success', 4000);
@@ -1124,7 +1124,7 @@ function _histShowExportAllModal() {
   const sorted = [..._history].sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
   const days = _settings.historyDays || 0;
   const nowIso = new Date().toISOString();
-  const stamp = `${nowIso.slice(0, 10)}-${nowIso.slice(11, 19).replace(/:/g, '')}`;
+  const stamp = sftkLocalStamp();   // the file is named with the local day and time
   // HONESTY: state exactly what the file will and will not contain — the
   // current retention setting decides what was already purged.
   const retentionLine = days > 0

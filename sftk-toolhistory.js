@@ -9,8 +9,7 @@
 // What changed is where it is shown: in the tool that made it —
 //   • the tool's own window (sftkToolHistoryOpen), opened from Activity — the
 //     tool's changes with ↩ Undo and ⬇ Report, ⬇ Back up, ⬆ Restore, 🗑 Clear;
-//   • for a tool that has room for it, a list inside the tool
-//     (sftkToolHistoryInline — Field Cleaner mounts it under its results).
+//   (a list inside the tool's own page existed until 2026-11-16; the owner took it off: Activity has it).
 // Owner 2026-11-16: "why do we need both history and activity" · "i dont want
 // all the history displayed here, only the history of the last run … if i go
 // and delete another field, it should display only the new field … and all
@@ -118,7 +117,7 @@
     const blob = new Blob([JSON.stringify(file, null, 1)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `toolkit-history-${String(tab) === '*' ? 'all' : String(tab)}-${file.exportedAt.slice(0, 10)}.json`;   // '*' is not a file name on Windows
+    a.href = url; a.download = `toolkit-history-${String(tab) === '*' ? 'all' : String(tab)}-${sftkLocalDay()}.json`;   // '*' is not a file name on Windows
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     say(tab, `⬇ Backed up ${file.count.toLocaleString('en-US')} change${file.count === 1 ? '' : 's'} with their Undo — ${a.download}, in your Downloads folder.`);
@@ -171,39 +170,6 @@
     if (typeof after === 'function') after(true);
   }
 
-  // ── inside a tool ──
-  // `host` gets a folded section; nothing when there is nothing to list.
-  //   opts.subject: () => what the tool is working on now ("Account.Field__c"). With it the list is ONLY the changes
-  //   made about that — and, with nothing picked, about what was changed last (owner 2026-11-16: "only the history of
-  //   the last run should be displayed here"). Everything else is in Activity; the section says so and opens it.
-  const _inlineOpts = new WeakMap();
-  async function inline(host, tab, opts) {
-    if (!host) return;
-    if (opts) _inlineOpts.set(host, opts);
-    const o = _inlineOpts.get(host) || {};
-    // marked even while empty: the first change of this session must find it (refreshAll)
-    host.setAttribute('data-sftk-th-inline', tab);
-    const all = await entriesFor(tab);
-    let subject, list = all;
-    if (typeof o.subject === 'function') {
-      subject = String(o.subject() || '') || String((all.find(e => e && e.subject) || {}).subject || '');
-      list = sftkHistoryForSubject(all, subject);
-    }
-    // nothing listed: nothing drawn
-    if (!list.length) { host.innerHTML = ''; return; }
-    const open = !!host.querySelector('details')?.open;
-    const rest = all.length - list.length;
-    host.innerHTML = `<details class="sftk-th-inline" ${open ? 'open' : ''}>
-        <summary>🧾 ${subject !== undefined
-          ? `Changes made here for <code>${esc(subject)}</code> — ${list.length.toLocaleString('en-US')}`
-          : `Activity — ${list.length.toLocaleString('en-US')} change${list.length === 1 ? '' : 's'} made with ${esc(sftkHistoryTabLabel(tab))}`}</summary>
-        ${subject !== undefined ? `<div class="sftk-th-bar"><span class="sftk-th-note">Only this field's changes are listed here${rest ? ` — ${rest.toLocaleString('en-US')} more, made for other fields, are in Activity` : ''}.</span><button type="button" class="btn btn-sm btn-secondary" data-th-activity="1" title="Everything the Toolkit and Data Studio did — undo, back up, restore, clear">🧾 Open Activity</button></div>` : ''}
-        <div class="sftk-th-list"></div>
-      </details>`;
-    host.querySelector('[data-th-activity]')?.addEventListener('click', () => document.getElementById('sftkFeedBtn')?.click());
-    await render(host.querySelector('.sftk-th-list'), tab, () => inline(host, tab), subject);
-  }
-
   // ── the top bar ── one button for what was done: Activity (owner 2026-11-16); the tool's own "History (N)" button
   // is gone. This window is opened from Activity ("this tool only"), from a row's ↩ Undo, and by a link from Data Studio.
   async function open(tab) {
@@ -228,7 +194,6 @@
   function setTab(tab) { _tab = sftkHistoryTabLabel(tab) ? String(tab) : ''; }
 
   function refreshAll() {
-    document.querySelectorAll('[data-sftk-th-inline]').forEach(h => inline(h, h.getAttribute('data-sftk-th-inline')));
     const m = document.getElementById('sftkThModalList'); if (m && m.getAttribute('data-sftk-th')) open(m.getAttribute('data-sftk-th'));
   }
 
@@ -253,7 +218,6 @@
 
   if (typeof window !== 'undefined') {
     window.sftkToolHistorySetTab = setTab;
-    window.sftkToolHistoryInline = inline;
     window.sftkToolHistoryOpen = open;
     window.sftkToolHistoryManage = () => open('*');   // Activity's "Back up · Restore · Clear"
   }

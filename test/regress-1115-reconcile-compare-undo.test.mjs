@@ -329,6 +329,7 @@ const CMP = read('studio-compare.js');
 function compareHarness(state) {
   return new Function('env', `
     const { eid, showToast, document, Blob, URL, setTimeout } = env;
+    const sftkLocalDay = () => '2026-11-16';   // sftk-history.js: the file is named with the local day
     const _orgCompareState = env.state;
     const esc = s => String(s == null ? '' : s);
     const orgLabel = u => String(u || '').replace('https://', '');

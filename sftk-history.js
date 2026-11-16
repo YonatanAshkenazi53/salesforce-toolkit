@@ -50,6 +50,18 @@ function _sftkHistOrgKey(u) {
   return String(u || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/\.lightning\.force\.com$/, '.my.salesforce.com');
 }
 
+// The day and the time a FILE is named with: the user's own clock, not UTC (QA 2026-11-11: an export made after
+// midnight local was named with yesterday's date). PURE given the Date.
+function sftkLocalDay(d) {
+  const t = (d && typeof d.getFullYear === 'function') ? d : new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+}
+function sftkLocalStamp(d) {
+  const t = (d && typeof d.getFullYear === 'function') ? d : new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${sftkLocalDay(t)}-${p(t.getHours())}${p(t.getMinutes())}${p(t.getSeconds())}`;
+}
 // What a tool's change is about. A tool registers ONE function that names its current subject (Field Cleaner: the
 // picked field), so every entry it begins carries it without each call site saying so; an explicit opts.subject wins.
 const _sftkHistSubjects = {};

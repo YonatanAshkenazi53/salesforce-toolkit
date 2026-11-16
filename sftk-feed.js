@@ -201,7 +201,7 @@ function sftkFeedTime(iso) {
     if (studio() && typeof window.sftkHistExportAll === 'function') { window.sftkHistExportAll(); return; }
     const all = (typeof sftkHistoryAll === 'function') ? await sftkHistoryAll() : [];
     const nowIso = new Date().toISOString();
-    download(`sftk-activity-${nowIso.slice(0, 10)}-${nowIso.slice(11, 19).replace(/:/g, '')}.json`, JSON.stringify({ exportedAt: nowIso, count: all.length, entries: all }, null, 2));
+    download(`sftk-activity-${sftkLocalStamp()}.json`, JSON.stringify({ exportedAt: nowIso, count: all.length, entries: all }, null, 2));
   }
 
   function open() {

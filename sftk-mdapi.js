@@ -596,6 +596,7 @@ function _sftkMdDeleteTable() {
   EntitlementProcess:      { folder: 'entitlementProcesses', suffix: 'entitlementProcess', what: 'entitlement process' },   // 2026-11-11: blocks the delete, live
   RestrictionRule:         { folder: 'restrictionRules', suffix: 'rule',              what: 'scoping or restriction rule', tooling: 'RestrictionRule' },
   CustomMetadataRecord:    { mdType: 'CustomMetadata',   folder: 'customMetadata',    suffix: 'md',               what: 'custom metadata record' },
+  CustomMetadataText:      { mdType: 'CustomMetadata',   folder: 'customMetadata',    suffix: 'md',               what: 'custom metadata record' },   // the same record, held as plain text (a mention, not a blocker)
   FlexiPage:               { folder: 'flexipages',       suffix: 'flexipage',         what: 'Lightning page',             tooling: 'FlexiPage' },
   ApexClass:               { code: 'Body',   folder: 'classes',    suffix: 'cls',       what: 'Apex class',            tooling: 'ApexClass',     metaTag: 'ApexClass' },
   ApexTrigger:             { code: 'Body',   folder: 'triggers',   suffix: 'trigger',   what: 'Apex trigger',          tooling: 'ApexTrigger',   metaTag: 'ApexTrigger' },
@@ -1541,6 +1542,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       how.push(bits.join(', '));
       break;
     }
+    case 'CustomMetadataText':
     case 'CustomMetadataRecord': {
       let n = 0;
       // only the values the scan counts for THIS object: a bare "Field__c" next to Entity__c = Lead is Lead's
@@ -1592,7 +1594,7 @@ function sftkMdEditWays(type) {
     ValidationRule: 'rr', CustomField: 'r', LookupFilter: 'rr', WebLink: 'r', RestrictionRule: 'r', WorkflowFieldUpdate: 'r',
     WorkflowRule: 'rr', SharingCriteriaRule: 'rr', MatchingRule: 'rr', WorkflowAlert: 'rr', WorkflowOutboundMessage: 'rr', FieldSet: 'rr',
     AssignmentRule: 'rr', AutoResponseRule: 'rr', EscalationRule: 'rr', ApprovalProcess: 'rr', DuplicateRule: 'rr',
-    CustomMetadataRecord: 'rr', LeadConvertSettings: 'rr',
+    CustomMetadataRecord: 'rr', CustomMetadataText: 'rr', LeadConvertSettings: 'rr',
     ListView: 'rr', CompactLayout: 'rr', QuickAction: 'rr', ValidationRuleInactive: 'r', PathAssistant: 'rr',
   }[type];
   return t ? { remove: t === 'rr', replace: true } : null;

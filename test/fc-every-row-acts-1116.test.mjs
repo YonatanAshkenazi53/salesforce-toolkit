@@ -40,6 +40,72 @@ describe('a custom setting value without the field', () => {
   });
 });
 
+describe('⇄ in a custom setting value', () => {
+  const r = t => fcSettingValueWithout(t, 'Account', 'Region__c', 'Area__c');
+  it('the name becomes the new one, in the form it was written; the rest is untouched', () => {
+    expect(r('Account.Region__c')).toBe('Account.Area__c');
+    expect(r('Region__c')).toBe('Area__c');
+    expect(r('Account.Name, Account.Region__c ; Type')).toBe('Account.Name, Account.Area__c ; Type');
+    expect(r('Contact.Region__c, Region__c_Old')).toBe('Contact.Region__c, Region__c_Old');
+  });
+  it('the row offers ⇄ only while a replacement is picked, and the plan follows the button pressed', () => {
+    expect(FC).toMatch(/special === 'settingValue'\) return \(_replOn\(\) \? `<button class="btn btn-primary btn-sm fc-fix-btn fc-del-btn" \$\{attrs\} data-swap="1" data-way="delete"/);
+    expect(FC).toContain("fcSettingValueWithout(was, obj, field, _swapOn() ? _replField.api : null)");
+  });
+});
+
+describe('a file is named with the local day', () => {
+  const ctx2 = vm.createContext({ console });
+  vm.runInContext(read('sftk-history.js') + '\nglobalThis.__d = { sftkLocalDay, sftkLocalStamp };', ctx2);
+  it('the user\'s own clock, zero-padded', () => {
+    const d = new Date(2026, 0, 5, 0, 7, 9);   // local 2026-01-05 00:07:09 — in UTC+ zones that is still the 4th
+    expect(ctx2.__d.sftkLocalDay(d)).toBe('2026-01-05');
+    expect(ctx2.__d.sftkLocalStamp(d)).toBe('2026-01-05-000709');
+  });
+  it('no export file is named from toISOString any more', () => {
+    for (const f of ['popup.js', 'sftk-feed.js', 'sftk-toolhistory.js', 'studio-builder.js', 'studio-history.js', 'studio-compare.js']) {
+      for (const line of read(f).split('\n')) if (/(fname|download|stamp|const date) ?[=(].*toISOString\(\)\.slice\(0, 10\)/.test(line)) throw new Error(f + ': ' + line.trim().slice(0, 120));
+    }
+  });
+});
+
+// "וcmt?" (owner 2026-11-08): only a relationship column blocks the delete. Read live 2026-11-16: Salesforce
+// describes a Field Definition / Entity Definition column as a string with extraTypeInfo "externallookup".
+// Live on npc2: SFTK_Live_Cmt.PkgRef (Field__c, relationship) → 🔒 Custom Metadata Records;
+// SFTK_Txt_Cmt.TxtRef (Note__c, Text) → 👀 Custom Metadata Records (text value).
+describe('a custom metadata record that holds the name: blocker or mention', () => {
+  const { fcCmtHoldKind, fcCmtTypeApi } = extractFunctions('field-cleaner.js', ['fcCmtHoldKind', 'fcCmtTypeApi']);
+  const fields = [{ name: 'Field__c', extraTypeInfo: 'externallookup' }, { name: 'Entity__c', extraTypeInfo: 'externallookup' }, { name: 'Note__c', extraTypeInfo: null }, { name: 'Long__c', extraTypeInfo: 'plaintextarea' }];
+  it('a relationship column blocks; text columns do not', () => {
+    expect(fcCmtHoldKind(['Field__c'], fields)).toBe('relation');
+    expect(fcCmtHoldKind(['Note__c'], fields)).toBe('text');
+    expect(fcCmtHoldKind(['note__c', 'Long__c'], fields)).toBe('text');
+    expect(fcCmtHoldKind(['Note__c', 'Field__c'], fields)).toBe('relation');
+  });
+  it('not read, or a column the describe does not list → unknown, which is listed as a blocker (the careful side)', () => {
+    expect(fcCmtHoldKind(['Note__c'], null)).toBe('unknown');
+    expect(fcCmtHoldKind(['Other__c'], fields)).toBe('unknown');
+    expect(fcCmtHoldKind(['Note__c', 'Other__c'], fields)).toBe('unknown');
+    expect(fcCmtHoldKind([], fields)).toBe('unknown');
+    expect(FC).toContain("add(kind === 'text' ? 'CustomMetadataText' : 'CustomMetadataRecord', rec.fullName,");
+  });
+  it('the type of a record, a package’s too', () => {
+    expect(fcCmtTypeApi('SFTK_Live_Cmt.PkgRef')).toBe('SFTK_Live_Cmt__mdt');
+    expect(fcCmtTypeApi('ns__Rule.Rec_1')).toBe('ns__Rule__mdt');
+    expect(fcCmtTypeApi('')).toBe('');
+    expect(fcCmtTypeApi("x' OR 1.r")).toBe('');
+  });
+  it('the text kind is a mention with the same ✂ / ⇄ / 🗑 as the blocker kind', () => {
+    expect(M.sftkMdEditWays('CustomMetadataText')).toEqual(M.sftkMdEditWays('CustomMetadataRecord'));
+    expect(M.sftkMdDeleteSpec('CustomMetadataText')).toMatchObject({ mdType: 'CustomMetadata', folder: 'customMetadata', suffix: 'md' });
+    expect(FC).toContain("label: 'Custom Metadata Records (text value)', fixable: false, sev: 'silent',");
+    const xml = '<fullName>T.R</fullName><label>R</label><values><field>Note__c</field><value xsi:type="xsd:string">Account.Region__c</value></values>';
+    const a = M.sftkMdEditField('CustomMetadataText', xml, 'Account', 'Region__c', null), b = M.sftkMdEditField('CustomMetadataRecord', xml, 'Account', 'Region__c', null);
+    expect(a.xml).toBe(b.xml);
+    expect(a.refused || null).toBe(b.refused || null);
+  });
+});
+
 describe('a path', () => {
   const path = (ent, runs, steps) => `<fullName>P</fullName><active>true</active><entityName>${ent}</entityName><fieldName>${runs}</fieldName><masterLabel>P</masterLabel>${steps.map(([v, fs]) => `<pathAssistantSteps>${fs.map(f => `<fieldNames>${f}</fieldNames>`).join('')}<info>i</info><picklistValueName>${v}</picklistValueName></pathAssistantSteps>`).join('')}<recordTypeName>__MASTER__</recordTypeName>`;
   it('is edited here, and never deleted: Salesforce refuses a path\'s delete through its APIs (live 2026-11-16)', () => {

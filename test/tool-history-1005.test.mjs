@@ -138,10 +138,10 @@ describe('the Toolkit side (sftk-toolhistory.js)', () => {
   });
   it('the list follows the history as it changes, in the button, in a tool and in the open dialog', () => {
     expect(TH).toContain("chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.sftk_history) refreshAll(); });");
-    expect(TH).toContain("document.querySelectorAll('[data-sftk-th-inline]').forEach(h => inline(h, h.getAttribute('data-sftk-th-inline')));");
-    // registered while still empty, so the first change of a session shows up
-    expect(TH.indexOf("host.setAttribute('data-sftk-th-inline', tab);")).toBeLessThan(TH.indexOf("// nothing listed: nothing drawn"));   // 2026-11-16: an emptied list may carry the note of a clear and ⬆ Restore
-    expect(TH.indexOf("// nothing listed: nothing drawn")).toBeGreaterThan(0);
+    // 2026-11-16: no tool draws the list inside its own page any more — the code that did is gone
+    expect(TH).not.toContain('data-sftk-th-inline');
+    expect(TH).not.toContain('sftkToolHistoryInline');
+    expect(TH).toContain("if (m && m.getAttribute('data-sftk-th')) open(m.getAttribute('data-sftk-th'));");
   });
   // 2026-11-16 (owner: "we should remove history from field cleaner page. same for the restore points. we have the
   // activity tab for them"): neither is on the page; Activity lists the changes and opens the restore points.

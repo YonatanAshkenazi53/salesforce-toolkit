@@ -2564,7 +2564,7 @@ async function onBackupClick() {
     if (host) host.insertBefore(warn, host.firstChild);
     setTimeout(() => warn.remove(), 9000);
   }
-  const date = new Date().toISOString().slice(0, 10);
+  const date = sftkLocalDay();
   downloadFlowBackupZip(flows, orgUrl,
     `SF_Backup_${date}${treeMode ? '_tree' : ''}_${flows.length}flow${flows.length !== 1 ? 's' : ''}.zip`);
 

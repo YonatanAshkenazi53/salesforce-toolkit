@@ -679,7 +679,7 @@ function _ocExportCsv() {
   const csv = header.join(',') + '\r\n' + body;
 
   const slug = lbl => String(lbl || 'org').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'org';
-  const fname = `org-compare-${slug(orgLabel(_orgCompareState.srcOrgUrl))}-vs-${slug(orgLabel(_orgCompareState.tgtOrgUrl))}-${new Date().toISOString().slice(0, 10)}.csv`;
+  const fname = `org-compare-${slug(orgLabel(_orgCompareState.srcOrgUrl))}-vs-${slug(orgLabel(_orgCompareState.tgtOrgUrl))}-${sftkLocalDay()}.csv`;
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url  = URL.createObjectURL(blob);

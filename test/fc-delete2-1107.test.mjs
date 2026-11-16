@@ -40,7 +40,7 @@ describe('the lead mapping remover', () => {
 describe('the wiring', () => {
   it('a process loses every version after being switched off; the lead mapping and the lookup filter are "removed", not "deleted"', () => {
     expect(FC).toContain('🗑 Delete process</button>');
-    expect(FC).toContain("const verb = (spec.special === 'lookupFilter' || spec.edit) ? 'Remove' : 'Delete';");
+    expect(FC).toContain("const verb = (spec.special === 'settingValue' && _swapOn()) ? 'Replace' : (spec.special === 'lookupFilter' || spec.edit) ? 'Remove' : 'Delete';");   // 2026-11-16: ⇄ inside a custom setting value
     expect(FC).toContain("if (plan.pb.active) { const off = await bg({ type: 'SF_PATCH'");
     expect(FC).toContain("for (const v of plan.pb.versions) { const d = await bg({ type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id: v.id, _suppressError: true });");
     expect(FC).toContain("_afterDelete(spec.special === 'pb' ? 'ProcessBuilder' : type);");

@@ -286,6 +286,29 @@ function fcAbsentFeatureError(err) {
 }
 // The steps of a path that show the field among their key fields. PURE.
 //   metadata: a PathAssistant's Metadata (Tooling) · same(fieldName) → is it the scanned field
+// A custom metadata record holds the field's name: does that BLOCK the delete? (owner 2026-11-08: "וcmt?") Only a
+// value in a metadata RELATIONSHIP column does (Field Definition / Entity Definition) — Salesforce describes such a
+// column as a string with extraTypeInfo "externallookup" (read live 2026-11-16 on SFTK_Live_Cmt__mdt; a text column
+// has none). A plain text value only breaks whatever reads it. PURE.
+//   cols: the columns of the record that hold the name · fields: the type's describe fields, or null (not read)
+//   → 'relation' (blocks) | 'text' (does not) | 'unknown' (not read, or a column the describe does not list)
+function fcCmtHoldKind(cols, fields) {
+  if (!Array.isArray(fields) || !Array.isArray(cols) || !cols.length) return 'unknown';
+  const by = new Map(fields.map(f => [String((f && f.name) || '').toLowerCase(), f]));
+  let known = 0;
+  for (const c of cols) {
+    const f = by.get(String(c).toLowerCase());
+    if (!f) continue;
+    known++;
+    if (String(f.extraTypeInfo || '').toLowerCase() === 'externallookup') return 'relation';
+  }
+  return known === cols.length ? 'text' : 'unknown';
+}
+// The custom metadata TYPE of a record's full name ("Type.Record" → "Type__mdt"; a package's "ns__Type.Record" → "ns__Type__mdt"). PURE.
+function fcCmtTypeApi(fullName) {
+  const t = String(fullName || '').split('.')[0];
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(t) ? `${t}__mdt` : '';
+}
 // ── ⏸ A paused "everything at once" walk (owner 2026-11-16: "we need a way to close the window and continue from
 // the same place if we want later on … when we do a remove all") ────────────────────────────────────────────────
 // What is kept: which field, which org, which walk (✂ or ⇄, and for ⇄ the replacement), which scope, the items the
@@ -313,12 +336,14 @@ function fcWalkPausedText(w, left) {
 // delete/remove"). The value may be the name alone, or a list of names: only "Object.Field" and a bare "Field" go
 // (whole word; a bare name written after another object's dot is that object's field and stays), and the separators
 // left behind are tidied. PURE. → the new text ('' when nothing else was in it)
-function fcSettingValueWithout(text, obj, field) {
+//   newField: ⇄ — the name is replaced, in the form it was written ("Object.Field" → "Object.New", "Field" → "New")
+function fcSettingValueWithout(text, obj, field, newField) {
   const esc = x => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const o = esc(obj), f = esc(field);
+  const o = esc(obj), f = esc(field), nf = newField ? String(newField) : '';
   let v = String(text == null ? '' : text)
-    .replace(new RegExp('(^|[^A-Za-z0-9_.])' + o + '\\.' + f + '(?![A-Za-z0-9_])', 'gi'), '$1')
-    .replace(new RegExp('(^|[^A-Za-z0-9_.])' + f + '(?![A-Za-z0-9_])', 'gi'), '$1');
+    .replace(new RegExp('(^|[^A-Za-z0-9_.])' + o + '\\.' + f + '(?![A-Za-z0-9_])', 'gi'), (m, pre) => pre + (nf ? `${obj}.${nf}` : ''))
+    .replace(new RegExp('(^|[^A-Za-z0-9_.])' + f + '(?![A-Za-z0-9_])', 'gi'), (m, pre) => pre + nf);
+  if (nf) return v;
   v = v.replace(/[ \t]*([,;|])(?:[ \t]*[,;|])+[ \t]*/g, '$1 ').replace(/^[\s,;|]+|[\s,;|]+$/g, '');
   return v;
 }
@@ -1304,7 +1329,7 @@ const FieldCleaner = (() => {
     // 2026-11-08: "why here we can't do anything?")
     const knownKind = !cfgT.fixable && (cfgT.sev === 'blocker' || cfgT.sev === 'silent');
     const spec = (knownKind && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null) || _extraDeleteSpec(type, id)) : null;
-    if (spec && spec.special === 'settingValue') return `<button class="btn btn-secondary btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Take the field’s name out of this record’s value — the value as it is now is shown first and kept; ↩ Undo writes it back">✂ Remove</button>`;
+    if (spec && spec.special === 'settingValue') return (_replOn() ? `<button class="btn btn-primary btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="1" data-way="delete" title="Write ${esc(_replField.api)} where this record’s value names the field — the value as it is now is shown first and kept; ↩ Undo writes it back">⇄ Replace</button>` : '') + `<button class="btn btn-secondary btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Take the field’s name out of this record’s value — the value as it is now is shown first and kept; ↩ Undo writes it back">✂ Remove</button>`;
     // ✂ / ⇄ inside the component — the ways its kind has (user 2026-11-07: "remove, replace the field in the metadata
     // items without breaking them. While showing XML"). A duplicate rule too (user 2026-11-08: "למה אין החלפה פה…
     // צריך להיות בכולם"): the owner's own click, the diff confirmed, a restore point kept — nothing here ever switches
@@ -2329,9 +2354,22 @@ const FieldCleaner = (() => {
       const MAX = 300;
       _cmtUnread = recs.length > MAX ? recs.length : 0;
       if (!_cmtUnread) {
+        // one describe per TYPE that has a holding record: is the column a relationship (blocks) or text (does not)?
+        const typeFields = new Map();
+        const fieldsOf = async api => {
+          if (!api) return null;
+          if (typeFields.has(api)) return typeFields.get(api);
+          const d = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true, _silentError: true, path: `services/data/v62.0/sobjects/${encodeURIComponent(api)}/describe` });
+          const fl = (d && !d.error && Array.isArray(d.fields)) ? d.fields.map(f => ({ name: f.name, extraTypeInfo: f.extraTypeInfo })) : null;
+          typeFields.set(api, fl);
+          return fl;
+        };
         for (const rec of await mdRead('CustomMetadata', recs.map(r => r.fullName), (a, b) => msg(`Scanning custom metadata records… ${a}/${b}`))) {
           const holding = sftkMdValuesHolding(rec.innerXml, obj, _selField.api);
-          if (holding.length) add('CustomMetadataRecord', rec.fullName, `${rec.fullName} (${holding.join(', ')})`);
+          if (!holding.length) continue;
+          // not read, or not told = listed as a blocker, the careful side (Salesforce's own answer decides the delete)
+          const kind = fcCmtHoldKind(holding, await fieldsOf(fcCmtTypeApi(rec.fullName)));
+          add(kind === 'text' ? 'CustomMetadataText' : 'CustomMetadataRecord', rec.fullName, `${rec.fullName} (${holding.join(', ')})`);
         }
       }
     } catch (e) { miss('custom metadata records', e); }
@@ -2760,7 +2798,9 @@ const FieldCleaner = (() => {
     CustomSettingRecord: { icon: '🧾', label: 'Custom Setting Records', fixable: false, sev: 'silent',
                       note: 'A record of a custom setting holds the field’s name as text. The delete goes through; whatever reads that value — Apex, a flow, a formula — then looks for a field that is gone. ✂ takes the field’s name out of the value (↩ Undo writes it back), or change the value in the custom setting.' },
     CustomMetadataRecord: { icon: '🗂', label: 'Custom Metadata Records', fixable: false, sev: 'blocker',
-                      note: 'A record holds the field’s name. When that value is a Field Definition relationship Salesforce refuses the delete; a plain text value only breaks whatever reads it. Edit the record in Setup → Custom Metadata Types → Manage Records.' },
+                      note: 'A record holds the field’s name in a relationship column (Field Definition) — Salesforce refuses the delete while it does. ✂ takes the value out, ⇄ points it at the replacement, or edit the record in Setup → Custom Metadata Types → Manage Records.' },
+    CustomMetadataText: { icon: '🗂', label: 'Custom Metadata Records (text value)', fixable: false, sev: 'silent',
+                      note: 'A record holds the field’s name as plain text. The delete goes through; whatever reads that value — Apex, a flow, a formula — then looks for a field that is gone. ✂ takes the name out, ⇄ writes the replacement.' },
     LeadConvertSettings: { icon: '🔀', label: 'Lead Field Mapping', fixable: false, sev: 'blocker',
                       note: 'The field is mapped for lead conversion — the Lead field and its target both block the delete. Remove the pair in Setup → Object Manager → Lead → Fields → Map Lead Fields.' },
     AssignmentRule: { icon: '📬', label: 'Assignment Rules', fixable: false, sev: 'blocker',
@@ -6846,7 +6886,7 @@ const FieldCleaner = (() => {
       if (!rec) throw new Error('the custom setting record is not there any more — re-scan');
       const shown = [], before = {}, after = {};
       for (const c of info.cols) {
-        const was = rec[c], now = fcSettingValueWithout(was, obj, field);
+        const was = rec[c], now = fcSettingValueWithout(was, obj, field, _swapOn() ? _replField.api : null);
         if (typeof was !== 'string' || now === was) continue;
         shown.push({ col: c, before: was, after: now }); before[c] = was; after[c] = now === '' ? null : now;
       }
@@ -6940,7 +6980,7 @@ const FieldCleaner = (() => {
       catch (e) { appendInlineError(componentId, e.message); return; }
     }
     const special = spec.special === 'settingValue'
-      ? `✂ <strong>Only the field’s name is taken out of the value</strong> — the record and whatever else the value holds stay. This is a write to the record’s data; the value as it is now is kept, and ↩ Undo in Activity writes it back.`
+      ? `${_swapOn() ? `⇄ <strong>The field’s name in the value becomes ${esc(_replField.api)}</strong>` : '✂ <strong>Only the field’s name is taken out of the value</strong>'} — the record and whatever else the value holds stay. This is a write to the record’s data; the value as it is now is kept, and ↩ Undo in Activity writes it back.`
         + `<div class="sftk-cf-plan"><ol class="sftk-cf-rows">${prePlan.shown.map(x => `<li><b>${esc(x.col)}</b><span><code>${esc(x.before)}</code> → ${x.after ? `<code>${esc(x.after)}</code>` : '<i>empty</i>'}</span></li>`).join('')}</ol></div>`
       : spec.special === 'lookupFilter'
       ? `✂ <strong>Only the filter is removed from the lookup field</strong> — the field itself and its data stay. The field’s definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, in Activity) puts the filter back.`
@@ -6951,16 +6991,17 @@ const FieldCleaner = (() => {
           : type === 'EmailAlertViaTemplate'
             ? `🗑 <strong>The email alert is deleted from the org</strong>. It does not name ${esc(obj)}.${esc(field)} itself — it sends a template that does; fixing the template (under Email Templates) keeps the alert. Salesforce refuses the delete while a workflow rule, a flow or an approval process still uses the alert. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, in Activity) deploys it back.`
           : `🗑 <strong>The ${esc(spec.what)} is deleted from the org</strong> — not just its reference to ${esc(obj)}.${esc(field)}. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in Activity (and ↩ Restore points, in Activity) deploys it back.${spec.code ? ' In a production org Salesforce may run the org’s Apex tests before it deletes code.' : ''}${type === 'MatchingRule' ? ' A matching rule a duplicate rule still uses is refused by Salesforce — delete that duplicate rule first.' : ''}${type === 'DuplicateRule' ? ' <strong>A duplicate rule guards the org’s data</strong> — nothing here switches one off or edits one behind a deployment; deleting it is yours to decide, here, with a way back.' : ''}`;
-    const verb = (spec.special === 'lookupFilter' || spec.edit) ? 'Remove' : 'Delete';
+    const verb = (spec.special === 'settingValue' && _swapOn()) ? 'Replace' : (spec.special === 'lookupFilter' || spec.edit) ? 'Remove' : 'Delete';
+    const vIcon = verb === 'Replace' ? '⇄' : verb === 'Remove' ? '✂' : '🗑', vDone = verb === 'Replace' ? 'replaced' : verb === 'Remove' ? 'removed' : 'deleted';
     const sure = await sftkConfirmDestructive({
       title: `${verb} ${spec.what} — ${cfg.label || type}`,
-      icon: verb === 'Remove' ? '✂' : '🗑',
+      icon: vIcon,
       items: [{ label: componentName, sub: spec.what }],
       // no "I understand this is permanent" tick (owner 2026-11-15): it is not permanent — the definition is kept as a
       // restore point and ↩ Undo deploys it back, as the text above says. The org-name gate of a production org stays.
       revOverride: { html: special, needsCheckbox: false, cls: 'sftk-rev-newver' },
       undoHint: 'Undo in Activity',
-      confirmLabel: `${verb === 'Remove' ? '✂' : '🗑'} ${verb} the ${spec.what}`,
+      confirmLabel: `${vIcon} ${verb} the ${spec.what}`,
       production: gate.production ? { label: gate.label } : null,
       // asked by a ✂ walk that could not take the field out of this one: the reason first, and the three ways on
       extraHtml: why ? `<div class="fc-cf-why"><b>✂ Remove is not possible on “${esc(componentName)}”:</b> ${esc(why)}.<br>What clears it without a replacement is to ${verb === 'Remove' ? 'remove' : 'delete'} the whole ${esc(spec.what)} — confirm below. Or <b>Skip</b> it and go on, or <button type="button" class="fc-dd-linkbtn" id="fcWalkStop">pause the walk here</button>.</div>` : '',
@@ -6977,10 +7018,10 @@ const FieldCleaner = (() => {
       plan = prePlan || await _deleteRestorePlan(engType, componentId, fullName, spec);
     } catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message); return; }
     await _snapshotFix('MdDelete', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, files: plan.files || null, patch: plan.undoPatch || null, verify: plan.verify });
-    _rowBusy(componentId, verb === 'Remove' ? '⏳ removing…' : '⏳ deleting…');
+    _rowBusy(componentId, verb === 'Replace' ? '⏳ replacing…' : verb === 'Remove' ? '⏳ removing…' : '⏳ deleting…');
     const zipBack = plan.files ? _zipOf(plan.files) : null;
     const zipDel = plan.deployFiles ? _zipOf(plan.deployFiles) : (plan.patch || plan.pb) ? null : _zipOf(sftkMdDestructiveFiles([[spec.mdType, fullName]]));
-    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `${verb === 'Remove' ? '✂' : '🗑'} ${cfg.label || type} — "${componentName}" ${verb === 'Remove' ? 'removed' : 'deleted'} (${obj}.${field})`, orgUrl: _orgUrl });
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `${vIcon} ${cfg.label || type} — "${componentName}" ${vDone} (${obj}.${field})`, orgUrl: _orgUrl });
     let wr, ranTests = false;
     try {
       // confirmed-by: the sftkConfirmDestructive right above
@@ -7006,6 +7047,7 @@ const FieldCleaner = (() => {
       });
       if (wr.accepted && wr.ok) {
         _afterDelete(spec.special === 'pb' ? 'ProcessBuilder' : type);
+        if (spec.special === 'settingValue' && verb === 'Replace') return `✅ Replaced — ${plan.shown.map(x => x.col).join(', ')} now name${plan.shown.length === 1 ? 's' : ''} ${_replField.api}; the record stays — verified by re-reading the org`;
         if (spec.special === 'settingValue') return `✅ Removed — the field’s name is out of ${plan.shown.map(x => x.col).join(', ')}; the record stays — verified by re-reading the org`;
         if (spec.special === 'lookupFilter') return `✅ Removed — the lookup filter is gone, the field stays — verified by re-reading the org`;
         if (spec.edit === 'leadMapping') return `✅ Removed — ${plan.removed} mapping line${plan.removed === 1 ? '' : 's'} of ${obj}.${field} gone, the other mappings kept — verified by re-reading the org`;
@@ -8004,6 +8046,7 @@ const FieldCleaner = (() => {
       DuplicateRule:  '/lightning/setup/DuplicateRules/home',
       LightningComponentBundle: '/lightning/setup/LightningComponentBundles/home',
       CustomMetadataRecord: '/lightning/setup/CustomMetadata/home',
+      CustomMetadataText: '/lightning/setup/CustomMetadata/home',
       EntitlementProcess: '/lightning/setup/EntitlementProcesses/home',
       ServiceChannel: '/lightning/setup/ServiceChannelSettings/home',
       CustomSettingRecord: '/lightning/setup/CustomSettings/home',
@@ -8182,7 +8225,7 @@ const FieldCleaner = (() => {
   function _paintPre(id) {
     const item = eid(`fcItem_${id}`);
     const why = _preWhy(id);
-    if (!item || !why) return;
+    if (!item || !why || item.classList.contains('fc-item-fixed')) return;   // a done row has no ✂ left to explain
     const pair = item.querySelector('.fc-fix-pair, .fc-del-pair');
     if (pair && !pair.querySelector('.fc-fix-btn[disabled]') && !pair.querySelector('.fc-pre-no')) pair.innerHTML = _fixBtnsHtml(pair.dataset.type, pair.dataset.id, pair.dataset.name);
     if (!item.querySelector('.fc-item-pre')) {
