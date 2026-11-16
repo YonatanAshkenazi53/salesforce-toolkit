@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Report xmlns="http://soap.sforce.com/2006/04/metadata">
+    <columns><field>dlrs__LookupChild__c$Name</field></columns>
+    <columns><field>dlrs__LookupChild__c$SFTK_Pkg_Tag__c</field></columns>
+    <description>Admin Toolkit fixture: a report on a packaged object with the field as a column and a filter.</description>
+    <filter><criteriaItems><column>dlrs__LookupChild__c$SFTK_Pkg_Tag__c</column><columnToColumn>false</columnToColumn><isUnlocked>true</isUnlocked><operator>equals</operator><value>never-sftk</value></criteriaItems></filter>
+    <format>Tabular</format>
+    <name>SFTK Pkg Report</name>
+    <reportType>SFTK_Pkg_RT__c</reportType>
+    <scope>organization</scope>
+    <showDetails>true</showDetails>
+    <showGrandTotal>true</showGrandTotal>
+    <showSubTotals>true</showSubTotals>
+</Report>

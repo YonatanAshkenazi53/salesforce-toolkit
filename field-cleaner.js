@@ -284,6 +284,13 @@ function fcAbsentFeatureError(err) {
   return /INVALID_TYPE|sObject type '[^']*' is not supported|is not supported|INVALID_FIELD|No such column|FUNCTIONALITY_NOT_ENABLED|not enabled|NOT_FOUND|does not exist|INSUFFICIENT_ACCESS/i.test(String(err || ''))
     && !/INVALID_SESSION|REQUEST_LIMIT|timed? ?out|UNABLE_TO_LOCK|SERVER_UNAVAILABLE|HTTP 5\d\d/i.test(String(err || ''));
 }
+// The steps of a path that show the field among their key fields. PURE.
+//   metadata: a PathAssistant's Metadata (Tooling) · same(fieldName) → is it the scanned field
+function fcPathStepsWith(metadata, same) {
+  const steps = (metadata && Array.isArray(metadata.pathAssistantSteps)) ? metadata.pathAssistantSteps : [];
+  return steps.filter(st => st && [].concat(st.fieldNames || []).some(f => same(String(f || ''))))
+    .map(st => String(st.picklistValueName || '?'));
+}
 function fcAskVerdict(r, listedBlockers) {
   if (!r || r.error) return { kind: 'error', head: '⚠ Salesforce could not be asked', lines: [String((r && r.error) || 'no answer')], foot: '' };
   if (r.success) {
@@ -2325,7 +2332,16 @@ const FieldCleaner = (() => {
     if (L.paths) try {
       msg('Scanning Paths…');
       const rows = (await sfQ(`SELECT Id, DeveloperName, MasterLabel, IsActive, SobjectProcessField FROM PathAssistant WHERE SobjectType = '${obj}'`, true))?.records || [];
-      for (const p of rows) if (sameField(p.SobjectProcessField)) add('PathAssistant', p.Id, (p.MasterLabel || p.DeveloperName) + (p.IsActive === false ? ' (inactive)' : ''));
+      for (const p of rows) {
+        const off = p.IsActive === false ? ' (inactive)' : '';
+        if (sameField(p.SobjectProcessField)) { add('PathAssistant', p.Id, (p.MasterLabel || p.DeveloperName) + off); continue; }
+        // A path on ANOTHER picklist can still show the field: as a key field of a step (found 2026-11-16 building the
+        // packaged-object fixture — the scan listed no path for a field that sat in a step). The steps are in the
+        // path's Metadata, which Tooling returns one row at a time.
+        const one = (await sfQ(`SELECT Id, Metadata FROM PathAssistant WHERE Id = '${p.Id}'`, true))?.records || [];
+        const steps = fcPathStepsWith(one[0] && one[0].Metadata, sameField);
+        if (steps.length) add('PathAssistant', p.Id, `${p.MasterLabel || p.DeveloperName}${off} — a key field of the step${steps.length === 1 ? '' : 's'} ${steps.join(', ')}`);
+      }
     } catch (e) { miss('Paths', e); }
 
     // 15. Inactive validation rules (a mention: live-tested, an inactive rule
@@ -2692,7 +2708,7 @@ const FieldCleaner = (() => {
     ProcessBuilder: { icon: '⚙', label: 'Process Builder',  fixable: false, sev: 'blocker',
                       note: 'Open the process in Setup (Process Automation → Process Builder), take the field out of its criteria and actions or deactivate and delete the process, then re-scan. Listed under Flows; not edited here.' },
     PathAssistant:  { icon: '🛤', label: 'Paths',            fixable: false, sev: 'silent',
-                      note: 'The delete goes through and the Path stays active on a field that no longer exists (live-tested). Delete or re-point the Path in Setup → Path Settings first.' },
+                      note: 'A path that runs on the field: the delete goes through and the Path stays active on a field that no longer exists (live-tested). Delete or re-point the Path in Setup → Path Settings first. A path that shows the field as a key field of a step is listed too: take the field out of that step in Path Settings.' },
     // Both come from Salesforce's own dependency index — the same one behind
     // "Where is this used?" — so they cost nothing extra to find (user
     // 2026-09-01: "one of the metadata items that we scan everytime").

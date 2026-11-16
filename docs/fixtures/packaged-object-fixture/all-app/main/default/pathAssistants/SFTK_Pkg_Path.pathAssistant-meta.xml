@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PathAssistant xmlns="http://soap.sforce.com/2006/04/metadata">
+    <active>true</active>
+    <entityName>dlrs__LookupChild__c</entityName>
+    <fieldName>SFTK_Pkg_Stage__c</fieldName>
+    <masterLabel>SFTK Pkg Path</masterLabel>
+    <pathAssistantSteps>
+        <fieldNames>SFTK_Pkg_Tag__c</fieldNames>
+        <info>Admin Toolkit fixture: the tag is a key field of this step.</info>
+        <picklistValueName>New</picklistValueName>
+    </pathAssistantSteps>
+    <recordTypeName>__MASTER__</recordTypeName>
+</PathAssistant>

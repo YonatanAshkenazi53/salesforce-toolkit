@@ -432,3 +432,25 @@ describe('only what blocks holds the Delete button', () => {
     expect(body).toContain('askSalesforce({ settle:');
   });
 });
+
+// 2026-11-16: a path on another picklist that shows the field as a key field of a step was not listed
+describe('a path that shows the field as a key field of a step', () => {
+  const steps = new Function('md', 'same', `${FC.slice(FC.indexOf('function fcPathStepsWith('), FC.indexOf('function fcAskVerdict('))}\nreturn fcPathStepsWith(md, same);`);
+  const same = f => f === 'SFTK_Pkg_Tag__c';
+  it('names the steps that hold it, and only those', () => {
+    const md = { fieldName: 'Stage__c', pathAssistantSteps: [
+      { fieldNames: ['SFTK_Pkg_Tag__c'], picklistValueName: 'New' },
+      { fieldNames: ['Other__c'], picklistValueName: 'Working' },
+      { fieldNames: ['Other__c', 'SFTK_Pkg_Tag__c'], picklistValueName: 'Done' },
+      { info: 'no fields', picklistValueName: 'Closed' }] };
+    expect(steps(md, same)).toEqual(['New', 'Done']);
+    expect(steps({ pathAssistantSteps: [{ fieldNames: 'SFTK_Pkg_Tag__c', picklistValueName: 'One' }] }, same)).toEqual(['One']);   // one field comes as a string
+    expect(steps(null, same)).toEqual([]);
+    expect(steps({}, same)).toEqual([]);
+  });
+  it('the scan reads the steps of a path that does not run on the field', () => {
+    const i = FC.indexOf("msg('Scanning Paths…');"), body = FC.slice(i, i + 1600);
+    expect(body).toContain('fcPathStepsWith(one[0] && one[0].Metadata, sameField)');
+    expect(body).toContain("} catch (e) { miss('Paths', e); }");
+  });
+});

@@ -55,3 +55,23 @@ validation rule, a custom metadata record (SFTK_Live_Cmt.PkgRef), and an outboun
 Deploy: `sf project deploy start -o npc --source-dir more-app --test-level NoTestRun`, then
 `--source-dir fc-app/main/default/workflows`. Field Cleaner then reads `dlrs__LookupChild__c.SFTK_Pkg_Tag__c` in 32
 places. Not possible here: an email alert whose recipient is the field (Email fields only).
+
+## all-app — the kinds that were still missing (2026-11-16)
+
+Owner: "with all the possible metadata's?" — `all-app/` adds, on `dlrs__LookupChild__c.SFTK_Pkg_Tag__c`: a Process
+Builder process (`SFTK_Pkg_PB`, draft), a report on the fixture's report type (`SFTK_Pkg_Report`; a custom report
+type's columns are written `Object$Field`), a picklist `SFTK_Pkg_Stage__c` and a path on it (`SFTK_Pkg_Path`) that
+shows the field as a KEY FIELD of the step New. Deploy each folder of `all-app/main/default` with
+`sf project deploy start -o npc --source-dir <folder> --test-level NoTestRun` (flows, reports, objects, then
+pathAssistants).
+
+Not files here:
+- a custom setting record: `sf data create record -o npc -s SFTK_Gap_Set__c -v "Name=PkgRef Field_Name__c='dlrs__LookupChild__c.SFTK_Pkg_Tag__c'"` (the setting comes from gap-kinds-fixture);
+- the search layout: retrieve `CustomObject:dlrs__LookupChild__c` (mdapi format), replace `<searchLayouts/>` with
+  `<searchLayouts><searchResultsAdditionalFields>SFTK_Pkg_Tag__c</searchResultsAdditionalFields></searchLayouts>`
+  and deploy that file back — a bare object file with only the search layout is refused ("Must specify a non-empty label").
+
+Field Cleaner then lists 34 kinds for the field (33 by the scan, the report by the on-request report scan). Kinds
+that cannot exist for this field: lead-conversion mapping, assignment / auto-response / escalation rules and
+entitlement processes (Lead / Case only), a dependent picklist and a service-channel priority (picklist fields), an
+email alert's recipient (Email fields).

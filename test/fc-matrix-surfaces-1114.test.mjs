@@ -1080,8 +1080,10 @@ describe('Path — REMOVE / REPLACE, ONE MENTION and SEVERAL: refused, the XML u
       expect(r.changed).toBe(false);
     }
   });
-  it('the scan reads only the path’s picklist (SobjectProcessField), by a query — a key field of a step is not what lists a Path', () => {
+  // 2026-11-16: a key field of a step lists the Path too (it pinned the gap: only the path's own picklist did)
+  it('the scan reads the path’s picklist (SobjectProcessField) by a query, and the steps’ key fields of the other paths', () => {
     expect(FC).toContain("FROM PathAssistant WHERE SobjectType = '${obj}'`, true))?.records || [];");
-    expect(FC).toContain("for (const p of rows) if (sameField(p.SobjectProcessField)) add('PathAssistant', p.Id,");
+    expect(FC).toContain("if (sameField(p.SobjectProcessField)) { add('PathAssistant', p.Id,");
+    expect(FC).toContain('fcPathStepsWith(one[0] && one[0].Metadata, sameField)');
   });
 });
