@@ -6053,6 +6053,10 @@ body.sftk-dark .fc-badge-del { background: #4a1b1f; color: #ffb4b0; border-color
 .fc-every[hidden] { display: none; }
 .fc-every-lbl { font-size: 11.5px; color: var(--subtext); }
 .fc-every-note { flex-basis: 100%; text-align: right; font-size: 11px; color: var(--warning); }
+/* ⏸ a paused walk, with ▶ Continue (2026-11-16) */
+.fc-every-paused { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 4px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2, #f6f7f9); font-size: 12px; color: var(--text); }
+.fc-every-paused > span { flex: 1 1 260px; text-align: left; }
+.fc-walk-pos { padding: 6px 16px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--subtext, #5b6472); border-bottom: 1px solid var(--border-light, var(--border, #e5e7eb)); }
 /* ✎ Edit before deploying, inside a confirm (2026-11-08) */
 .fc-cf-edit { margin-top: 8px; font-size: 12px; }
 .fc-cf-edit > summary { cursor: pointer; color: var(--brand); }

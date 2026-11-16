@@ -39,6 +39,6 @@ describe('⚡ Remove / Replace all asks which ones', () => {
     expect(FC2).toContain('All ${nMust + nLater} — also the ${nLater} that might break');
     expect(FC2).toContain("if (scope === 'must' && cfg.sev !== 'blocker') continue;");
     const i = FC2.indexOf('async function fixEverything('), j = FC2.indexOf('_everyRunning = true;', i);
-    expect(FC2.slice(i, j)).toContain('const scope = await _everyScopeAsk(swap);');
+    expect(FC2.slice(i, j)).toContain('const scope = resume ? resume.scope : await _everyScopeAsk(swap);');   // 2026-11-16: a continued walk keeps its scope
   });
 });

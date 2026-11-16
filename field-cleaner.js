@@ -286,6 +286,29 @@ function fcAbsentFeatureError(err) {
 }
 // The steps of a path that show the field among their key fields. PURE.
 //   metadata: a PathAssistant's Metadata (Tooling) · same(fieldName) → is it the scanned field
+// ── ⏸ A paused "everything at once" walk (owner 2026-11-16: "we need a way to close the window and continue from
+// the same place if we want later on … when we do a remove all") ────────────────────────────────────────────────
+// What is kept: which field, which org, which walk (✂ or ⇄, and for ⇄ the replacement), which scope, the items the
+// user chose to skip, and how far it got. Nothing about the org's state — the page re-reads that. PURE.
+function fcWalkSaved(o) {
+  const w = o || {};
+  return { org: String(w.org || ''), subject: String(w.subject || ''), swap: !!w.swap, repl: String(w.repl || ''), scope: w.scope === 'all' ? 'all' : 'must',
+    skipped: [...new Set((Array.isArray(w.skipped) ? w.skipped : []).map(x => String(x).slice(0, 15)))], total: Math.max(0, Number(w.total) || 0), at: Math.max(0, Number(w.at) || 0), when: String(w.when || '') };
+}
+// Is the saved walk the one of what is on the page now? → '' (yes) or why it cannot be continued as it is. PURE.
+function fcWalkResumeWhy(saved, now) {
+  const w = saved, n = now || {};
+  if (!w || !w.subject) return 'none';
+  const host = u => String(u || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (host(w.org) !== host(n.org) || w.subject !== n.subject) return 'none';
+  if (w.swap && (!n.repl || n.repl !== w.repl)) return `pick the replacement field again (${w.repl}) to continue`;
+  return '';
+}
+function fcWalkPausedText(w, left) {
+  const verb = w.swap ? '⇄ Replace all' : '✂ Remove all';
+  const d = /^\d{4}-\d\d-\d\d/.test(w.when) ? ` on ${w.when.slice(0, 10)}` : '';
+  return `⏸ ${verb} was paused${d} at item ${Math.min(w.at, w.total).toLocaleString('en-US')} of ${w.total.toLocaleString('en-US')} — ${left.toLocaleString('en-US')} left${w.skipped.length ? `, ${w.skipped.length.toLocaleString('en-US')} skipped by you` : ''}.`;
+}
 // A custom setting's text value with the field's name taken out (owner 2026-11-16: "we said all items must have a
 // delete/remove"). The value may be the name alone, or a list of names: only "Object.Field" and a bare "Field" go
 // (whole word; a bare name written after another object's dot is that object's field and stays), and the separators
@@ -1343,11 +1366,40 @@ const FieldCleaner = (() => {
   function _fixEveryHtml(n, nRp, nRm) {
     if (nRp == null) nRp = _replOn() ? n : 0;
     if (nRm == null) nRm = n;
-    if (n < 2 && !_everyNote) return '<span id="fcFixEvery" class="fc-every" hidden></span>';
-    const tip = 'Goes through every item below that has this way, one by one — the flows, layouts and pages, and every blocker with ✂ / ⇄ inside it, in both lists. Each still asks before it changes anything; Cancel in any dialog stops the walk.';
+    const pw = _walkPausedHere();
+    if (n < 2 && !_everyNote && !pw) return '<span id="fcFixEvery" class="fc-every" hidden></span>';
+    const tip = 'Goes through every item below that has this way, one by one — the flows, layouts and pages, and every blocker with ✂ / ⇄ inside it, in both lists. Each still asks before it changes anything; ⏸ Pause in any dialog stops the walk, and ▶ Continue goes on from that item — also after this window was closed.';
     const onlySwap = nRp >= 2 && _replOn() && nRm >= 2 && nRp > nRm ? nRp - nRm : 0;
     const whyTip = `${onlySwap} can only be replaced, not removed: Apex, Visualforce, LWC and Aura, formula fields, buttons and links, restriction rules, field updates and inactive validation rules. Cut the field out of one of those and it stops compiling or has nothing left to do — ⇄ swaps the field, ✎ edits by hand.`;
-    return `<span id="fcFixEvery" class="fc-every"><span class="fc-every-lbl" title="${tip}">⚡ Everything at once</span>${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}${onlySwap ? `<span class="fc-every-why" title="${esc(whyTip)}">${onlySwap} only ⇄ — code, formulas, buttons, field updates</span>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}</span>`;
+    return `<span id="fcFixEvery" class="fc-every"><span class="fc-every-lbl" title="${tip}">⚡ Everything at once</span>${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}${onlySwap ? `<span class="fc-every-why" title="${esc(whyTip)}">${onlySwap} only ⇄ — code, formulas, buttons, field updates</span>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}${pw ? `<span class="fc-every-paused"><span>${esc(fcWalkPausedText(pw.saved, _walkLeft(pw.saved.swap, pw.saved.scope)))}${pw.why ? ` ${esc(pw.why[0].toUpperCase() + pw.why.slice(1))}.` : ''}</span><button class="btn btn-primary btn-sm fc-walk-continue" ${pw.why ? 'disabled' : ''} title="Goes on with the same choices, from the first item that is still open — the ones you skipped are not asked again">▶ Continue</button><button class="btn btn-secondary btn-sm fc-walk-end" title="Forgets where the walk stopped. Nothing in the org changes">✕ End</button></span>` : ''}</span>`;
+  }
+  // The saved walk, when it is this org's and this field's: { saved, why } — why = what must be done first ('' = ready)
+  let _walkSaved = null, _walk = null;
+  const WALK_KEY = 'sftk_fc_walk';
+  function _walkLeft(swap, scope) { return _everyCount('must', swap) + (scope === 'all' ? _everyCount('later', swap) : 0); }
+  function _walkNow() { return { org: _orgUrl, subject: _fcSubject(), repl: _replOn() ? _replField.api : '' }; }
+  function _walkPausedHere() {
+    if (_everyRunning || !_walkSaved) return null;
+    const why = fcWalkResumeWhy(_walkSaved, _walkNow());
+    return why === 'none' ? null : { saved: _walkSaved, why };
+  }
+  async function _walkSave(w) {
+    _walkSaved = w ? fcWalkSaved(w) : null;
+    try { if (_walkSaved) await chrome.storage.local.set({ [WALK_KEY]: _walkSaved }); else await chrome.storage.local.remove(WALK_KEY); } catch (_) { /* the bar still works in this window */ }
+  }
+  try { chrome.storage.local.get(WALK_KEY).then(r => { if (r && r[WALK_KEY] && !_walkSaved) { _walkSaved = fcWalkSaved(r[WALK_KEY]); _refreshFixEvery(); } }); } catch (_) { /* outside the extension */ }
+  // While a walk runs, every confirmation says where the walk is, and its Cancel says what it does: it pauses.
+  function _walkDialogMark() {
+    const c = document.getElementById('sftkConfirmCancel');
+    if (!c || c.dataset.fcWalk || !_walk) return;
+    c.dataset.fcWalk = '1';
+    if (c.textContent.trim() === 'Cancel') { c.textContent = '⏸ Pause — continue later'; c.title = 'Stops the walk here. What was done stays done; ▶ Continue (next to Remove all) goes on from this item — also after the window was closed'; }
+    const box = document.getElementById('modalBox');
+    if (box && !box.querySelector('.fc-walk-pos')) {
+      const d = document.createElement('div'); d.className = 'fc-walk-pos';
+      d.textContent = `${_walk.swap ? '⇄ Replace all' : '✂ Remove all'} · item ${Math.min(_walk.at, _walk.total).toLocaleString('en-US')} of ${_walk.total.toLocaleString('en-US')}`;
+      box.insertBefore(d, box.firstChild);
+    }
   }
   // A section of the header that folds to one line, like the Deploy page's cards (user 2026-11-08: "we need a
   // collapsable ui there like we did for parents"). Open or folded is remembered per section; the one-line
@@ -1416,7 +1468,7 @@ const FieldCleaner = (() => {
             <li><b>🔒 ${nMust} that block the delete</b> — Salesforce refuses to delete the field while they name it.</li>
             <li><b>👀 ${nLater} that might break</b> — the delete goes through; afterwards they lose the field (a list view loses a column, a report a filter…).</li>
           </ul>
-          <p class="fc-scope-hint">Each item still asks before it changes anything, with a restore point. Cancel in any of those dialogs stops the walk.</p>
+          <p class="fc-scope-hint">Each item still asks before it changes anything, with a restore point. ⏸ Pause in any of those dialogs stops the walk; ▶ Continue picks it up at the same item later.</p>
         </div>
         <div class="modal-footer fc-scope-btns">
           <button class="btn btn-secondary btn-sm" id="fcScopeCancel">Cancel</button>
@@ -1431,10 +1483,16 @@ const FieldCleaner = (() => {
       if (obs) obs.observe(ov, { attributes: true, attributeFilter: ['style'] });
     });
   }
-  async function fixEverything(fieldId, swap) {
+  async function fixEverything(fieldId, swap, resume) {
     if (_everyRunning || _fixSwap !== null) return;
-    const scope = await _everyScopeAsk(swap);
+    const scope = resume ? resume.scope : await _everyScopeAsk(swap);
     if (!scope) return;
+    // how many items this walk covers, counted before it starts; a continued walk keeps its own count
+    const total = resume ? resume.total : _everyCount('must', swap) + (scope === 'all' ? _everyCount('later', swap) : 0);
+    _walk = { swap: !!swap, scope, skip: new Set(resume ? resume.skipped : []), total, at: resume ? Math.max(0, resume.at - 1) : 0 };
+    let stopped = false;
+    const obs = typeof MutationObserver === 'function' ? new MutationObserver(_walkDialogMark) : null;
+    if (obs) obs.observe(document.body, { childList: true, subtree: true });
     _everyRunning = true;
     _everyNote = '';
     eid('fcFixEvery')?.querySelectorAll('button').forEach(b => { b.disabled = true; });
@@ -1450,16 +1508,22 @@ const FieldCleaner = (() => {
           const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(type) : null;
           const c = typeof sftkMdCodeWays === 'function' ? sftkMdCodeWays(type) : null;
           const canDel = typeof sftkMdDeleteSpec === 'function' && !!sftkMdDeleteSpec(type);
-          if (!w && !c && (swap || !canDel)) { if (!swap && cfg.sev === 'blocker') skipped.push(cfg.label || type); continue; }
+          if (!w && !c && (swap || !canDel) && !(type === 'CustomSettingRecord' && !swap)) { if (!swap && cfg.sev === 'blocker') skipped.push(cfg.label || type); continue; }
           if (swap) way = c ? 'code' : 'edit';
           else if (w && w.remove) way = 'edit';
+          else if (type === 'CustomSettingRecord') way = 'delete';   // its ✂ is the delete engine's own way (the name out of the value)
           else if (typeof sftkMdDeleteSpec === 'function' && sftkMdDeleteSpec(type)) way = 'askdelete';   // no ✂ for this kind: say so, offer the whole component
           else { skipped.push(cfg.label || type); continue; }
         }
-        if ((await fixAll(type, fieldId, swap, way)) === 'cancel') break;
+        if ((await fixAll(type, fieldId, swap, way)) === 'cancel') { stopped = true; break; }
       }
     } finally {
+      if (obs) obs.disconnect();
       _everyRunning = false;
+      // paused: remembered (it survives the window) — finished: forgotten
+      const w = _walk; _walk = null;
+      const left = _walkLeft(swap, scope);
+      await _walkSave(stopped && left > 0 ? { ..._walkNow(), swap: !!swap, repl: swap && _replOn() ? _replField.api : '', scope, skipped: [...w.skip], total: w.total, at: w.at, when: new Date().toISOString() } : null);
       if (!swap && skipped.length) _everyNote = `✂ Remove all could not act on ${skipped.join(', ')} — nothing here removes or deletes ${skipped.length === 1 ? 'that kind' : 'those kinds'}; see the note on each.`;
       _refreshFixEvery();
     }
@@ -3098,6 +3162,9 @@ const FieldCleaner = (() => {
         }
         const every = ev.target.closest?.('.fc-fix-every');
         if (every) { if (!every.disabled) fixEverything(_curFieldId, every.dataset.swap === '1'); return; }
+        const cont = ev.target.closest?.('.fc-walk-continue');
+        if (cont) { const pw = _walkPausedHere(); if (!cont.disabled && pw && !pw.why) fixEverything(_curFieldId, pw.saved.swap, pw.saved); return; }
+        if (ev.target.closest?.('.fc-walk-end')) { _walkSave(null).then(_refreshFixEvery); return; }
         const fb = ev.target.closest?.('.fc-filter-btn');
         if (fb) { if (!fb.disabled) { _fcFilter = fb.dataset.filter || 'all'; _paintFilter(); } return; }
         const chip = ev.target.closest?.('.fc-blocker-chip');
@@ -4906,6 +4973,8 @@ const FieldCleaner = (() => {
     try {
       for (const it of list) {
         if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;
+        if (_walk && _walk.skip.has(String(it.id).slice(0, 15))) continue;   // skipped by the user earlier in this walk
+        if (_walk) _walk.at++;
         // Cancel in a dialog stops the walk — it is not asked again for every item.
         if ((await fixOne(type, it.id, it.name, fieldId, swap, way)) === 'cancel') return 'cancel';
       }
@@ -4926,6 +4995,7 @@ const FieldCleaner = (() => {
       const label = await fixDelete(type, componentId, componentName, why);
       if (label === 'cancel') return 'cancel';
       if (label === 'skip') {
+        if (_walk) _walk.skip.add(String(componentId).slice(0, 15));
         const item = eid(`fcItem_${componentId}`);
         if (item && !item.querySelector('.fc-item-pre')) { const n = document.createElement('div'); n.className = 'fc-item-pre'; n.textContent = `Left as it is — ✂ Remove is not possible here: ${why}.`; item.appendChild(n); }
         return;
@@ -6866,7 +6936,7 @@ const FieldCleaner = (() => {
       confirmLabel: `${verb === 'Remove' ? '✂' : '🗑'} ${verb} the ${spec.what}`,
       production: gate.production ? { label: gate.label } : null,
       // asked by a ✂ walk that could not take the field out of this one: the reason first, and the three ways on
-      extraHtml: why ? `<div class="fc-cf-why"><b>✂ Remove is not possible on “${esc(componentName)}”:</b> ${esc(why)}.<br>What clears it without a replacement is to ${verb === 'Remove' ? 'remove' : 'delete'} the whole ${esc(spec.what)} — confirm below. Or <b>Skip</b> it and go on, or <button type="button" class="fc-dd-linkbtn" id="fcWalkStop">stop the walk here</button>.</div>` : '',
+      extraHtml: why ? `<div class="fc-cf-why"><b>✂ Remove is not possible on “${esc(componentName)}”:</b> ${esc(why)}.<br>What clears it without a replacement is to ${verb === 'Remove' ? 'remove' : 'delete'} the whole ${esc(spec.what)} — confirm below. Or <b>Skip</b> it and go on, or <button type="button" class="fc-dd-linkbtn" id="fcWalkStop">pause the walk here</button>.</div>` : '',
       onRender: why ? () => {
         const c = document.getElementById('sftkConfirmCancel'); if (c) c.textContent = 'Skip this one';
         document.getElementById('fcWalkStop')?.addEventListener('click', () => { _walkStop = true; document.getElementById('sftkConfirmCancel')?.click(); });
