@@ -2517,7 +2517,7 @@ function bldPiiPreviewHtml(pairs) {
   if (!pairs || !pairs.length) return '<span class="ds-pii-prev-none">no value to show</span>';
   const cut = s => { const t = String(s); return t.length > 60 ? t.slice(0, 57) + '…' : t; };
   // the record an example comes from is named (user 2026-11-07: "show which record the example comes from")
-  return pairs.map(p => `<span class="ds-pii-prev-pair"><span class="ds-pii-prev-from" title="${esc(p.from)}">${esc(cut(p.from))}</span> → <b class="ds-pii-prev-to" title="${esc(p.to)}">${esc(cut(p.to))}</b>${p.rec ? ` <span class="ds-pii-prev-rec" title="The record this example comes from">in ${esc(cut(p.rec))}</span>` : ''}</span>`).join('');
+  return pairs.map(p => `<span class="ds-pii-prev-pair"><span class="ds-pii-prev-from" title="${esc(p.from)}">${esc(cut(p.from))}</span> → <b class="ds-pii-prev-to" title="${esc(p.to)}">${esc(cut(p.to))}</b>${p.rec ? ` <span class="ds-pii-prev-rec" title="The record this example comes from">· from the record ${esc(cut(p.rec))}</span>` : ''}</span>`).join('');
 }
 
 // Fill every [data-pii-prev] cell of the open modal, in sequence (hashing is

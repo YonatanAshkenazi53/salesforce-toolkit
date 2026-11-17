@@ -327,6 +327,46 @@ function fcWalkResumeWhy(saved, now) {
   if (w.swap && (!n.repl || n.repl !== w.repl)) return `pick the replacement field again (${w.repl}) to continue`;
   return '';
 }
+// ⚡ ALL AT ONCE (owner 2026-11-17: "maybe we shouldn't do the replace and remove wizard. or at least give an option
+// to do it all in one shot … what can be removed without ruining the component will be removed. what cannot be
+// removed will be deleted" — and: "what if i want one component field ref removed and another component i would
+// like to delete entirely"). One screen lists every open row with the way the tool picked; each row can be changed.
+// What the tool picks for a row. kinds = the ways the row has right now ('replace' | 'remove' | 'delete').
+//   ⇄ where a replacement is picked and the row can take it → ✂ where the component works without the field →
+//   🗑 only for a row that BLOCKS the delete and is of a kind that holds no logic of its own → else it is left.
+// Automation and code (a flow, Apex, a rule) are never picked for deletion: the owner picks that on the row. PURE.
+function fcPlanDefault(kinds, type, sev) {
+  const k = Array.isArray(kinds) ? kinds : [];
+  if (k.includes('replace')) return 'replace';
+  if (k.includes('remove')) return 'remove';
+  const plain = ['FieldSet', 'WebLink', 'WorkflowFieldUpdate', 'WorkflowAlert', 'WorkflowOutboundMessage'];
+  if (k.includes('delete') && sev === 'must' && plain.includes(String(type))) return 'delete';
+  return 'leave';
+}
+// The plan in numbers. picks = the kind chosen per row ('leave' counts as left). PURE.
+function fcPlanCounts(picks) {
+  const c = { replace: 0, remove: 0, delete: 0, leave: 0 };
+  for (const p of (Array.isArray(picks) ? picks : [])) c[c[p] === undefined ? 'leave' : p]++;
+  c.run = c.replace + c.remove + c.delete;
+  return c;
+}
+function fcPlanCountsText(c) {
+  const bits = [];
+  if (c.replace) bits.push(`${c.replace.toLocaleString('en-US')} replaced`);
+  if (c.remove) bits.push(`${c.remove.toLocaleString('en-US')} removed`);
+  if (c.delete) bits.push(`${c.delete.toLocaleString('en-US')} deleted`);
+  if (c.leave) bits.push(`${c.leave.toLocaleString('en-US')} left for you`);
+  return bits.join(' · ') || 'nothing to do';
+}
+// Is this confirmation one of the row the plan is working on? Only then the plan answers it. The row's dialogs name
+// the component itself ("Name", or "Name v3" for a flow version); anything else — the flow's paused interviews,
+// another button the user pressed meanwhile — is asked as always. PURE.
+function fcPlanOwnsDialog(opts, name) {
+  const items = (opts && Array.isArray(opts.items)) ? opts.items : [];
+  const n = String(name == null ? '' : name);
+  if (!n || !items.length) return false;
+  return items.every(i => { const l = String((i && i.label) || ''); return l === n || (l.startsWith(n + ' v') && /^\d+$/.test(l.slice(n.length + 2))); });
+}
 function fcWalkPausedText(w, left) {
   const verb = w.swap ? '⇄ Replace all' : '✂ Remove all';
   const d = /^\d{4}-\d\d-\d\d/.test(w.when) ? ` on ${w.when.slice(0, 10)}` : '';
@@ -1422,7 +1462,7 @@ const FieldCleaner = (() => {
     const tip = 'Goes through every item below that has this way, one by one — the flows, layouts and pages, and every blocker with ✂ / ⇄ inside it, in both lists. Each still asks before it changes anything; ⏸ Pause in any dialog stops the walk, and ▶ Continue goes on from that item — also after this window was closed.';
     const onlySwap = nRp >= 2 && _replOn() && nRm >= 2 && nRp > nRm ? nRp - nRm : 0;
     const whyTip = `${onlySwap} can only be replaced, not removed: Apex, Visualforce, LWC and Aura, formula fields, buttons and links, restriction rules, field updates and inactive validation rules. Cut the field out of one of those and it stops compiling or has nothing left to do — ⇄ swaps the field, ✎ edits by hand.`;
-    return `<span id="fcFixEvery" class="fc-every"><span class="fc-every-lbl" title="${tip}">⚡ Everything at once</span>${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}${onlySwap ? `<span class="fc-every-why" title="${esc(whyTip)}">${onlySwap} only ⇄ — code, formulas, buttons, field updates</span>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}${pw ? `<span class="fc-every-paused"><span>${esc(pw.why ? fcWalkPausedText(pw.saved, 0).replace(/ — [\d,]+ left/, '') : fcWalkPausedText(pw.saved, _walkLeft(pw.saved.swap, pw.saved.scope)))}${pw.why ? ` ${esc(pw.why[0].toUpperCase() + pw.why.slice(1))}.` : ''}</span><button class="btn btn-primary btn-sm fc-walk-continue" ${pw.why ? 'disabled' : ''} title="Goes on with the same choices, from the first item that is still open — the ones you skipped are not asked again">▶ Continue</button><button class="btn btn-secondary btn-sm fc-walk-end" title="Forgets where the walk stopped. Nothing in the org changes">✕ End</button></span>` : ''}</span>`;
+    return `<span id="fcFixEvery" class="fc-every">${n >= 2 ? `<button class="btn btn-primary btn-sm fc-plan-btn" title="One screen with every item and what will be done to it — change any row, confirm once, and it all runs without asking again. Each change keeps its own restore point.">⚡ All ${n} at once…</button>` : ''}<span class="fc-every-lbl" title="${tip}">${n >= 2 ? 'or one by one' : '⚡ Everything at once'}</span>${nRp >= 2 && _replOn() ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}${onlySwap ? `<span class="fc-every-why" title="${esc(whyTip)}">${onlySwap} only ⇄ — code, formulas, buttons, field updates</span>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}${pw ? `<span class="fc-every-paused"><span>${esc(pw.why ? fcWalkPausedText(pw.saved, 0).replace(/ — [\d,]+ left/, '') : fcWalkPausedText(pw.saved, _walkLeft(pw.saved.swap, pw.saved.scope)))}${pw.why ? ` ${esc(pw.why[0].toUpperCase() + pw.why.slice(1))}.` : ''}</span><button class="btn btn-primary btn-sm fc-walk-continue" ${pw.why ? 'disabled' : ''} title="Goes on with the same choices, from the first item that is still open — the ones you skipped are not asked again">▶ Continue</button><button class="btn btn-secondary btn-sm fc-walk-end" title="Forgets where the walk stopped. Nothing in the org changes">✕ End</button></span>` : ''}</span>`;
   }
   // The saved walk, when it is this org's and this field's: { saved, why } — why = what must be done first ('' = ready)
   let _walkSaved = null, _walk = null;
@@ -1588,6 +1628,205 @@ const FieldCleaner = (() => {
       if (!swap && skipped.length) _everyNote = `✂ Remove all could not act on ${skipped.join(', ')} — nothing here removes or deletes ${skipped.length === 1 ? 'that kind' : 'those kinds'}; see the note on each.`;
       _refreshFixEvery();
     }
+  }
+  // ── ⚡ All at once: one plan, one confirmation, one run ────────────────────────────────────────────────────────
+  // The rows are read off the page — a row's ways are the buttons it shows right now, so the plan can never offer
+  // what the row itself does not. Nothing here changes the org: each row runs through fixOne, the same engine and
+  // the same restore point as its own button; the plan only answers that row's confirmation (fcPlanOwnsDialog).
+  let _planRun = null;   // { stop, name } while a plan runs
+  function _planRows() {
+    const byId = new Map();
+    document.querySelectorAll('#fcResults .fc-fix-pair, #fcResults .fc-del-pair').forEach(p => {
+      const g = p.closest('.fc-group'), id = p.dataset.id;
+      if (!g || !id || p.closest('.fc-item-fixed')) return;
+      const type = p.dataset.type;
+      let row = byId.get(id);
+      if (!row) { row = { type, id, name: p.dataset.name || id, sev: g.dataset.sev === 'must' ? 'must' : 'later', kindLabel: (TYPE_CFG[type] || TYPE_CFG_DEFAULT).label || type, opts: [], why: _preWhy(id) }; byId.set(id, row); }
+      p.querySelectorAll('.fc-fix-btn:not([disabled]):not(.fc-xml-fix)').forEach(b => {
+        const kind = b.dataset.swap === '1' ? 'replace' : (b.classList.contains('btn-danger') || b.dataset.way === 'off') ? 'delete' : 'remove';
+        if (row.opts.some(o => o.kind === kind)) return;
+        row.opts.push({ kind, swap: b.dataset.swap === '1', way: b.dataset.way || '', label: (b.textContent || '').replace(/\s+/g, ' ').trim() });
+      });
+    });
+    return [...byId.values()];
+  }
+  // A running flow: can a new version without the field stand? Read here, before the plan is shown, with the same
+  // preview the flow's own ✂ uses — nothing is written. → the reason it cannot ('' = it can, or it could not be read)
+  async function _planFlowNo(row) {
+    try {
+      const fp = await fixFlowPlan(row.id, row.name);
+      if (!(fp.plan.mode === 'active' && fp.planDelete)) return '';
+      const pv = fp.preview;
+      if (!pv || !pv.removed.length) return 'nothing can be taken out of its active version automatically';
+      if ((pv.emptied || []).length) return `taking the field out leaves ${pv.emptied.slice(0, 3).map(e => `${e.kind} “${e.label || e.name || '?'}”`).join(', ')} with nothing in it, and Salesforce refuses a version like that`;
+      return '';
+    } catch (_) { return ''; }
+  }
+  // would a replacement field give this row a ⇄? (code, and every kind with a replace way — never a Process Builder process)
+  function _planCanSwap(type, id) {
+    if (type === 'Flow') return !_flowCards.some(c => c.pb && c.primaryId === String(id));
+    const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(type) : null;
+    const c = typeof sftkMdCodeWays === 'function' ? sftkMdCodeWays(type) : null;
+    return !!((w && w.replace) || c || (TYPE_CFG[type] || TYPE_CFG_DEFAULT).fixable);
+  }
+  function _planBar(html) { const el = eid('fcFixEvery'); if (el) { el.hidden = false; el.innerHTML = html; } }
+  const _PLAN_ICO = { replace: '⇄', remove: '✂', delete: '🗑', leave: '·' };
+  function _planHtml(rows) {
+    const line = (r, i) => `<div class="fc-plan-row" data-i="${i}" data-pick="${esc(r.pick)}">
+        <span class="fc-plan-name" title="${esc(r.name)}">${esc(r.name)}</span>
+        <span class="fc-plan-kind">${esc(r.kindLabel)}</span>
+        <select class="fc-plan-pick" data-i="${i}" aria-label="What to do with ${esc(r.name)}">${r.opts.map(o => `<option value="${o.kind}"${r.pick === o.kind ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}<option value="leave"${r.pick === 'leave' ? ' selected' : ''}>Leave it for me</option></select>
+        ${r.why ? `<span class="fc-plan-why">✂ Remove is not possible: ${esc(String(r.why).replace(/[.s]+$/, ''))}.</span>` : r.hint ? `<span class="fc-plan-why">${esc(r.hint)}</span>` : ''}
+      </div>`;
+    const sec = (sev, title, sub) => {
+      const list = rows.map((r, i) => [r, i]).filter(x => x[0].sev === sev);
+      if (!list.length) return '';
+      return `<div class="fc-plan-sec" data-sev="${sev}"><b>${title} · ${list.length}</b><span>${sub}</span>${sev === 'later' ? '<label class="fc-plan-inc"><input type="checkbox" id="fcPlanLater" checked> include these</label>' : ''}</div>${list.map(x => line(x[0], x[1])).join('')}`;
+    };
+    return `<div class="fc-plan"><div class="fc-plan-sum" id="fcPlanSum"></div><div class="fc-plan-list">
+      ${sec('must', '🔒 Block the delete', 'Salesforce refuses to delete the field while these name it')}
+      ${sec('later', '👀 Only might break', 'the delete goes through; these lose the field afterwards')}
+    </div></div>`;
+  }
+  async function planEverything(fieldId) {
+    if (_everyRunning || _fixSwap !== null || !_selObj || !_selField) return;
+    _everyRunning = true;
+    let rows = [];
+    try {
+      rows = _planRows();
+      // running flows are read first, so the plan says what will really happen to each
+      const flows = _replOn() ? [] : rows.filter(r => r.type === 'Flow' && r.opts.some(o => o.kind === 'remove' && o.way === 'keep'));
+      for (let i = 0; i < flows.length; i++) {
+        _planBar(`<span class="fc-plan-prog">⚡ Reading flow ${i + 1} of ${flows.length} — ${esc(flows[i].name)}</span>`);
+        const no = await _planFlowNo(flows[i]);
+        if (no) { flows[i].why = no; flows[i].opts = flows[i].opts.filter(o => o.kind !== 'remove'); }
+      }
+      rows = rows.filter(r => r.opts.length);
+      for (const r of rows) {
+        r.pick = fcPlanDefault(r.opts.map(o => o.kind), r.type, r.sev);
+        // a row the tool leaves says why, and what the owner can choose
+        if (r.pick === 'leave' && !r.why) r.hint = r.sev === 'later'
+          ? 'It does not block the delete, and only deleting it would clear it — left as it is unless you choose Delete.'
+          : `Only deleting it clears this one, and the tool never picks that for this kind. Choose Delete here${(!_replOn() && _planCanSwap(r.type, r.id)) ? ', or close this and pick a replacement field first — then it can be kept' : ''}.`;
+      }
+    } finally { _everyRunning = false; _refreshFixEvery(); }
+    if (!rows.length) return;
+    const picks = () => rows.map(r => r.pick);
+    const goText = () => { const c = fcPlanCounts(picks()); return c.run ? `⚡ Run ${c.run.toLocaleString('en-US')} change${c.run === 1 ? '' : 's'}` : 'Nothing is chosen'; };
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: `All at once — ${_selObj.api}.${_selField.api}`,
+      icon: '⚡',
+      items: [],
+      revOverride: { html: `⚡ <strong>Every row runs the way it is set below, one after the other, without asking again.</strong> Each change keeps its own restore point — ↩ Undo is on every row afterwards, and in Activity. A row that cannot be done is left as it is and listed at the end; the rest goes on.${rows.some(r => r.type === 'Flow') ? ' Flow versions are kept as restore points; no zip is downloaded in this run.' : ''}`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+      undoHint: 'Undo on each row, and in Activity',
+      extraHtml: _planHtml(rows),
+      confirmLabel: goText(),
+      production: gate.production ? { label: gate.label } : null,
+      onRender: () => {
+        document.getElementById('modalBox')?.classList.add('fc-plan-host');
+        const go = document.getElementById('sftkConfirmGo'), sum = document.getElementById('fcPlanSum');
+        const sync = () => { const c = fcPlanCounts(picks()); if (sum) sum.textContent = fcPlanCountsText(c); if (go) { go.textContent = goText(); go.disabled = !c.run; } };
+        document.querySelectorAll('.fc-plan-pick').forEach(s => s.addEventListener('change', () => {
+          const r = rows[Number(s.dataset.i)]; if (!r) return;
+          r.pick = s.value; s.closest('.fc-plan-row').dataset.pick = s.value; sync();
+        }));
+        const inc = document.getElementById('fcPlanLater');
+        inc?.addEventListener('change', () => {
+          document.querySelectorAll('.fc-plan-pick').forEach(s => {
+            const r = rows[Number(s.dataset.i)]; if (!r || r.sev !== 'later') return;
+            r.pick = inc.checked ? fcPlanDefault(r.opts.map(o => o.kind), r.type, r.sev) : 'leave';
+            s.value = r.pick; s.disabled = !inc.checked; s.closest('.fc-plan-row').dataset.pick = r.pick;
+          });
+          sync();
+        });
+        sync();
+      },
+    });
+    document.getElementById('modalBox')?.classList.remove('fc-plan-host');
+    if (!sure) return;
+    const todo = rows.filter(r => r.pick !== 'leave');
+    if (!todo.length) return;
+    await _planExecute(fieldId, todo, rows.length - todo.length);
+  }
+  // what a row says after its turn: done (with its own words), or why not
+  function _planOutcome(row) {
+    const item = eid(`fcItem_${row.id}`);
+    if (!item) return { ok: false, text: 'the row is no longer on the page' };
+    if (item.classList.contains('fc-item-fixed')) return { ok: true, text: (item.querySelector('.fc-item-ok')?.childNodes[0]?.textContent || 'Done').replace(/^✅s*/, '').trim() };
+    const e = [...item.querySelectorAll('.fc-item-err')].pop() || item.querySelector('.fc-item-pre');
+    if (!e) return { ok: false, text: 'nothing was changed' };
+    const c = e.cloneNode(true); c.querySelectorAll('a, button').forEach(x => x.remove());
+    return { ok: false, text: (c.textContent || '').replace(/^❌\s*/, '').replace(/\s+/g, ' ').trim() };
+  }
+  async function _planExecute(fieldId, todo, nLeft) {
+    if (_everyRunning || _fixSwap !== null) return;
+    const done = [], not = [];
+    _everyRunning = true; _walkRunning = true; _everyNote = '';
+    _planRun = { stop: false, name: '' };
+    eid('fcResults')?.querySelectorAll('.fc-fix-all').forEach(b => { b.disabled = true; });
+    // the plan answers only the dialogs of the row it is on
+    sftkConfirmPlanned(opts => (_planRun && fcPlanOwnsDialog(opts, _planRun.name)) ? true : undefined);
+    // the Toolkit's own progress (the bar, the count, the cat) above the list, with the stop next to it
+    // (owner 2026-11-17: "while it does its job, dont forget our awsome progress bar and kitty animation")
+    let host = eid('fcPlanProg');
+    const res0 = eid('fcResults');
+    if (!host && res0 && res0.parentNode) { host = document.createElement('div'); host.id = 'fcPlanProg'; res0.parentNode.insertBefore(host, res0); }
+    let prog = null;
+    if (host) {
+      host.className = 'fc-plan-run';
+      host.innerHTML = '<div class="fc-plan-run-prog"></div><button class="btn btn-secondary btn-sm fc-plan-stop" title="The item in work is finished; the ones after it are left as they are">⏹ Stop after this one</button>';
+      host.querySelector('.fc-plan-stop').addEventListener('click', ev => { if (_planRun) { _planRun.stop = true; ev.currentTarget.disabled = true; ev.currentTarget.textContent = 'Stopping after this one…'; } });
+      if (typeof sftkProgress === 'function') prog = sftkProgress(host.querySelector('.fc-plan-run-prog'), { what: `Running ${todo.length} change${todo.length === 1 ? '' : 's'} for ${_fcSubject()}…`, key: 'fc-plan', orgUrl: _orgUrl, total: todo.length, unit: 'changes' });
+      try { host.scrollIntoView({ block: 'center' }); } catch (_) { /* not laid out */ }
+    }
+    let at = 0;
+    try {
+      for (const row of todo) {
+        if (_planRun.stop) break;
+        at++;
+        _planRun.name = row.name;
+        _planBar(`<span class="fc-plan-prog">⚡ Running — ${at} of ${todo.length}</span>`);
+        if (prog) prog.say(`${at} of ${todo.length} — ${_PLAN_ICO[row.pick]} ${row.name}`);
+        const opt = row.opts.find(o => o.kind === row.pick);
+        if (!opt) { not.push({ row, text: 'that way is no longer offered on the row' }); continue; }
+        try { await fixOne(row.type, row.id, row.name, fieldId, opt.swap, opt.way); }
+        catch (e) { appendInlineError(row.id, e && e.message ? e.message : String(e)); }
+        const o = _planOutcome(row);
+        (o.ok ? done : not).push({ row, text: o.text });
+        if (prog) prog.count(at, todo.length);
+      }
+    } finally {
+      sftkConfirmPlanned(null);
+      try { if (prog) prog.done(); } catch (_) { /* gone */ }
+      if (host) host.remove();
+      const stoppedAt = _planRun.stop ? at : 0;
+      _planRun = null; _everyRunning = false; _walkRunning = false;
+      eid('fcResults')?.querySelectorAll('.fc-fix-allbox').forEach(b => {
+        const open = _openPairs(b.closest('.fc-group'));
+        if (open < 2) b.remove(); else { b.dataset.n = String(open); b.innerHTML = _fixAllHtml(b.dataset.type, open, b.dataset.label); }
+      });
+      const waiting = todo.length - done.length - not.length;
+      _everyNote = `⚡ All at once: ${done.length} done${not.length ? `, ${not.length} not done — the reason is on each row` : ''}${waiting ? `, ${waiting} not reached (stopped)` : ''}${nLeft ? `, ${nLeft} left for you` : ''}.`;
+      _refreshFixEvery();
+      checkEnableDelete();
+      try { renderUndoAll(); } catch (_) { /* the rows carry their own ↩ Undo */ }
+      _planReport(done, not, waiting, nLeft, stoppedAt);
+    }
+  }
+  function _planReport(done, not, waiting, nLeft, stoppedAt) {
+    if (typeof showModal !== 'function') return;
+    const li = (x, cls) => `<li class="${cls}"><b>${esc(x.row.name)}</b><small>${esc(x.row.kindLabel)}</small><span>${esc(x.text)}</span></li>`;
+    showModal(`
+      <div class="modal-header"><h3>⚡ All at once — ${not.length || waiting ? 'finished, with items left' : 'finished'}</h3></div>
+      <div class="fc-plan-rep">
+        <div class="fc-plan-rep-nums"><span class="fc-plan-ok">${done.length} done</span>${not.length ? `<span class="fc-plan-bad">${not.length} not done</span>` : ''}${waiting ? `<span>${waiting} not reached${stoppedAt ? ' — stopped' : ''}</span>` : ''}${nLeft ? `<span>${nLeft} left for you</span>` : ''}</div>
+        ${not.length ? `<div class="fc-plan-rep-hd">Not done — nothing was changed in these. The reason is also on each row, with its ↗ Setup link:</div><ul class="fc-plan-rep-list">${not.map(x => li(x, 'fc-plan-li-bad')).join('')}</ul>` : ''}
+        ${done.length ? `<details class="fc-plan-rep-done"${not.length ? '' : ' open'}><summary>Done · ${done.length}</summary><ul class="fc-plan-rep-list">${done.map(x => li(x, 'fc-plan-li-ok')).join('')}</ul></details>` : ''}
+        <p class="fc-plan-rep-foot">Every change has ↩ Undo on its row. ↩ Undo all, above the list, takes all of them back in one go.</p>
+      </div>
+      <div class="modal-footer"><button class="btn btn-primary btn-sm" id="fcPlanRepClose">Close</button></div>`);
+    document.getElementById('fcPlanRepClose')?.addEventListener('click', () => { try { closeModal(); } catch (_) { /* gone */ } });
   }
   // An item's buttons while its fix works (text on the one that was pressed),
   // and back to idle (text = null).
@@ -3237,6 +3476,9 @@ const FieldCleaner = (() => {
           if (!one.disabled && !one.classList.contains('fc-xml-fix')) fixOne(one.dataset.type, one.dataset.id, one.dataset.name, _curFieldId, one.dataset.swap === '1', one.dataset.way || '');
           return;
         }
+        const pl = ev.target.closest?.('.fc-plan-btn');
+        if (pl) { if (!pl.disabled) planEverything(_curFieldId); return; }
+        if (ev.target.closest?.('.fc-plan-stop')) { if (_planRun) { _planRun.stop = true; const b = ev.target.closest('.fc-plan-stop'); b.disabled = true; b.textContent = 'Stopping after this one…'; } return; }
         const every = ev.target.closest?.('.fc-fix-every');
         if (every) { if (!every.disabled) fixEverything(_curFieldId, every.dataset.swap === '1'); return; }
         const cont = ev.target.closest?.('.fc-walk-continue');
@@ -4887,7 +5129,7 @@ const FieldCleaner = (() => {
     // either way). Read once here — the dialog, the run and the labels agree.
     const swap = _swapOn() && (type !== 'Flow' || flowPlan.plan.mode === 'active');
     const swapTo = swap ? _replField.api : '';
-    let wantBackup = true;
+    let wantBackup = !_planRun;   // a plan run downloads no zip per flow — every version is kept as a restore point
     // An ACTIVE version that references the field can be dealt with two ways;
     // the user chooses (2026-09-21). 'replace' is only offered when the
     // automatic fix can actually take something out.

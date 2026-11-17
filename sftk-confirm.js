@@ -16,7 +16,17 @@
 //     onRender: () => { … },                    // after the modal is in the DOM
 //   });
 
+// A PLAN THAT WAS CONFIRMED AS A WHOLE (owner 2026-11-17: "give an option to do it all in one shot"). While a tool
+// runs a plan the user confirmed on one screen, it hands in a function that is asked about every confirmation: true
+// or false answers it without drawing it, anything else lets the dialog open as always. The tool decides which
+// dialogs are its plan's — everything else (another tool, another button) still asks.
+let _sftkConfirmPlanned = null;
+function sftkConfirmPlanned(fn) { _sftkConfirmPlanned = typeof fn === 'function' ? fn : null; }
 function sftkConfirmDestructive(opts) {
+  if (_sftkConfirmPlanned) {
+    let v; try { v = _sftkConfirmPlanned(opts || {}); } catch (_) { v = undefined; }
+    if (v === true || v === false) return Promise.resolve(v);
+  }
   const {
     title = 'Are you sure?',
     icon = '🗑',

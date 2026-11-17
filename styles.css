@@ -7484,3 +7484,37 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-group .fc-item.fc-flow-card { background: transparent; }
 .fc-item:not(.fc-flow-card) > .fc-item-btns .fc-del-btn, .fc-flow-card .fc-item-btns .fc-del-btn { color: var(--danger); }
 .fc-item:not(.fc-flow-card) > .fc-item-btns .fc-pre-no { visibility: hidden; }   /* the note under the row says why ✂ is not possible — a struck-out button beside it said it twice */
+
+/* ⚡ All at once — the plan (owner 2026-11-17) */
+#modalBox.sftk-cf-host.fc-plan-host { width: min(920px, 94vw) !important; max-width: min(920px, 94vw) !important; }
+.fc-plan-sum { font-size: 12.5px; font-weight: 600; color: var(--text); margin: 2px 0 8px; }
+.fc-plan-list { max-height: 46vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.fc-plan-sec { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 10px; padding: 7px 12px; background: var(--surface2, var(--surface)); border-bottom: 1px solid var(--border); font-size: 12px; }
+.fc-plan-sec > span { color: var(--subtext); flex: 1 1 auto; }
+.fc-plan-inc { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; cursor: pointer; }
+.fc-plan-row { display: grid; grid-template-columns: minmax(0, 1fr) 170px 220px; align-items: center; gap: 4px 12px; padding: 5px 12px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.fc-plan-row:last-child { border-bottom: 0; }
+.fc-plan-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.fc-plan-kind { color: var(--subtext); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-plan-pick { width: 100%; height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
+.fc-plan-row[data-pick="delete"] .fc-plan-pick { color: var(--danger); border-color: var(--danger); }
+.fc-plan-row[data-pick="leave"] .fc-plan-name, .fc-plan-row[data-pick="leave"] .fc-plan-pick { color: var(--subtext); font-weight: 400; }
+.fc-plan-why { grid-column: 1 / -1; font-size: 11.5px; color: var(--subtext); }
+.fc-plan-prog { font-size: 12px; color: var(--text); max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-plan-rep { padding: 4px 18px 6px; font-size: 13px; }
+.fc-plan-rep-nums { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+.fc-plan-rep-nums > span { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; font-weight: 600; }
+.fc-plan-rep-nums .fc-plan-ok { color: var(--success); border-color: var(--success); }
+.fc-plan-rep-nums .fc-plan-bad { color: var(--danger); border-color: var(--danger); }
+.fc-plan-rep-hd { font-size: 12px; color: var(--subtext); margin-bottom: 4px; }
+.fc-plan-rep-list { list-style: none; margin: 0 0 10px; padding: 0; max-height: 34vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.fc-plan-rep-list li { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 2px 12px; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.fc-plan-rep-list li:last-child { border-bottom: 0; }
+.fc-plan-rep-list li > small { color: var(--subtext); }
+.fc-plan-rep-list li > span { grid-column: 1 / -1; color: var(--subtext); font-size: 12px; }
+.fc-plan-rep-list li.fc-plan-li-bad > span { color: var(--text); }
+.fc-plan-rep-done > summary { cursor: pointer; font-size: 12px; color: var(--subtext); margin-bottom: 4px; }
+.fc-plan-rep-foot { font-size: 12px; color: var(--subtext); margin: 4px 0 0; }
+#modalBox:has(.fc-plan-rep) { width: min(660px, 94vw); max-width: min(660px, 94vw); }
+.fc-plan-run { display: flex; align-items: center; gap: 12px; margin: 10px 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.fc-plan-run-prog { flex: 1 1 auto; min-width: 0; }

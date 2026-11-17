@@ -22,7 +22,7 @@ describe('the suggestions: the records the deployment inserts, each example name
   });
   it('an example says which record it comes from', () => {
     const html = H.bldPiiPreviewHtml([{ from: 'Omer', to: 'Lior', rec: 'Omer SFTK CX Lead One' }]);
-    expect(html).toContain('Omer</span> → <b class="ds-pii-prev-to" title="Lior">Lior</b> <span class="ds-pii-prev-rec" title="The record this example comes from">in Omer SFTK CX Lead One</span>');
+    expect(html).toContain('Omer</span> → <b class="ds-pii-prev-to" title="Lior">Lior</b> <span class="ds-pii-prev-rec" title="The record this example comes from">· from the record Omer SFTK CX Lead One</span>');
     expect(H.bldPiiPreviewHtml([{ from: 'a', to: 'b' }])).not.toContain('ds-pii-prev-rec');
   });
   it('the Deploy page: 🎭 for all to insert; the rules land on the deployment, which is saved', () => {
