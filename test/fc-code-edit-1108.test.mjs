@@ -120,25 +120,6 @@ describe('the wiring in Field Cleaner', () => {
     expect(FC).toContain('_wireFolds(results);');
     expect(CSS).toContain('.fc-fold-sum:empty { display: none; }');
   });
-  it('the ⚡ walk and the group buttons cover every kind with a way; a Remove walk names what it left out', () => {
-    expect(FC).toContain('function _openPairs(root, swap) {');
-    expect(FC).toContain("return [...(root || document).querySelectorAll('.fc-fix-pair, .fc-del-pair')].filter(p => p.querySelector(sel)).length;");
-    expect(FC).toContain("el.outerHTML = _fixEveryHtml(Math.max(_openPairs(root), _walkPairs(root)), _openPairs(root, true), _walkPairs(root));");   // ⇄ and ✂ counted apart
-    expect(FC).toContain("if (swap) way = c ? 'code' : 'edit';");
-    // 2026-11-11: one take — a kind with no ✂ is no longer left out, the walk asks to delete each as a whole
-    expect(FC).toContain("else if (canDel) way = 'askdelete';");
-    expect(FC).toContain("if (r && r.refusedWhy) return _walkDeleteInstead(type, componentId, componentName, r.refusedWhy);");
-    expect(FC).toContain("if (!sure) return (why && !_walkStop) ? 'skip' : 'cancel';");
-    // the confirm's XML (and a code file's text) can be edited before the deploy (user 2026-11-08: "we can't edit here")
-    expect(FC).toContain('function _cfEditBlock(id, proposed, opts) {');
-    expect(FC).toContain("const cfEdit = _cfEditBlock('fcCfEdit', vrChoice ? rec.innerXml : ed.xml, { xml: true, what: 'the XML', name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName,");
-    expect(FC).toContain("const finalXml = handXml != null ? handXml : (vrChoice && vrMode === 'off' ? vrOffXml : ed.xml);");
-    expect(FC).toContain('const deployFiles = sftkMdPackageFiles(pkgType, fullName, finalXml);');
-    expect(FC).toContain('const edits = changed.map((s, i) => _cfEditBlock(`fcCfCode${i}`, s.source, { what: s.file }));');
-    expect(FC).toContain('const zipBack = _zipOf(files), zipNew = _zipOf(deployFiles2);');
-    expect(FC).toContain('data-swap="1" data-way="${c ? \'code\' : \'edit\'}" title="Each one is confirmed on its own, with its diff; a refusal is said and the walk goes on">⇄ Replace in all ${n} ${noun}</button>');
-    expect(FC).toContain('data-swap="0" data-way="edit" title="Each one is confirmed on its own, with its diff; one that would stop working without the field is refused, with the reason, and the walk goes on">✂ Remove from all ${n} ${noun}</button>');
-  });
   it('the Reports row says the scan itself read every custom report type', () => {
     expect(FC).toContain('_rtScanned = types.length;');
     expect(FC).toContain('<b>Report types</b>: the scan itself read all ${N(_rtScanned)} custom report type');

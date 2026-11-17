@@ -54,8 +54,7 @@ describe('a Process Builder process is shown, counted, never edited', () => {
     expect(FC).toContain("<span class=\"${c.pb ? 'fc-del-pair' : 'fc-fix-pair'}\" data-id=\"${esc(id)}\" data-type=\"Flow\"");   // 2026-11-07: a Process Builder card carries 🗑 Delete process in a del-pair
     expect(FC).toContain('${c.pb ? `<div class="fc-pb-line">${_pbNoteHtml()}</div>` : \'\'}');
   });
-  it('the bulk walk skips it, the delete gate counts it as a blocker by hand', () => {
-    expect(FC).toContain('? _flowCards.filter(c => !c.pb).map(c => ({ id: c.primaryId, name: c.name }))');
+  it('the delete gate counts it as a blocker by hand', () => {
     expect(FC).toContain('.reduce((n, [,arr]) => n + arr.length, 0) - flowExtra - pbCards;');
     expect(FC).toContain("if (pbCards) _manualBlockers.push({ type: 'ProcessBuilder'");
   });

@@ -5,18 +5,6 @@ const FC = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8')
 const LP = readFileSync(new URL('../lightning-pages.js', import.meta.url), 'utf8');
 const lpOdSummary = extractFunction('lightning-pages.js', 'lpOdSummary');
 
-// User 2026-10-07: "here we have remove but we dont have remove flow keep running for all".
-describe('Field Cleaner: the group button for flows offers both ways', () => {
-  it('two buttons, one per way, each walking fixOne with the way chosen', () => {
-    expect(FC).toContain('data-type="Flow" data-swap="0" data-way="keep"');
-    expect(FC).toContain('data-type="Flow" data-swap="0" data-way="off"');
-    expect(FC).toContain('✂ Remove from all ${n} ${noun} · flows keep running');
-    expect(FC).toContain('🗑 Delete versions · all ${n} ${noun} off');
-    expect(FC).toContain("fixAll(t, _curFieldId, swap, all.dataset.way || '').finally(() => {");   // the walk's end redraws the group buttons (2026-10-10)
-    expect(FC).toContain("async function fixAll(type, fieldId, swap, way = '')");
-    expect(FC).toContain('await fixOne(type, it.id, it.name, fieldId, swap, way)');
-  });
-});
 
 // User 2026-10-07: "the button here doesn't do anything when i click it" — Finish the check
 // re-ran the four failed describes, they failed again, and the strip read exactly as before.

@@ -112,7 +112,6 @@ describe('a path', () => {
     expect(M.sftkMdEditWays('PathAssistant')).toEqual({ remove: true, replace: true });
     expect(M.sftkMdDeleteSpec('PathAssistant')).toMatchObject({ mdType: 'PathAssistant', folder: 'pathAssistants', suffix: 'pathAssistant', what: 'path', noDelete: true });
     expect(FC).toContain('const del = (spec && !spec.noDelete &&');
-    expect(FC).toContain('const canDel = !!dSpec && !dSpec.noDelete;');
     expect(FC).toContain('if (!spec || spec.noDelete) throw new Error(');
   });
   it('✂ takes the field out of every step and nothing else', () => {

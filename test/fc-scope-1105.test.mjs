@@ -90,11 +90,6 @@ describe('wiring (2026-11-08: one scan, one list — "i dont think we need 3 tab
     expect(FC).toContain('read too — list views, quick actions and the like. Salesforce lets the delete through with');
     expect(FC).toContain('⚠ Fix the <span title="the flows, layouts, Lightning pages and reports the tool rewrites itself');
   });
-  it('the ⚡ row says why ⇄ counts more than ✂ (2026-11-08: "i can replace more than i can remove?")', () => {
-    expect(FC).toContain('const onlySwap = nRp >= 2 && _replOn() && nRm >= 2 && nRp > nRm ? nRp - nRm : 0;');
-    expect(FC).toContain('only ⇄ — code, formulas, buttons, field updates</span>');
-    expect(FC).toContain('can only be replaced, not removed: Apex, Visualforce, LWC and Aura, formula fields, buttons and links, restriction rules, field updates and inactive validation rules.');
-  });
   it('the org sweep: a long retrieve says how long it has run (2026-11-08: "stuck at 2 prcnt")', () => {
     expect(FC).toContain('in this retrieve — Salesforce says nothing until it lands; a big one takes minutes');
   });

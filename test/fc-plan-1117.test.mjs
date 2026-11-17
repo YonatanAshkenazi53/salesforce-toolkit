@@ -77,6 +77,14 @@ describe('a confirmation given once for a plan', () => {
   });
 });
 
+describe('the Setup link of a search layout', () => {
+  it('opens Object Manager’s own Search Layouts page, not the address that draws an empty panel', () => {
+    expect(FC).toContain("function fcSearchLayoutsPage() { return 'MySearchLayouts'; }");
+    expect(FC).not.toMatch(/ObjectManager\/[^`']*\/SearchLayouts\/view/);
+    expect(FC.split('${fcSearchLayoutsPage()}/view').length - 1).toBe(2);
+  });
+});
+
 describe('the plan', () => {
   it('is confirmed once, through the same confirmation as everything else (a production org types its name)', () => {
     const p = FC.slice(FC.indexOf('async function planEverything('), FC.indexOf('function _planOutcome('));
@@ -91,7 +99,10 @@ describe('the plan', () => {
   });
   it('a row’s ways are the buttons it shows; each row has its own choice and Leave', () => {
     expect(FC).toContain("p.querySelectorAll('.fc-fix-btn:not([disabled]):not(.fc-xml-fix)')");
-    expect(FC).toContain('<option value="leave"${r.pick === \'leave\' ? \' selected\' : \'\'}>Leave it for me</option>');
+    // owner 2026-11-17: "we just need to improve how this screen looks" — the ways are buttons, the chosen one lit
+    expect(FC).toContain("${['replace', 'remove', 'delete'].map(k => { const o = r.opts.find(x => x.kind === k); return o ? b(k, o.label) : ''; }).join('')}${b('leave', 'Nothing is changed in this one — it stays for you')}");
+    expect(FC).toContain("if (w) { set(Number(w.dataset.i), w.dataset.kind); sync(); return; }");
+    expect(FC).toContain("const r = rows[i]; if (!r || (kind !== 'leave' && !r.opts.some(o => o.kind === kind))) return;");
   });
   it('a running flow is read before the plan is shown; no zip per flow in the run', () => {
     expect(FC).toContain('const no = await _planFlowNo(flows[i]);');
@@ -106,10 +117,19 @@ describe('the plan', () => {
     expect(FC).toContain('_planReport(done, not, waiting, nLeft, stoppedAt);');
     expect(FC).toContain('try { renderUndoAll(); }');
   });
-  it('is the first button of the bar; the walk stays next to it as "one by one"', () => {
+  // owner 2026-11-17: "we can forget about the old wizard as we dont need it anymore"
+  it('is the only "all" button: on the list, and on each group for that group’s rows — the walk is gone', () => {
     expect(FC).toContain('class="btn btn-primary btn-sm fc-plan-btn"');
-    expect(FC).toContain("${n >= 2 ? 'or one by one' : '⚡ Everything at once'}");
-    expect(FC).toContain('class="btn btn-secondary btn-sm fc-fix-every" data-swap="1"');
-    expect(CSS).toContain('#modalBox.sftk-cf-host.fc-plan-host { width: min(920px, 94vw) !important;');
+    expect(FC).toContain('class="btn btn-secondary btn-sm fc-plan-btn" data-type="${esc(type)}"');
+    expect(FC).toContain("if (pl) { if (!pl.disabled) planEverything(_curFieldId, pl.dataset.type || ''); return; }");
+    expect(FC).toContain('rows = _planRows().filter(r => !onlyType || r.type === onlyType);');
+    for (const gone of ['fixEverything', 'fixAll(', 'fc-fix-every', 'fc-walk-', '_walkDeleteInstead', 'askdelete', 'fcWalkSaved', 'Pause — continue later', 'Skip this one']) expect(FC, gone).not.toContain(gone);
+    expect(FC).toContain("try { chrome.storage.local.remove('sftk_fc_walk'); }");
+    expect(CSS).toContain('#modalBox.sftk-cf-host.fc-plan-host { width: min(900px, 94vw) !important;');
+  });
+  it('the bulk links: what is left of the blockers can be set to Delete, a list left, the suggestion brought back', () => {
+    expect(FC).toContain("if (b.dataset.bulk === 'delete') { if (r.sev === 'must' && r.pick === 'leave' && r.opts.some(o => o.kind === 'delete')) set(i, 'delete'); }");
+    expect(FC).toContain("else if (r.sev === b.dataset.sev) set(i, b.dataset.bulk === 'reset' ? r.suggest : 'leave');");
+    expect(FC).toContain('r.suggest = r.pick = fcPlanDefault(r.opts.map(o => o.kind), r.type, r.sev);');
   });
 });

@@ -76,9 +76,9 @@ describe('sftkSearchLayoutEdit — ✂ / ⇄ on one layout', () => {
 });
 
 describe('the fix and the stale quick action', () => {
-  it('a search layout has ✂ / ⇄, re-read to verify, undo in History; a packaged object is left to Setup', () => {
+  it('a search layout has ✂ / ⇄, re-read to verify, undo in History — on a packaged object too (owner 2026-11-17)', () => {
     expect(FC).toContain("if (type === 'SearchLayout') label = (await fixSearchLayout(componentId, componentName)) || label;");
-    expect(FC).toContain('if (fcFieldNamespace(obj)) throw fail(`${obj} belongs to a package');
+    expect(FC).not.toContain('its search layouts are edited in Setup');
     expect(FC).toContain("const gone = !sftkSearchLayoutHits(now.inner, obj, field).some(h => h.tag === ed.tag);");
   });
   it('a quick action Salesforce still serves from its cache after a delete is not listed', () => {

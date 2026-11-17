@@ -1028,8 +1028,6 @@ describe('PROCESS BUILDER — told apart, never rewritten, deleted as a whole', 
     }
     expect(M.sftkMdEditWays('ProcessBuilder')).toBeNull();
     expect(M.sftkMdEditWays('Flow')).toBeNull();
-    // a ✂ walk that reaches a process turns into the delete question, with this reason
-    expect(FC).toContain('a Process Builder process is not rewritten here');
   });
   it('FULL DELETE: the spec is a Flow under flows/*.flow; the restore point is the process’s own XML, redeployable', () => {
     expect(M.sftkMdDeleteSpec('ProcessBuilder')).toEqual({ type: 'ProcessBuilder', mdType: 'Flow', folder: 'flows', suffix: 'flow', what: 'Process Builder process' });

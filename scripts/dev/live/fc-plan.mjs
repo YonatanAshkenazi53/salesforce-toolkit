@@ -18,7 +18,7 @@ async function pick(h, inputSel, dropSel, api) {
 }
 const dark = async (h, on) => { await h.eval(`(() => { document.body.classList.toggle('sftk-dark', ${on}); return true; })()`); await h.sleep(300); };
 const both = async (h, name) => { await h.shot(h.shots + '/' + name + '.png'); await dark(h, true); await h.shot(h.shots + '/' + name + '-dark.png'); await dark(h, false); };
-const plan = h => h.eval(`(() => [...document.querySelectorAll('.fc-plan-row')].map(r => ({ name: r.querySelector('.fc-plan-name').textContent, kind: r.querySelector('.fc-plan-kind').textContent, pick: r.dataset.pick, opts: [...r.querySelectorAll('option')].map(o => o.value).join('/'), why: (r.querySelector('.fc-plan-why') || {}).textContent || '' })))()`);
+const plan = h => h.eval(`(() => [...document.querySelectorAll('.fc-plan-row')].map(r => ({ name: r.querySelector('.fc-plan-name').textContent, kind: r.querySelector('.fc-plan-kind').textContent, pick: r.dataset.pick, opts: [...r.querySelectorAll('.fc-plan-way')].map(o => o.dataset.kind).join('/'), why: '' })))()`);
 const go = h => h.eval(`(() => { const g = document.getElementById('sftkConfirmGo'); return { text: g ? g.textContent.trim() : '', off: !!(g && g.disabled), sum: (document.getElementById('fcPlanSum') || {}).textContent || '' }; })()`);
 const histLen = h => h.eval(`chrome.storage.local.get('sftk_history').then(r => (r.sftk_history || []).length)`);
 
@@ -52,11 +52,14 @@ export default async function (h) {
 
   // one row changed by hand: the numbers and the button follow
   const i = rows.findIndex(r => r.pick !== 'leave');
-  await h.eval(`(() => { const s = document.querySelectorAll('.fc-plan-pick')[${i}]; s.value = 'leave'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+  await h.eval(`(() => { document.querySelector('.fc-plan-row[data-i="${i}"] .fc-plan-way[data-kind="leave"]').click(); return true; })()`);
   const g1 = await go(h);
   h.log('after leaving one row:', g1.sum, '·', g1.text);
   if (g1.text === g0.text) throw new Error('FAILED: the button must follow the rows');
 
+  // the bulk links: Delete what is left → every left blocker that can be deleted; Suggested → back
+  const bulk = async k => { await h.eval(`(() => { const b = document.querySelector('.fc-plan-link[data-bulk="${k}"]'); if (b) b.click(); return true; })()`); return go(h); };
+  h.log('Delete what is left:', (await bulk('delete')).sum, '· Suggested:', (await bulk('reset')).sum);
   if (!RUN) {
     await h.eval(`(() => { document.getElementById('sftkConfirmX').click(); return true; })()`);
     await h.sleep(800);
@@ -65,7 +68,7 @@ export default async function (h) {
     return;
   }
   // RUN: only the first n rows that can be replaced or removed stay in
-  await h.eval(`(() => { let n = 0; document.querySelectorAll('.fc-plan-pick').forEach(s => { const first = s.options[0].value; const row = s.closest(".fc-plan-row"); const want = (${process.env.DEL === "1"} && row.dataset.pick === "delete") ? "delete" : (first !== "leave" && first !== "delete" && n < ${RUN}) ? (n++, first) : 'leave'; s.value = want; s.dispatchEvent(new Event('change', { bubbles: true })); }); return true; })()`);
+  await h.eval(`(() => { let n = 0; document.querySelectorAll('.fc-plan-row').forEach(row => { const first = row.querySelector('.fc-plan-way').dataset.kind; const want = (${process.env.DEL === '1'} && row.dataset.pick === 'delete') ? 'delete' : (first !== 'leave' && first !== 'delete' && n < ${RUN}) ? (n++, first) : 'leave'; row.querySelector('.fc-plan-way[data-kind="' + want + '"]').click(); }); return true; })()`);
   h.log('run:', JSON.stringify(await go(h)));
   await both(h, TAG + '-2-chosen');
   await h.eval(`(() => { document.getElementById('sftkConfirmGo').click(); return true; })()`);

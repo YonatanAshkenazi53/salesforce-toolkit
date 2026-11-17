@@ -7486,20 +7486,40 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-item:not(.fc-flow-card) > .fc-item-btns .fc-pre-no { visibility: hidden; }   /* the note under the row says why ✂ is not possible — a struck-out button beside it said it twice */
 
 /* ⚡ All at once — the plan (owner 2026-11-17) */
-#modalBox.sftk-cf-host.fc-plan-host { width: min(920px, 94vw) !important; max-width: min(920px, 94vw) !important; }
-.fc-plan-sum { font-size: 12.5px; font-weight: 600; color: var(--text); margin: 2px 0 8px; }
-.fc-plan-list { max-height: 46vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
-.fc-plan-sec { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 10px; padding: 7px 12px; background: var(--surface2, var(--surface)); border-bottom: 1px solid var(--border); font-size: 12px; }
-.fc-plan-sec > span { color: var(--subtext); flex: 1 1 auto; }
-.fc-plan-inc { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; cursor: pointer; }
-.fc-plan-row { display: grid; grid-template-columns: minmax(0, 1fr) 170px 220px; align-items: center; gap: 4px 12px; padding: 5px 12px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
-.fc-plan-row:last-child { border-bottom: 0; }
-.fc-plan-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.fc-plan-kind { color: var(--subtext); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fc-plan-pick { width: 100%; height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
-.fc-plan-row[data-pick="delete"] .fc-plan-pick { color: var(--danger); border-color: var(--danger); }
-.fc-plan-row[data-pick="leave"] .fc-plan-name, .fc-plan-row[data-pick="leave"] .fc-plan-pick { color: var(--subtext); font-weight: 400; }
-.fc-plan-why { grid-column: 1 / -1; font-size: 11.5px; color: var(--subtext); }
+#modalBox.sftk-cf-host.fc-plan-host { width: min(900px, 94vw) !important; max-width: min(900px, 94vw) !important; }
+.fc-plan-host .sftk-cf-stakes { background: transparent; border: 0; padding: 0; margin: 0 0 12px; color: var(--subtext); font-size: 12.5px; line-height: 1.5; }
+.fc-plan-host .sftk-cf-stakes strong { color: var(--text); }
+.fc-plan-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.fc-plan-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--subtext); }
+.fc-plan-chip b { font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
+.fc-plan-chip[data-kind="replace"] b, .fc-plan-chip[data-kind="remove"] b { color: var(--accent, #0b5cab); }
+.fc-plan-chip[data-kind="delete"] { border-color: var(--danger); }
+.fc-plan-chip[data-kind="delete"] b { color: var(--danger); }
+.fc-plan-list { max-height: 50vh; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+.fc-plan-sec + .fc-plan-sec { border-top: 1px solid var(--border); }
+.fc-plan-sec-hd { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 10px; padding: 8px 14px; background: var(--surface2, var(--surface)); border-bottom: 1px solid var(--border); font-size: 12px; }
+.fc-plan-sec-t { font-weight: 700; color: var(--text); white-space: nowrap; }
+.fc-plan-sec-t i { font-style: normal; font-weight: 600; color: var(--subtext); margin-left: 2px; }
+.fc-plan-sec-sub { flex: 1 1 auto; min-width: 0; color: var(--subtext); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-plan-bulk { display: inline-flex; gap: 12px; white-space: nowrap; }
+.fc-plan-link { border: 0; background: none; padding: 0; font: inherit; font-size: 11.5px; color: var(--accent, #0b5cab); cursor: pointer; }
+.fc-plan-link:hover { text-decoration: underline; }
+.fc-plan-link[data-bulk="delete"] { color: var(--danger); }
+.fc-plan-row { display: flex; align-items: center; gap: 14px; padding: 7px 14px; border-bottom: 1px solid var(--border); }
+.fc-plan-sec .fc-plan-row:last-child { border-bottom: 0; }
+.fc-plan-row:hover { background: rgba(127,127,127,.06); }
+.fc-plan-what { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.fc-plan-name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-plan-kind { font-size: 11.5px; color: var(--subtext); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-plan-row[data-pick="leave"] .fc-plan-name { font-weight: 400; color: var(--subtext); }
+.fc-plan-seg { flex: 0 0 auto; display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.fc-plan-way { border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--subtext); font: inherit; font-size: 12px; padding: 5px 11px; cursor: pointer; white-space: nowrap; }
+.fc-plan-way:first-child { border-left: 0; }
+.fc-plan-way:hover { color: var(--text); background: rgba(127,127,127,.10); }
+.fc-plan-way:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: -2px; }
+.fc-plan-way.on { color: #fff; background: var(--accent, #0b5cab); font-weight: 600; }
+.fc-plan-way.on[data-kind="delete"] { background: var(--danger); }
+.fc-plan-way.on[data-kind="leave"] { background: rgba(127,127,127,.22); color: var(--text); font-weight: 500; }
 .fc-plan-prog { font-size: 12px; color: var(--text); max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fc-plan-rep { padding: 4px 18px 6px; font-size: 13px; }
 .fc-plan-rep-nums { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
@@ -7518,3 +7538,6 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 #modalBox:has(.fc-plan-rep) { width: min(660px, 94vw); max-width: min(660px, 94vw); }
 .fc-plan-run { display: flex; align-items: center; gap: 12px; margin: 10px 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .fc-plan-run-prog { flex: 1 1 auto; min-width: 0; }
+/* a row with an error under it keeps its name and its buttons on one line (owner 2026-11-17, a screenshot) */
+.fc-item:has(> .fc-item-err) { flex-wrap: wrap; }
+.fc-item:not(.fc-flow-card) > .fc-item-err { flex: 1 1 100%; }
