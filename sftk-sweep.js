@@ -79,6 +79,16 @@ function _sftkSweepSkip() {
   'GlobalValueSetTranslation', 'TimeSheetTemplate', 'CallCenter', 'DataCategoryGroup', 'Layout_Translation',
   ]);
 }
+// A static resource the text scan can read (owner 2026-11-17: "All of them please"): the retrieve leaves the kind
+// out because most are images, fonts and zips. A script, style sheet, JSON, XML or plain-text one of the org's own,
+// up to 1 MB, is read through the REST API instead. PURE.
+//   rec: { ContentType, BodyLength, NamespacePrefix }
+function sftkSweepTextResource(rec) {
+  if (!rec || rec.NamespacePrefix) return false;
+  const n = Number(rec.BodyLength);
+  if (!(n > 0) || n > 1000000) return false;   // 1 MB: a bigger text file is a bundled library, not the org's own script
+  return /^(text\/|application\/(javascript|x-javascript|json|xml|ecmascript)\b)|\+(json|xml)\b/i.test(String(rec.ContentType || '').trim());
+}
 function _sftkSweepFolderKinds() { return { Report: 'ReportFolder', Dashboard: 'DashboardFolder', EmailTemplate: 'EmailFolder', Document: 'DocumentFolder' }; }
 
 // describeMetadata's XML → [{ name, inFolder, directoryName, suffix }]
@@ -255,6 +265,8 @@ function sftkSweepKindTable() {
   Profile:                { label: 'Profiles (field access)', sev: 'mention', why: 'the field permission line is dropped automatically — nothing to do' },
   CustomObjectTranslation: { label: 'Translations', sev: 'mention', why: 'the field’s translated labels go with it' },
   Translations:           { label: 'Translations', sev: 'mention', why: 'the translated text goes with the field' },
+  PlatformEventChannelMember: { label: 'Change Data Capture channels', sev: 'mention', why: 'the channel sends the field with every change event (an enriched field) — nothing stops the delete (check-only, live 2026-11-17); the events no longer carry it' },
+  StaticResource:         { label: 'Static Resources', sev: 'mention', why: 'a script or data file names the field as text — nothing stops the delete, the page that loads the file breaks where it reads the field' },
   ExperienceBundle:       { label: 'Experience Cloud pages', sev: 'mention', why: 'the page or component names the field as text — it breaks where it reads it' },
   CustomLabel:            { label: 'Custom Labels', sev: 'mention', why: 'a label’s text holds the field’s name — nothing stops the delete' },
   DocText:                { label: 'Named only in descriptive text', sev: 'mention', why: 'the name stands only in a description, help text, label or message of the component — plain text Salesforce does not read as a reference; nothing stops the delete and nothing breaks, the text just goes stale' },
@@ -435,6 +447,8 @@ function sftkSweepKind(path, text, hit, forms) {
     case 'translations': return K('Translations', base);
     case 'experiences': return K('ExperienceBundle', seg[1] || base, seg.slice(2).join('/'));
     case 'labels': return K('CustomLabel', base);
+    case 'staticresources': return K('StaticResource', base);
+    case 'platformEventChannelMembers': return K('PlatformEventChannelMember', base);
     default: return K('Other', `${dir} › ${base}`);
   }
   };

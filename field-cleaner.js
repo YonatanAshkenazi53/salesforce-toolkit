@@ -572,12 +572,26 @@ function fcScanBudgetLine(est, budgetInfo) {
 // Targeted EntityDefinition lookup for one typed term — the fallback for
 // objects the capped list never contained. LIMIT is clamped to one Tooling
 // page; anything past that is reported as capped rather than trusted.
-function fcObjectSearchSoql(term, limit) {
+// 2026-11-17, read live on npc2 (3,336 objects): EntityDefinition REFUSES an OR ("HTTP 400: Disjunctions not
+// supported"), so the one query that asked "name OR label" never answered and an object past the first 2,000 could
+// not be picked at all. One query per column instead — `by` is 'label' for the label, anything else for the API name.
+function fcObjectSearchSoql(term, limit, by) {
   const lit = fcSoqlLike(term);
   const n   = Math.max(1, Math.min(2000, Number(limit) || 200));
   return 'SELECT QualifiedApiName, Label, DurableId FROM EntityDefinition ' +
          'WHERE IsDeprecatedAndHidden = false ' +
-         `AND (QualifiedApiName LIKE ${lit} OR Label LIKE ${lit}) ` +
+         `AND ${by === 'label' ? 'Label' : 'QualifiedApiName'} LIKE ${lit} ` +
+         `ORDER BY QualifiedApiName LIMIT ${n}`;
+}
+// The next page of the object list. EntityDefinition has no queryMore ("does not support queryMore(), use LIMIT to
+// restrict the results to a single batch" — live 2026-11-17) and SOQL's OFFSET stops at 2,000, so the list is
+// walked by its sort key: the names after the last one already held. PURE.
+function fcObjectPageSoql(after, limit) {
+  const n = Math.max(1, Math.min(2000, Number(limit) || 2000));
+  const a = String(after == null ? '' : after).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  return 'SELECT QualifiedApiName, Label, DurableId FROM EntityDefinition ' +
+         'WHERE IsDeprecatedAndHidden = false ' +
+         (a ? `AND QualifiedApiName > '${a}' ` : '') +
          `ORDER BY QualifiedApiName LIMIT ${n}`;
 }
 
@@ -926,17 +940,25 @@ const FieldCleaner = (() => {
   // fallback below is not optional.
   async function topUpObjects() {
     const gen = _orgGen;
-    const res = await bg({
-      type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
-      query: objectListSoql(FC_OBJ_LIMIT), _suppressError: true
-    });
+    // page after page by the sort key (fcObjectPageSoql): a page that is not full is the last one
+    let last = (_allObjects.length && _allObjects[_allObjects.length - 1].api) || '';
+    let got = _objListCount, ended = false;
+    while (last && got < FC_OBJ_LIMIT) {
+      const res = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true, query: fcObjectPageSoql(last, FC_TOOLING_PAGE), _suppressError: true });
+      if (gen !== _orgGen) return;
+      if (!res || res.error) break;                       // the list stays "incomplete" — the name search covers it
+      const rows = mapEntityRows(res.records);
+      _allObjects = fcMergeEntries(_allObjects, rows).list;
+      got += rows.length;
+      if (rows.length < FC_TOOLING_PAGE) { ended = true; break; }
+      const next = rows[rows.length - 1].api;
+      if (!next || next === last) break;                  // no progress: stop, never spin
+      last = next;
+    }
     if (gen !== _orgGen) return;
     _objTopping = false;
-    if (!res.error) {
-      _allObjects   = fcMergeEntries(_allObjects, mapEntityRows(res.records)).list;
-      _objListCount = (res.records || []).length;
-      _objCapped    = fcLooksCapped(_objListCount, FC_OBJ_LIMIT);
-    }
+    _objListCount = got;
+    _objCapped    = !ended;
     const drop = eid('fcObjDrop');
     if (drop && drop.style.display !== 'none') renderObjDrop(eid('fcObjInput')?.value);
   }
@@ -1055,25 +1077,29 @@ const FieldCleaner = (() => {
 
     // No _suppressError: a failure here is surfaced in the dropdown, so the
     // debug export should carry it as a real error row, not a quiet retry.
-    const res = await bg({
-      type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
-      query: fcObjectSearchSoql(term, FC_SEARCH_LIMIT)
-    });
+    // one query per column — EntityDefinition refuses an OR (fcObjectSearchSoql)
+    const both = await Promise.all(['api', 'label'].map(by => bg({
+      type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
+      query: fcObjectSearchSoql(term, FC_SEARCH_LIMIT, by)
+    })));
 
     // A newer search superseded this one (or the picker was rebuilt): drop the
     // response. Rendering it would paint a list for a term the user replaced.
     if (seq !== _objSearchSeq) return;
     _objSearchInFlight = null;
     _objSearchTried.add(key);
-    if (res.error) {
-      _objSearchErr = sftkFriendlyError(res.error).message;
-    } else {
+    const bad = both.find(r => !r || r.error);
+    if (bad) _objSearchErr = sftkFriendlyError((bad && bad.error) || 'no answer').message;
+    let capped = false;
+    for (const res of both) {
+      if (!res || res.error) continue;
       const rows  = mapEntityRows(res.records);
       _allObjects = fcMergeEntries(_allObjects, rows).list;
-      // Only a search that did NOT cap out proves "everything containing this
-      // term is now local" — the claim fcShouldServerSearch relies on.
-      if (!fcLooksCapped(rows.length, FC_SEARCH_LIMIT)) _objSearchDone.add(key);
+      if (fcLooksCapped(rows.length, FC_SEARCH_LIMIT)) capped = true;
     }
+    // Only a search where BOTH answered and neither capped out proves "everything containing this
+    // term is now local" — the claim fcShouldServerSearch relies on.
+    if (!bad && !capped) _objSearchDone.add(key);
     const d = eid('fcObjDrop');
     if (d && d.style.display !== 'none') renderObjDrop(eid('fcObjInput')?.value);
   }
@@ -3018,6 +3044,7 @@ const FieldCleaner = (() => {
       renderDeprecationZone(fieldId);
       renderFlsPanel();
       renderReportScan();
+      renderOrgSweep();   // 2026-11-17: the box was left empty exactly when the index found nothing — the case the text scan is for
       return;
     }
 
@@ -3451,10 +3478,10 @@ const FieldCleaner = (() => {
       return;
     }
     if (s.status === 'ready') {
-      const calls = s.groups.length * 2 + s.listCalls;
+      const calls = s.groups.length * 2 + s.listCalls + ((s.res && s.res.length) || 0);
       const est = s.total ? Math.max(15, Math.round(s.total / FC_SWEEP_RATE) + s.groups.length * 6) * 1000 : null;
       el.innerHTML = `<div class="fc-sweep">🧭 This org has <strong>${N(s.total)}</strong> of its own component${s.total === 1 ? '' : 's'} in <strong>${N(s.types.length)}</strong> kind${s.types.length === 1 ? '' : 's'} worth reading${s.pkg ? ` — ${N(s.pkgBoxes)} of them packaged objects and their rule files, read for what your org added inside them` : ''}${s.skippedManaged ? ` (${N(s.skippedManaged)} ${s.pkg ? 'other components' : 'components'} from installed packages left out — the platform will not let you change those${s.pkg ? '' : '; what your org added inside packaged objects is read with “+ packaged objects”'})` : ''}.
-        Reading them takes <strong>${N(s.groups.length)}</strong> retrieve${s.groups.length === 1 ? '' : 's'} of the Metadata API — <strong>${N(calls)} API calls</strong> in all (${N(s.listCalls)} already spent on the listing) and roughly <strong>${sftkSweepFmtMs(est)}</strong>${s.total > 3000 ? ' — a large org: expect many minutes, and the bar to stand still while a big retrieve runs' : ''}. Nothing is written.
+        Reading them takes <strong>${N(s.groups.length)}</strong> retrieve${s.groups.length === 1 ? '' : 's'} of the Metadata API — <strong>${N(calls)} API calls</strong> in all (${N(s.listCalls)} already spent on the listing${s.res && s.res.length ? `; ${N(s.res.length)} for the text static resources, one each` : ''}) and roughly <strong>${sftkSweepFmtMs(est)}</strong>${s.total > 3000 ? ' — a large org: expect many minutes, and the bar to stand still while a big retrieve runs' : ''}. Nothing is written.
         <div class="fc-sweep-types">${esc(s.types.map(t => `${t.name} ${N((s.listed[t.name] || []).length)}`).join(' · '))}</div>
         <button class="btn btn-primary btn-sm" id="fcSweepGo">▶ Read ${N(s.total)} component${s.total === 1 ? '' : 's'}</button>
         <button class="btn btn-secondary btn-sm" id="fcSweepCancel">Cancel</button></div>`;
@@ -3629,6 +3656,15 @@ const FieldCleaner = (() => {
       s.planDone++;
     }
     if (_orgSweep !== s) return;
+    // the org's own TEXT static resources — the retrieve leaves the kind out (images, fonts, zips); listed here so
+    // the price shown before the read counts them (one call each)
+    {
+      const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true, _silentError: true, query: 'SELECT Id, Name, ContentType, BodyLength, NamespacePrefix FROM StaticResource WHERE NamespacePrefix = null' });
+      if (_orgSweep !== s) return;
+      s.listCalls++;
+      if (!q || q.error) { s.res = []; s.resOwn = 0; s.notes.push(`Static resources: could not be listed (${_feText((q && q.error) || 'no answer')}) — not read.`); }
+      else { s.resOwn = (q.records || []).length; s.res = (q.records || []).filter(sftkSweepTextResource).map(r => ({ Id: r.Id, Name: r.Name })); }
+    }
     const groups = sftkSweepChunks(listed, FC_SWEEP_CHUNK);
     // The Metadata API writes a profile's or permission set's field lines only for objects in the SAME
     // retrieve (live 2026-11-08: 44 profiles found in one retrieve, 0 once Profile travelled alone) — so the
@@ -3678,6 +3714,20 @@ const FieldCleaner = (() => {
       renderOrgSweep();
     }
     if (_orgSweep !== s) return;
+    // the org's own TEXT static resources — the retrieve leaves the kind out (images, fonts, zips)
+    if (!s.stop && s.res && s.res.length) {
+      s.current = 'static resources'; renderOrgSweep();
+      let read = 0, bad = 0;
+      for (const r of s.res) {
+        if (s.stop || _orgSweep !== s) break;
+        const b = await bg({ type: 'SF_REST_GET_TEXT', orgUrl: _orgUrl, sid: _sid, _suppressError: true, _silentError: true, path: `services/data/v62.0/sobjects/StaticResource/${r.Id}/Body` });
+        if (b && !b.error && typeof b.text === 'string') { s.files.set(`unpackaged/staticresources/${r.Name}.resource`, b.text); read++; } else bad++;
+      }
+      if (_orgSweep !== s) return;
+      s.filesRead += read;
+      s.notes.push(`Static resources: ${read} of ${s.resOwn} read as text${s.resOwn - s.res.length ? ` (${s.resOwn - s.res.length} left out: images, fonts, zips, or over 1 MB)` : ''}${bad ? ` — ${bad} could NOT be read` : ''}.`);
+      s.current = '';
+    } else if (!s.stop && s.resOwn) s.notes.push(`Static resources: none of the ${s.resOwn} is a text file (images, fonts, zips, or over 1 MB) — none read.`);
     s.result = sftkSweepRun(s.files, forms);
     s.compare = sftkSweepCompare(s.result.byType, _sweepScanItems());
     s.finishedAt = Date.now();

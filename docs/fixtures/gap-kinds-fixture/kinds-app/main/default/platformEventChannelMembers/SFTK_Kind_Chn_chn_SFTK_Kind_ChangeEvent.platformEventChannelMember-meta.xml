@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PlatformEventChannelMember xmlns="http://soap.sforce.com/2006/04/metadata"><enrichedFields><name>Tag__c</name></enrichedFields><eventChannel>SFTK_Kind_Chn__chn</eventChannel><selectedEntity>SFTK_Kind__ChangeEvent</selectedEntity></PlatformEventChannelMember>

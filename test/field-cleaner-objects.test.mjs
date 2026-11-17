@@ -19,11 +19,11 @@ import { extractFunction, extractFunctions } from './extract.mjs';
 const {
   fcSoqlLit, fcSoqlLike, fcLocalApiName, fcScoreEntry, fcCompareEntries,
   fcRankEntries, fcMergeEntries, fcLooksCapped, fcShouldServerSearch,
-  fcObjectSearchSoql,
+  fcObjectSearchSoql, fcObjectPageSoql,
 } = extractFunctions('field-cleaner.js', [
   'fcSoqlLit', 'fcSoqlLike', 'fcLocalApiName', 'fcScoreEntry', 'fcCompareEntries',
   'fcRankEntries', 'fcMergeEntries', 'fcLooksCapped', 'fcShouldServerSearch',
-  'fcObjectSearchSoql',
+  'fcObjectSearchSoql', 'fcObjectPageSoql',
 ]);
 const fcPickerSummary = extractFunction('field-cleaner.js', 'fcPickerSummary');
 
@@ -385,11 +385,24 @@ describe('fcPickerSummary — absence must never read as non-existence', () => {
 });
 
 describe('fcObjectSearchSoql — the server-side fallback query', () => {
-  it('filters on BOTH QualifiedApiName and Label', () => {
+  // 2026-11-17: EntityDefinition answers an OR with "HTTP 400: Disjunctions not supported" (live, npc2) — one
+  // query per column, never both in one
+  it('one query for the API name, one for the label — never an OR', () => {
     const q = fcObjectSearchSoql('Financial', 200);
-    expect(q).toContain("QualifiedApiName LIKE '%Financial%'");
-    expect(q).toContain("Label LIKE '%Financial%'");
+    expect(q).toContain("AND QualifiedApiName LIKE '%Financial%'");
+    expect(q).not.toContain('Label LIKE');
     expect(q).toContain('FROM EntityDefinition');
+    const l = fcObjectSearchSoql('Financial', 200, 'label');
+    expect(l).toContain("AND Label LIKE '%Financial%'");
+    expect(l).not.toContain('QualifiedApiName LIKE');
+    for (const x of [q, l]) expect(x).not.toMatch(/\bOR\b/);
+    expect(SRC).toContain("const both = await Promise.all(['api', 'label'].map(by => bg({");
+    expect(SRC).not.toMatch(/SF_QUERY_ALL[\s\S]{0,120}fcObjectSearchSoql/);
+  });
+  it('the next page of the list is asked by the sort key, one batch at a time', () => {
+    expect(fcObjectPageSoql('', 2000)).toBe('SELECT QualifiedApiName, Label, DurableId FROM EntityDefinition WHERE IsDeprecatedAndHidden = false ORDER BY QualifiedApiName LIMIT 2000');
+    expect(fcObjectPageSoql('MacroUsageShare', 2000)).toContain("AND QualifiedApiName > 'MacroUsageShare' ORDER BY QualifiedApiName LIMIT 2000");
+    expect(fcObjectPageSoql("O'x", 99999)).toContain("> 'O\\'x' ORDER BY QualifiedApiName LIMIT 2000");
   });
 
   it('keeps the deprecated/hidden filter but NOT the custom-setting filter', () => {
@@ -496,8 +509,14 @@ describe('field-cleaner.js query shape', () => {
     expect(SRC).not.toMatch(/IsCustomSetting\s*=\s*false/);
   });
 
-  it('paginates the object list with SF_QUERY_ALL', () => {
-    expect(SRC).toMatch(/SF_QUERY_ALL[\s\S]{0,120}objectListSoql\(FC_OBJ_LIMIT\)/);
+  // 2026-11-17: SF_QUERY_ALL on EntityDefinition is refused ("does not support queryMore()") — the list is walked
+  // by its sort key, and a page that makes no progress ends the walk
+  it('paginates the object list page by page on the sort key, never with queryMore', () => {
+    expect(SRC).not.toMatch(/SF_QUERY_ALL[\s\S]{0,120}objectListSoql/);
+    expect(SRC).toContain("query: fcObjectPageSoql(last, FC_TOOLING_PAGE), _suppressError: true");
+    expect(SRC).toContain('if (rows.length < FC_TOOLING_PAGE) { ended = true; break; }');
+    expect(SRC).toContain('if (!next || next === last) break;');
+    expect(SRC).toContain('_objCapped    = !ended;');
   });
 
   it('paginates the FieldDefinition list instead of capping it at 1000', () => {

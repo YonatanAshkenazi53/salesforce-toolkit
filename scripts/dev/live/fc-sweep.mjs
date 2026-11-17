@@ -39,6 +39,7 @@ export default async function (h) {
   h.log('SWEEP fact:', await txt(h, '#fcOrgSweep', 500));
 
   // the plan
+  await h.waitFor("!!document.querySelector('#fcSweepPlan')", 180000, 1000);   // a field with nothing listed draws the box after Salesforce answered the check-only delete
   await h.eval(`document.querySelector('${process.env.PKG === '1' ? '#fcSweepPlanPkg' : '#fcSweepPlan'}').click()`);   // PKG=1: your objects + packaged objects
   await h.waitFor("!!document.querySelector('#fcSweepGo') || /could not be read/.test(document.querySelector('#fcOrgSweep')?.innerText || '')", 600000, 1000);
   h.log('PLAN:', await txt(h, '#fcOrgSweep', 1800));

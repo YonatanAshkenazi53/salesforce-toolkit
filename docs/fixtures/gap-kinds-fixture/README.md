@@ -22,3 +22,18 @@ Not built, and why:
 - **Territory assignment rules**: Enterprise Territory Management cannot be switched on through the Metadata API in npc
   ("You do not have the level of access required to deploy this component") — it is a button in Setup → Territory
   Settings, and it cannot be undone. Every Territory2 type answers "Not available for deploy for this organization".
+
+## kinds-app — the kinds the owner asked to add on 2026-11-17 ("All of them please")
+
+Deployed to npc2: `sf project deploy start -o npc2 --source-dir kinds-app --test-level NoTestRun`, then
+`sf org assign permset -o npc2 -n SFTK_Kind_Access` (without it the admin does not see the two fields).
+
+| component | what it proves (check-only delete of the field, npc2, 2026-11-17) |
+|---|---|
+| `SFTK_Kind__c.Tag__c` named by static resource `SFTK_Kind_Js` (JavaScript) | does NOT block. 🧭 lists it under 👀 Static Resources ("1 of 1 read as text") |
+| the same field as an enriched field of channel member `SFTK_Kind_Chn_chn_SFTK_Kind_ChangeEvent` | does NOT block. 🧭 lists it under 👀 Change Data Capture channels |
+| `SFTK_Kind__c.Pick__c` with values assigned in record type `SFTK_Kind_RT` | does NOT block. 🧭 already reads record-type picklist values |
+
+Not built yet: bots, Prompt Builder templates (both types exist in npc and npc2), a dashboard filter. Not possible in
+these orgs: CRM Analytics (no Wave types), territory rules (see above), Einstein Lead Scoring, field names held in
+package data (CPQ, OmniStudio are not installed).
