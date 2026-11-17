@@ -15,6 +15,7 @@ extensions containing root files that start with `_`).
 
 ## 1.1.0 — 2026-11-04
 
+- **Rows that cannot be removed keep their name** (2026-11-17). A Field Cleaner row with a note saying Remove is not possible lost its name and showed its buttons on the left. The name and buttons now stay on one line and the note sits under them.
 - **Field Cleaner finds every object in a large org** (2026-11-17). In an org with more than 2,000 objects, an object late in the alphabet could not be picked: Salesforce refused the two requests that load the rest of the list and search it by name. The list is now loaded page by page and the search asks for the API name and the label separately.
 - **The full metadata text scan is offered when the scan finds nothing** (2026-11-17). Its box was left empty on a field with no listed dependencies. The scan also reads the org’s own text static resources (scripts, style sheets, JSON, XML, up to 1 MB each) and lists them under Static Resources; a Change Data Capture channel that sends the field has its own group. Neither blocks a delete.
 - **Remove all can be paused and continued** (2026-11-16). Every dialog of a Remove all or Replace all walk shows which item it is on, and its Cancel button is now Pause. A bar next to the walk buttons says where it stopped, with Continue and End. Continue goes on from the same item with the same choices and does not ask again about items you skipped. The bar is still there after the window is closed and the field is scanned again.

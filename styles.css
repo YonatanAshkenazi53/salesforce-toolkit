@@ -7417,7 +7417,7 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-vr-way:has(input:checked) { border-color: var(--brand); background: var(--brand-bg); }
 .fc-vr-way-na { cursor: not-allowed; opacity: .6; }
 .fc-vr-ways ~ .fc-cf-edit > summary { display: none; }   /* the ✎ way opens the box; its own fold line would repeat it */
-.fc-item:has(> .fc-xml-done) { flex-wrap: wrap; }
+.fc-item:has(> .fc-xml-done), .fc-item:has(> .fc-item-pre) { flex-wrap: wrap; }   /* 2026-11-17: without the wrap the note sat IN the row, squeezed the name to nothing and pushed the buttons left */
 .fc-xml-done { flex-basis: 100%; margin: 2px 0 2px; font-size: 11px; }
 .fc-xml-done summary { cursor: pointer; color: var(--subtext); }
 .fc-xml-done .fc-xml-pre { border: 1px solid var(--border); border-radius: 6px; margin-top: 4px; }

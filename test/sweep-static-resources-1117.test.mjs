@@ -66,3 +66,13 @@ describe('the scan', () => {
     expect(FC).toContain('left out: images, fonts, zips, or over 1 MB');
   });
 });
+
+// owner 2026-11-17 (a screenshot of rows with no name and their buttons on the left): the "✂ Remove is not possible
+// here" note is a full-width child of the row — the row must wrap, or the note squeezes the name to nothing
+describe('a row with a pre-check note', () => {
+  it('wraps, so the name and the buttons keep their line and the note takes the next', () => {
+    const CSS = read('styles.css');
+    expect(CSS).toMatch(/\.fc-item:has\(> \.fc-xml-done\), \.fc-item:has\(> \.fc-item-pre\) \{ flex-wrap: wrap; \}/);
+    expect(CSS).toMatch(/\.fc-item-pre \{ flex: 1 1 100%;/);
+  });
+});
