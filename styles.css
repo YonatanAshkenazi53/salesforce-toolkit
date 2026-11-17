@@ -7455,3 +7455,32 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .sftk-cf-x { flex: 0 0 auto; margin: -4px -8px 0 4px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--subtext); font-size: 15px; line-height: 1; cursor: pointer; }
 .sftk-cf-x:hover { background: rgba(127,127,127,.18); color: var(--text); }
 .sftk-cf-x:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 1px; }
+
+/* ── Field Cleaner rows, lighter (owner 2026-11-17: "we need to make sure they all have it and that it looks in
+   order … its a mess right now … make it easier to understand and lighter"). One column per action, the same on
+   every row — ⇄ Replace · ✂ Remove · 🗑 Delete · 🔍 · ↗ Setup — so the eye runs down a column; buttons without a
+   box until the pointer is on them; the kind after "Delete" is in the group's title, so the button says Delete. */
+.fc-group .fc-item:not(.fc-flow-card) { border-color: transparent; background: transparent; padding: 3px 6px; }
+.fc-group .fc-item:not(.fc-flow-card):hover { background: rgba(127,127,127,.07); }
+.fc-item:not(.fc-flow-card) > .fc-item-btns { display: grid; grid-template-columns: 84px 84px 74px 30px 66px; column-gap: 2px; align-items: center; }
+.fc-item:not(.fc-flow-card) > .fc-item-btns > .fc-fix-pair,
+.fc-item:not(.fc-flow-card) > .fc-item-btns > .fc-del-pair { display: contents; }
+.fc-item-btns .btn { margin: 0; border-color: transparent; background: transparent; box-shadow: none; white-space: nowrap; font-weight: 600; }
+.fc-item:not(.fc-flow-card) > .fc-item-btns .btn { grid-row: 1; padding: 3px 4px; overflow: hidden; text-overflow: ellipsis; text-align: center; justify-content: center; }
+.fc-item-btns .btn:hover:not([disabled]) { background: rgba(127,127,127,.16); border-color: transparent; }
+.fc-item:not(.fc-flow-card) > .fc-item-btns .fc-fix-btn,
+.fc-item:not(.fc-flow-card) > .fc-item-btns .fc-pre-no { grid-column: 2; color: var(--brand); }
+.fc-item:not(.fc-flow-card) > .fc-item-btns .fc-del-btn { grid-column: 3; }
+.fc-item:not(.fc-flow-card) > .fc-item-btns .fc-fix-btn[data-swap="1"] { grid-column: 1; }
+.fc-item-btns .fc-del-btn { color: var(--danger); }
+.fc-item-btns .fc-del-btn:hover:not([disabled]) { background: var(--c-critical-bg); }
+.fc-item-btns .fc-fix-btn[data-swap="1"] { color: var(--brand); background: var(--brand-bg); }
+.fc-item:not(.fc-flow-card) > .fc-item-btns .fc-inspect-btn { grid-column: 4; }
+.fc-item:not(.fc-flow-card) > .fc-item-btns .fc-setup-btn { grid-column: 5; }
+.fc-item-btns .fc-setup-btn { color: var(--subtext); font-weight: 500; }
+.fc-item-btns .fc-setup-btn:hover { color: var(--text); }
+.fc-item:not(.fc-flow-card) .fc-del-what { display: none; }
+.fc-item-pre { background: transparent; padding: 0 0 3px; margin-top: -2px; }
+.fc-group .fc-item.fc-flow-card { background: transparent; }
+.fc-item:not(.fc-flow-card) > .fc-item-btns .fc-del-btn, .fc-flow-card .fc-item-btns .fc-del-btn { color: var(--danger); }
+.fc-item:not(.fc-flow-card) > .fc-item-btns .fc-pre-no { visibility: hidden; }   /* the note under the row says why ✂ is not possible — a struck-out button beside it said it twice */

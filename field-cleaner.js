@@ -1371,7 +1371,7 @@ const FieldCleaner = (() => {
         + (ways.remove && !_preWhy(id) ? `<button class="btn btn-secondary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="0" data-way="edit" title="Take the field out of this — only the field’s own places in the XML change (refused, with the reason, when what is left would not work); a restore point is kept">✂ Remove</button>` : '')
       : '';
     // the lead mapping's 🗑 only ever removed the field's line — ✂ Remove is that, said plainly
-    const del = (spec && !spec.noDelete && !(ways && ways.remove && type === 'LeadConvertSettings')) ? `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete this ${esc(spec.what)} from the org — its definition is kept as a restore point; ↩ Undo deploys it back">🗑 Delete ${esc(spec.what)}</button>` : '';
+    const del = (spec && !spec.noDelete && !(ways && ways.remove && type === 'LeadConvertSettings')) ? `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete this ${esc(spec.what)} from the org — its definition is kept as a restore point; ↩ Undo deploys it back" aria-label="Delete ${esc(spec.what)}">🗑 Delete<span class="fc-del-what"> ${esc(spec.what)}</span></button>` : '';
     if (!cfgT.fixable) return codeEdits + edits + del;
     const rm = `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Take the field’s reference out of this">✂ Remove</button>`;
     if (!_replOn()) return rm + del;
@@ -4686,6 +4686,7 @@ const FieldCleaner = (() => {
               <button class="btn btn-sm fc-inspect-btn" title="View the XML of ${esc(seen)}"
                       data-id="${esc(id)}" data-type="Flow">🔍</button>
               <span class="${c.pb ? 'fc-del-pair' : 'fc-fix-pair'}" data-id="${esc(id)}" data-type="Flow" data-name="${esc(c.name)}">${_fixBtnsHtml('Flow', id, c.name)}</span>
+              <button class="btn btn-sm fc-setup-btn" data-type="${c.pb ? 'ProcessBuilder' : 'Flow'}" title="Open this kind in Salesforce Setup, in a new tab">↗ Setup</button>
             </span>
           </div>
           ${c.pb ? `<div class="fc-pb-line">${_pbNoteHtml()}</div>` : ''}
@@ -4715,7 +4716,7 @@ const FieldCleaner = (() => {
           <span class="fc-item-btns">
             ${inspBtn}
             <span class="${canDel ? 'fc-del-pair' : 'fc-fix-pair'}" data-id="${esc(id)}" data-type="${esc(type)}" data-name="${name}">${_fixBtnsHtml(type, id, rawName)}</span>
-            ${canDel ? `<button class="btn btn-sm fc-setup-btn" data-type="${esc(type)}">↗ Setup</button>` : ''}
+            <button class="btn btn-sm fc-setup-btn" data-type="${esc(type)}" title="Open this kind in Salesforce Setup, in a new tab">↗ Setup</button>
           </span>
         </div>${xmlPanel}`;
     }
@@ -4724,7 +4725,7 @@ const FieldCleaner = (() => {
         <span class="fc-item-name">${name}</span>${dep._tag ? `<span class="fc-item-tag">${esc(dep._tag)}</span>` : ''}
         <span class="fc-item-btns">
           ${inspBtn}
-          <button class="btn btn-sm fc-setup-btn" data-type="${esc(type)}">↗ Setup</button>
+          <button class="btn btn-sm fc-setup-btn" data-type="${esc(type)}" title="Open this kind in Salesforce Setup, in a new tab">↗ Setup</button>
         </span>
       </div>${xmlPanel}`;
   }
@@ -8118,6 +8119,12 @@ const FieldCleaner = (() => {
       PathAssistant:  '/lightning/setup/PathAssistantSetupHome/home',
       ApexComponent:  '/lightning/setup/ApexComponents/home',
       ApexPage:       '/lightning/setup/ApexPages/home',
+      // 2026-11-17 (owner: 'we need to make sure they all have it'): every kind a row can be of
+      Flow:           '/lightning/setup/Flows/home',
+      ProcessBuilder: '/lightning/setup/ProcessAutomation/home',
+      AuraDefinitionBundle: '/lightning/setup/LightningComponentBundles/home',
+      EmailAlertViaTemplate: '/lightning/setup/WorkflowEmails/home',
+      DependentPicklist: `/lightning/setup/ObjectManager/${obj}/FieldsAndRelationships/view`,
     };
     const url = _orgUrl.replace(/\/$/, '') + (paths[type] || '/lightning/setup/SetupOneHome/home');
     chrome.tabs.create({ url });
