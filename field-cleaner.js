@@ -1444,7 +1444,16 @@ const FieldCleaner = (() => {
     const c = document.getElementById('sftkConfirmCancel');
     if (!c || c.dataset.fcWalk || !_walk) return;
     c.dataset.fcWalk = '1';
-    if (c.textContent.trim() === 'Cancel') { c.textContent = '⏸ Pause — continue later'; c.title = 'Stops the walk here. What was done stays done; ▶ Continue (next to Remove all) goes on from this item — also after the window was closed'; }
+    const x = document.getElementById('sftkConfirmX');
+    if (x && c.textContent.trim() === 'Cancel') {   // owner 2026-11-17: "should be just an X that lets you close the window"
+      c.hidden = true; c.style.display = 'none';
+      x.title = 'Close — the walk waits here. What was done stays done; ▶ Continue (next to Remove all) goes on from this item, also after the window was closed';
+      x.setAttribute('aria-label', 'Close — continue later');
+    } else if (x) {
+      // a dialog with its own second button (Skip this one): ✕ still means 'close, continue later' — never Skip
+      x.title = 'Close — the walk waits here; ▶ Continue (next to Remove all) goes on from this item';
+      x.addEventListener('click', () => { _walkStop = true; }, true);
+    }
     const box = document.getElementById('modalBox');
     if (box && !box.querySelector('.fc-walk-pos')) {
       const d = document.createElement('div'); d.className = 'fc-walk-pos';

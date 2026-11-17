@@ -7450,3 +7450,8 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-scope-ask li { margin: 4px 0; }
 .fc-scope-hint { color: var(--subtext); font-size: 12px; }
 .fc-scope-btns { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+/* ✕ in the head of every confirmation (owner 2026-11-17) */
+.sftk-cf-x { flex: 0 0 auto; margin: -4px -8px 0 4px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--subtext); font-size: 15px; line-height: 1; cursor: pointer; }
+.sftk-cf-x:hover { background: rgba(127,127,127,.18); color: var(--text); }
+.sftk-cf-x:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 1px; }

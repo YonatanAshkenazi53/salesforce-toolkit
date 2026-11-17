@@ -142,6 +142,7 @@ function sftkConfirmDestructive(opts) {
             <h2 class="sftk-cf-title">${esc(title)}</h2>
             <div class="sftk-cf-facts">${facts.map(f => `<span class="sftk-cf-fact">${esc(f)}</span>`).join('')}</div>
           </div>
+          <button type="button" class="sftk-cf-x" id="sftkConfirmX" aria-label="Close" title="Close — nothing is changed">✕</button>
         </div>
         ${prod ? `<div class="sftk-cf-band sftk-confirm-prodnote">🛑 <strong>${esc(prod.label)}</strong> is treated as a PRODUCTION org — one more step asks for its name.</div>` : ''}
         <div class="sftk-cf-body">
@@ -199,6 +200,7 @@ function sftkConfirmDestructive(opts) {
               <h2 class="sftk-cf-title">Production org</h2>
               <div class="sftk-cf-facts"><span class="sftk-cf-fact">${esc(prod.label)}</span><span class="sftk-cf-fact">${esc(confirmLabel.replace(/^[^\w]+/, ''))}</span></div>
             </div>
+            <button type="button" class="sftk-cf-x" id="sftkConfirmProdX" aria-label="Close" title="Close — nothing is changed">✕</button>
           </div>
           <div class="sftk-cf-body">
             <div class="sftk-cf-stakes sftk-confirm-rev sftk-rev-permanent">You're about to <strong>${esc(confirmLabel.replace(/^[^\w]+/, ''))}</strong> in <strong>${esc(prod.label)}</strong>, which is treated as a <strong>PRODUCTION</strong> org — what you change here affects real users now.</div>
@@ -220,9 +222,12 @@ function sftkConfirmDestructive(opts) {
       inp?.addEventListener('keydown', e => { if (e.key === 'Enter' && go && !go.disabled) go.click(); });
       inp?.focus();
       document.getElementById('sftkConfirmProdCancel')?.addEventListener('click', () => done(false));
+      document.getElementById('sftkConfirmProdX')?.addEventListener('click', () => done(false));
       go?.addEventListener('click', () => done(true));
     };
     document.getElementById('sftkConfirmCancel')?.addEventListener('click', () => done(false));
+    // ✕ is the Cancel button, pressed — so whatever a caller hung on Cancel (a paused walk) holds for it too
+    document.getElementById('sftkConfirmX')?.addEventListener('click', () => { const c = document.getElementById('sftkConfirmCancel'); if (c) c.click(); else done(false); });
     document.getElementById('sftkConfirmGo')?.addEventListener('click', () => { if (prod) askProduction(); else done(true); });
     document.getElementById('sftkConfirmAck')?.addEventListener('change', syncGo);
     document.getElementById('sftkConfirmWord')?.addEventListener('input', syncGo);

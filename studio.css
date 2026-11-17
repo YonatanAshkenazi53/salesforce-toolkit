@@ -6932,3 +6932,8 @@ details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
    buttons: #FF8A8A on #3A1A1D is about 6.9:1 (QA sizes 2026-11-14). */
 .ds-dark .ds-btn-danger { background: #3A1A1D; border-color: #7A2E33; color: #FF8A8A; }
 .ds-dark .ds-btn-danger:hover:not(:disabled) { background: #4A2025; border-color: #A33A40; }
+
+/* ✕ in the head of every confirmation (owner 2026-11-17) */
+.sftk-cf-x { flex: 0 0 auto; margin: -4px -8px 0 4px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--subtext); font-size: 15px; line-height: 1; cursor: pointer; }
+.sftk-cf-x:hover { background: rgba(127,127,127,.18); color: var(--text); }
+.sftk-cf-x:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 1px; }

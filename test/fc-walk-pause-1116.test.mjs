@@ -67,9 +67,19 @@ describe('the walk', () => {
     expect(all.indexOf('_walk.skip.has(')).toBeLessThan(all.indexOf('if (_walk) _walk.at++;'));
     expect(FC).toContain("if (_walk) _walk.skip.add(String(componentId).slice(0, 15));");
   });
-  it('every dialog of a walk says where it is, and its Cancel says that it pauses', () => {
+  // owner 2026-11-17: 'the pause continue later should be just an X that lets you close the window … and we should
+  // have it on any removal card' — every confirmation has ✕ in its head; in a walk the Cancel button is hidden and ✕ pauses
+  it('every dialog of a walk says where it is, and is closed with the ✕ (the walk waits)', () => {
     const m = FC.slice(FC.indexOf('function _walkDialogMark() {'), FC.indexOf('// fixEverything') > 0 ? FC.indexOf('// fixEverything') : FC.indexOf('function _refreshFixEvery'));
-    expect(m).toContain("if (c.textContent.trim() === 'Cancel') { c.textContent = '⏸ Pause — continue later';");
+    expect(m).toContain("c.hidden = true; c.style.display = 'none';");
+    expect(m).not.toContain('⏸ Pause — continue later');
+    expect(m).toContain("x.title = 'Close — the walk waits here.");
+    expect(m).toContain("x.addEventListener('click', () => { _walkStop = true; }, true);");   // beside Skip this one, ✕ pauses — it never skips
+    const read = f => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+    const CF = read('sftk-confirm.js');
+    expect(CF.split('class="sftk-cf-x"').length).toBe(3);   // the dialog and its production step
+    expect(CF).toContain("document.getElementById('sftkConfirmX')?.addEventListener('click', () => { const c = document.getElementById('sftkConfirmCancel'); if (c) c.click(); else done(false); });");
+    for (const f of ['styles.css', 'studio.css']) expect(read(f)).toContain('.sftk-cf-x {');
     expect(m).toContain('· item ${Math.min(_walk.at, _walk.total)');
     expect(every).toContain('new MutationObserver(_walkDialogMark)');
     expect(every).toContain('if (obs) obs.disconnect();');

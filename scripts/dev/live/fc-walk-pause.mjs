@@ -27,9 +27,9 @@ async function openAndScan(h) {
 }
 const dark = async (h, on) => { await h.eval(`(() => { document.body.classList.toggle('sftk-dark', ${on}); return true; })()`); await h.sleep(300); };
 const both = async (h, name) => { await h.shot(h.shots + '/' + name + '.png'); await dark(h, true); await h.shot(h.shots + '/' + name + '-dark.png'); await dark(h, false); };
-const dialog = h => h.eval(`(() => { const b = document.getElementById('modalBox'); const c = document.getElementById('sftkConfirmCancel'); return { pos: b?.querySelector('.fc-walk-pos')?.textContent || '', cancel: c?.textContent.trim() || '', stop: document.getElementById('fcWalkStop')?.textContent || '', item: (b?.querySelector('.sftk-cf-item-label, .sftk-cf-items li, .sftk-cf-list li')?.textContent || '').trim().slice(0, 80), title: (b?.innerText || '').replace(/\\s+/g, ' ').replace(/^.*?item \\d+ of \\d+\\s*/, '').trim().slice(0, 90) }; })()`);
+const dialog = h => h.eval(`(() => { const b = document.getElementById('modalBox'); const c = document.getElementById('sftkConfirmCancel'); return { pos: b?.querySelector('.fc-walk-pos')?.textContent || '', cancel: c?.textContent.trim() || '', cancelHidden: !!c && getComputedStyle(c).display === 'none', x: document.getElementById('sftkConfirmX')?.title || '', stop: document.getElementById('fcWalkStop')?.textContent || '', item: (b?.querySelector('.sftk-cf-item-label, .sftk-cf-items li, .sftk-cf-list li')?.textContent || '').trim().slice(0, 80), title: (b?.innerText || '').replace(/\\s+/g, ' ').replace(/^.*?item \\d+ of \\d+\\s*/, '').trim().slice(0, 90) }; })()`);
 const waitDialog = h => h.waitFor("!!document.getElementById('sftkConfirmCancel')", 120000, 300);
-const pause = async h => { await h.eval(`(() => { const s = document.getElementById('fcWalkStop'); if (s) s.click(); else document.getElementById('sftkConfirmCancel').click(); return true; })()`); await h.waitFor("!document.getElementById('sftkConfirmCancel') && !!document.querySelector('.fc-every-paused')", 60000, 300); await h.sleep(400); };
+const pause = async h => { await h.eval(`(() => { document.getElementById('sftkConfirmX').click(); return true; })()`); await h.waitFor("!document.getElementById('sftkConfirmCancel') && !!document.querySelector('.fc-every-paused')", 60000, 300); await h.sleep(400); };
 const bar = h => h.eval(`(document.querySelector('.fc-every-paused')?.innerText || '').replace(/\\s+/g, ' ').trim()`);
 const saved = h => h.eval(`chrome.storage.local.get('sftk_fc_walk').then(r => r.sftk_fc_walk || null)`);
 
@@ -50,7 +50,7 @@ export default async function (h) {
   const d1 = await dialog(h);
   h.log('1 first dialog:', JSON.stringify(d1));
   if (!/item 1 of \d+/.test(d1.pos)) throw new Error('FAILED: the dialog must say where the walk is — ' + d1.pos);
-  if (!/Pause/.test(d1.cancel) && !/pause/.test(d1.stop)) throw new Error('FAILED: the dialog must offer the pause — ' + JSON.stringify(d1));
+  if (!/walk waits/.test(d1.x) || (d1.cancel === 'Cancel' && !d1.cancelHidden)) throw new Error('FAILED: the dialog is closed with the ✕ (no Pause button) — ' + JSON.stringify(d1));
   await both(h, 'walk-1-dialog');
   await pause(h);
   const b1 = await bar(h), s1 = await saved(h);

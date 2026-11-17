@@ -15,6 +15,7 @@ extensions containing root files that start with `_`).
 
 ## 1.1.0 — 2026-11-04
 
+- **Every confirmation closes with an X** (2026-11-17). Each confirmation window has a close button in its top corner. In a Remove all or Replace all walk it replaces the Pause button: closing the window leaves the walk waiting, and Continue goes on from the same item.
 - **Rows that cannot be removed keep their name** (2026-11-17). A Field Cleaner row with a note saying Remove is not possible lost its name and showed its buttons on the left. The name and buttons now stay on one line and the note sits under them.
 - **Field Cleaner finds every object in a large org** (2026-11-17). In an org with more than 2,000 objects, an object late in the alphabet could not be picked: Salesforce refused the two requests that load the rest of the list and search it by name. The list is now loaded page by page and the search asks for the API name and the label separately.
 - **The full metadata text scan is offered when the scan finds nothing** (2026-11-17). Its box was left empty on a field with no listed dependencies. The scan also reads the org’s own text static resources (scripts, style sheets, JSON, XML, up to 1 MB each) and lists them under Static Resources; a Change Data Capture channel that sends the field has its own group. Neither blocks a delete.
