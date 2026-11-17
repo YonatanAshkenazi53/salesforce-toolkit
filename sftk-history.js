@@ -307,7 +307,12 @@ async function sftkHistoryUndo(entryId, opts) {
   const send = typeof o.send === 'function' ? o.send : _sftkHistSend;
   const log = typeof o.onLog === 'function' ? o.onLog : () => {};
   const all = await sftkHistoryAll();
-  const entry = all.find(h => h && h.id === entryId && h.kind === 'tool');
+  // Activity keeps its newest ${SFTK_HISTORY_CAP} entries at hand and moves older ones to the archive. Every undo is an entry of its
+  // own, so a long ↩ Undo all pushed its own oldest targets out while it ran — seen live 2026-11-17 (owner's
+  // screenshot: 37 of 39 undone, the two oldest "no longer in Activity"). The caller that already holds the entry
+  // hands it in (o.entry); it is used when the list no longer has it.
+  const entry = all.find(h => h && h.id === entryId && h.kind === 'tool')
+    || ((o.entry && o.entry.id === entryId && o.entry.kind === 'tool') ? o.entry : null);
   if (!entry) return { ok: false, text: 'This entry is no longer in Activity.' };
   const st = sftkToolUndoState(entry);
   if (st.disabled) return { ok: false, text: st.title || 'This entry cannot be undone.' };
@@ -437,7 +442,7 @@ async function sftkHistoryUndoMany(entries, opts) {
     const e = list[i];
     if (typeof o.onStart === 'function') o.onStart(i, list.length, e);
     let r;
-    try { r = await undo(e.id, { confirm: false, send: o.send, onLog: o.onLog }); }
+    try { r = await undo(e.id, { confirm: false, send: o.send, onLog: o.onLog, entry: e }); }
     catch (err) { r = { ok: false, text: String((err && err.message) || err) }; }
     if (typeof o.onEnd === 'function') o.onEnd(i, list.length, e, r);
     if (r && !r.ok && !r.entry && /^Log in to /.test(String(r.text || ''))) { out.stopped = r.text; break; }
