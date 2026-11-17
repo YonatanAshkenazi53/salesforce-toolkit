@@ -2082,7 +2082,10 @@ const FieldCleaner = (() => {
           failed.push(`${page.MasterLabel || page.DeveloperName || page.Id}: ${String(why).slice(0, 120)}`);
           return;
         }
-        if (flexiPageReferencesField(r.value.Metadata, _selObj.api, _selField.api)) {
+        // owner 2026-11-17, on a page whose only mention was its description: "So why it showed when i rescaned" — a
+        // page that names the field only in free text (its description, its label, a component's title or rich
+        // text) uses it nowhere: nothing to remove, nothing Salesforce refuses over. It is not listed.
+        if (flexiPageReferencesField(r.value.Metadata, _selObj.api, _selField.api) && _flexiNamesBeyondText(r.value.Metadata, _selObj.api, _selField.api)) {
           hits.push({
             MetadataComponentId:      page.Id,
             MetadataComponentName:    page.MasterLabel || page.DeveloperName,

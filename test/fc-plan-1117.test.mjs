@@ -86,6 +86,12 @@ describe('✂ on a Lightning page that names the field only in its description',
   });
 });
 
+describe('the scan and a Lightning page that names the field only in free text', () => {
+  it('does not list it (owner 2026-11-17: "So why it showed when i rescaned")', () => {
+    expect(FC).toContain('if (flexiPageReferencesField(r.value.Metadata, _selObj.api, _selField.api) && _flexiNamesBeyondText(r.value.Metadata, _selObj.api, _selField.api)) {');
+  });
+});
+
 describe('the Setup link of a search layout', () => {
   it('opens Object Manager’s own Search Layouts page, not the address that draws an empty panel', () => {
     expect(FC).toContain("function fcSearchLayoutsPage() { return 'MySearchLayouts'; }");
