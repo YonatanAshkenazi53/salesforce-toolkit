@@ -9885,7 +9885,7 @@ const FieldCleaner = (() => {
     host.innerHTML = '<div class="fc-undoall fc-undoall-run"><div class="fc-undoall-prog"></div><details class="fc-undoall-log" open><summary>What is being undone</summary><ol></ol></details></div>';
     const ol = host.querySelector('ol');
     const prog = typeof sftkProgress === 'function'
-      ? sftkProgress(host.querySelector('.fc-undoall-prog'), { what: `Undoing ${list.length} change${list.length === 1 ? '' : 's'} for ${subj}…`, key: 'fc-undo-all', orgUrl: _orgUrl, total: list.length, unit: 'changes', small: true }) : null;
+      ? sftkProgress(host.querySelector('.fc-undoall-prog'), { what: `Undoing ${list.length} change${list.length === 1 ? '' : 's'} for ${subj}…`, key: 'fc-undo-all', orgUrl: _orgUrl, total: list.length, unit: 'changes' }) : null;   // full size, as the ⚡ run (owner 2026-11-17)
     let li = null, res;
     try {
       res = await sftkHistoryUndoMany(list, {

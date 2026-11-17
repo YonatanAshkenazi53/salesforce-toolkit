@@ -129,6 +129,10 @@ describe('the plan', () => {
     // owner 2026-11-17: "while it does its job, dont forget our awsome progress bar and kitty animation"
     expect(FC).toContain("prog = sftkProgress(host.querySelector('.fc-plan-run-prog'), {");
     expect(FC).toContain('if (prog) prog.count(at, todo.length);');
+    // ↩ Undo all draws the same full-size progress (owner 2026-11-17: "should look like the kitty when its removed")
+    expect(FC).toContain("key: 'fc-undo-all', orgUrl: _orgUrl, total: list.length, unit: 'changes' }) : null;");
+    expect(FC).not.toMatch(/key: 'fc-(undo-all|plan)'[^
+]*small: true/);
     expect(FC).toContain('_planReport(done, not, waiting, nLeft, stoppedAt);');
     expect(FC).toContain('try { renderUndoAll(); }');
   });

@@ -105,6 +105,9 @@ export default async function (h) {
   await h.waitFor("!!document.getElementById('sftkConfirmGo')", 30000, 200);
   await h.sleep(400);
   await h.eval(`(() => { const a = document.getElementById('sftkConfirmAck'); if (a && !a.checked) a.click(); document.getElementById('sftkConfirmGo').click(); return true; })()`);
+  await h.waitFor("!!document.querySelector('#fcUndoAll .sftk-prog')", 30000, 100);
+  await h.eval(`(() => { document.getElementById('fcUndoAll').scrollIntoView({ block: 'center' }); return true; })()`);
+  await both(h, TAG + '-6-undoing');
   await h.waitFor("!!document.querySelector('#fcUndoAll .fc-undoall-done')", 900000, 1000);
   const und = await h.eval(`document.getElementById('fcUndoAll').innerText.replace(/\s+/g, ' ')`);
   h.log('undo all:', und);
