@@ -77,6 +77,15 @@ describe('a confirmation given once for a plan', () => {
   });
 });
 
+describe('✂ on a Lightning page that names the field only in its description', () => {
+  it('settles the row instead of sending the owner to App Builder', () => {
+    const at = FC.indexOf('async function fixFlexiPage('); const f = FC.slice(at, at + 9000);
+    expect(f).toContain("if (!leftRm.other && !leftRm.unknown && !leftRm.otherPage && !_flexiNamesBeyondText(beforeMetadata, _selObj.api, _selField.api)) {");
+    expect(f).toContain("return '✅ Nothing uses the field here — Salesforce lists it because");
+    expect(f.indexOf("return '✅ Nothing uses the field here")).toBeLessThan(f.indexOf('No direct field references found in'));
+  });
+});
+
 describe('the Setup link of a search layout', () => {
   it('opens Object Manager’s own Search Layouts page, not the address that draws an empty panel', () => {
     expect(FC).toContain("function fcSearchLayoutsPage() { return 'MySearchLayouts'; }");

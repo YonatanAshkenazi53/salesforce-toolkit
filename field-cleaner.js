@@ -7735,6 +7735,12 @@ const FieldCleaner = (() => {
     };
     const changes = swap ? sw.swapped + sw.dropped : removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api, leftRm, pageHint);
     if (changes === 0) {
+      // owner 2026-11-17 (a screenshot: ✂ on a page answered "No direct field references found … remove manually in
+      // App Builder", while Salesforce no longer refused the delete over it): a page that names the field only in
+      // its description or label has nothing to remove — the row is settled, as 🔍 settles it, and says why.
+      if (!leftRm.other && !leftRm.unknown && !leftRm.otherPage && !_flexiNamesBeyondText(beforeMetadata, _selObj.api, _selField.api)) {
+        return '✅ Nothing uses the field here — Salesforce lists it because its description or another text mentions the field’s name. Nothing to remove.';
+      }
       throw new Error(
         `No direct field references found in "${componentName}". ` +
         // review 5 (2026-11-14): a record page of another object — its record's field is that object's
