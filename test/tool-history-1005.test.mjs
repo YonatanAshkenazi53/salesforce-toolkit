@@ -133,7 +133,7 @@ describe('the Toolkit side (sftk-toolhistory.js)', () => {
     expect(TH).toContain("const title = String(e.profileName || e.tool || 'change');");   // 2026-10-24: kind · subject · detail, each escaped
     for (const s of ['${esc(kind)}', '${esc(subject)}', '${esc(detail)}']) expect(TH).toContain(s);
     expect(TH).toContain('${esc(w.text || w.describe)}');
-    expect(TH).toContain('${esc(e.toolUndo.none)}');
+    expect(TH).toContain('${esc(why)}');   // 2026-11-18: why there is no undo is one escaped line under the card
     expect(TH).toContain('${esc(said)}');
   });
   it('the list follows the history as it changes, in the button, in a tool and in the open dialog', () => {

@@ -7541,3 +7541,49 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 /* a row with an error under it keeps its name and its buttons on one line (owner 2026-11-17, a screenshot) */
 .fc-item:has(> .fc-item-err) { flex-wrap: wrap; }
 .fc-item:not(.fc-flow-card) > .fc-item-err { flex: 1 1 100%; }
+
+/* 🧾 the Activity window (owner 2026-11-18: the buttons on top, a better card, one entry deleted) */
+.sftk-th-top { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 10px; }
+.sftk-th-top-t { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.sftk-th-top-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.sftk-th-count { font-size: 12px; color: var(--subtext); }
+.sftk-th-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; }
+.sftk-th-find { flex: 1 1 220px; min-width: 0; height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; }
+.sftk-th-find:focus { outline: 2px solid var(--accent, #2563eb); outline-offset: -1px; }
+.sftk-th-tools .sftk-th-acts { margin-right: 0; }
+.sftk-th-modal { max-height: 58vh; }
+.sftk-th-card { padding: 9px 12px; border-left-width: 3px; }
+.sftk-th-card.sftk-th-is-success { border-left-color: #2e844a; }
+.sftk-th-card.sftk-th-is-partial { border-left-color: #a96404; }
+.sftk-th-card.sftk-th-is-failed { border-left-color: #ba0517; }
+.sftk-th-card.sftk-th-is-undo { border-left-color: var(--border); background: transparent; }
+.sftk-th-card .sftk-th-head { flex-wrap: nowrap; align-items: flex-start; gap: 10px; }
+.sftk-th-ico { flex: 0 0 auto; font-size: 13px; line-height: 20px; }
+.sftk-th-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sftk-th-card .sftk-th-title { flex: none; line-height: 20px; }
+.sftk-th-meta { font-size: 11.5px; color: var(--subtext); overflow-wrap: anywhere; }
+.sftk-th-btns { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; }
+.sftk-th-icon { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--subtext); font-size: 13px; cursor: pointer; }
+.sftk-th-icon:hover { background: rgba(127,127,127,.16); color: var(--text); }
+.sftk-th-icon.sftk-th-del:hover { color: var(--danger); }
+.sftk-th-icon:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 1px; }
+.sftk-th-ask { font-size: 12px; color: var(--text); margin-right: 4px; }
+.sftk-th-card .sftk-th-what { padding: 6px 0 0 23px; color: var(--subtext); }
+.sftk-th-card .sftk-th-foot { margin: 6px 0 0 23px; padding-top: 0; border-top: 0; }
+#modalBox:has(> .sftk-th-top) { padding: 16px 18px 18px; }
+.sftk-th-top { margin-bottom: 12px; }
+.sftk-th-top .sftk-cf-x { margin: -4px -6px 0 0; }
+
+/* ↩ Undo — which ones (owner 2026-11-18: selectable, and readable) */
+.fc-us-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; }
+.fc-us-count { font-size: 12.5px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.fc-us-find { flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; }
+.fc-us-list { max-height: 44vh; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+.fc-us-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.fc-us-row:last-child { border-bottom: 0; }
+.fc-us-row:hover { background: rgba(127,127,127,.06); }
+.fc-us-tick { flex: 0 0 auto; margin: 3px 0 0; width: 15px; height: 15px; }
+.fc-us-what { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fc-us-name { font-size: 13px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.fc-us-meta { font-size: 11.5px; color: var(--subtext); }
+.fc-us-row:has(.fc-us-tick:not(:checked)) .fc-us-name { font-weight: 400; color: var(--subtext); }

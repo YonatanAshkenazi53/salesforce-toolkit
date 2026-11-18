@@ -313,6 +313,24 @@ function fcCmtTypeApi(fullName) {
 // object): Object Manager's own "Search Layouts" link is …/MySearchLayouts/view; …/SearchLayouts/view draws an
 // empty panel on both (owner: "When i navigated to the search layout. it opened a blank screen"). PURE.
 function fcSearchLayoutsPage() { return 'MySearchLayouts'; }
+// A change's title, split for a list about ONE field (owner 2026-11-18, on the ↩ Undo all dialog: "make the text more
+// readable … the actual component texts"). "✂ Paths — "SFTK Pkg Path" (Obj.Field__c removed)" → the kind, the
+// component's name, and what was done — the field's own name is left out: every line of the list is about it. PURE.
+function fcUndoRowParts(title, subject) {
+  let t = String(title == null ? '' : title);
+  const subj = String(subject || '');
+  if (subj) t = t.split(subj).join('');
+  t = t.replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+  const cutAt = t.indexOf(' — ');
+  const kind = cutAt > 0 ? t.slice(0, cutAt).trim() : '';
+  let rest = cutAt > 0 ? t.slice(cutAt + 3).trim() : t;
+  let name = rest, did = '';
+  const q = /^[“"](.*)[”"]\s*(.*)$/.exec(rest);          // a quoted name, then what was done
+  if (q) { name = q[1]; did = q[2]; }
+  else { const p = /^(.*?)\s*\(([^()]*)\)$/.exec(rest); if (p && p[1]) { name = p[1]; did = p[2]; } }
+  did = did.replace(/^\((.*)\)$/, '$1').replace(/^[\s·—-]+|[\s·—-]+$/g, '');
+  return { kind, name: name.trim(), did };
+}
 // ⚡ ALL AT ONCE (owner 2026-11-17: "maybe we shouldn't do the replace and remove wizard. or at least give an option
 // to do it all in one shot … what can be removed without ruining the component will be removed. what cannot be
 // removed will be deleted" — and: "what if i want one component field ref removed and another component i would
@@ -1415,9 +1433,10 @@ const FieldCleaner = (() => {
   }
   // on the section card's header (user 2026-11-08: "on top of the card … instead of the bar")
   function _fixEveryHtml(n) {
-    if (n < 2 && !_everyNote) return '<span id="fcFixEvery" class="fc-every" hidden></span>';
-    return `<span id="fcFixEvery" class="fc-every">${n >= 2 ? `<button class="btn btn-primary btn-sm fc-plan-btn" title="One screen with every item and what will be done to it — change any row, confirm once, and it all runs without asking again. Each change keeps its own restore point.">⚡ All ${n} at once…</button>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}</span>`;
+    if (n < 2 && !_everyNote && !_undoAllN) return '<span id="fcFixEvery" class="fc-every" hidden></span>';
+    return `<span id="fcFixEvery" class="fc-every">${n >= 2 ? `<button class="btn btn-primary btn-sm fc-plan-btn" title="One screen with every item and what will be done to it — change any row, confirm once, and it all runs without asking again. Each change keeps its own restore point.">⚡ All ${n} at once…</button>` : ''}${_undoAllN ? `<button class="btn btn-secondary btn-sm fc-undoall-top" title="Takes back every change made here for this field, newest first — one confirmation; each step is re-read from the org">↩ Undo all ${_undoAllN}</button>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}</span>`;
   }
+  let _undoAllN = 0;   // how many changes of this field can still be undone (renderUndoAll counts them) — the header's ↩ Undo all
   try { chrome.storage.local.remove('sftk_fc_walk'); } catch (_) { /* what a paused walk of an older build left behind */ }
   // A section of the header that folds to one line, like the Deploy page's cards (user 2026-11-08: "we need a
   // collapsable ui there like we did for parents"). Open or folded is remembered per section; the one-line
@@ -3325,6 +3344,8 @@ const FieldCleaner = (() => {
         }
         const pl = ev.target.closest?.('.fc-plan-btn');
         if (pl) { if (!pl.disabled) planEverything(_curFieldId, pl.dataset.type || ''); return; }
+        // the header's ↩ Undo all is the bar's own button, pressed: the same confirmation, the progress shown in the bar
+        if (ev.target.closest?.('.fc-undoall-top')) { const b = eid('fcUndoAllBtn'); if (b) { try { eid('fcUndoAll').scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) { /* not laid out */ } b.click(); } return; }
         if (ev.target.closest?.('.fc-plan-stop')) { if (_planRun) { _planRun.stop = true; const b = ev.target.closest('.fc-plan-stop'); b.disabled = true; b.textContent = 'Stopping after this one…'; } return; }
         const fb = ev.target.closest?.('.fc-filter-btn');
         if (fb) { if (!fb.disabled) { _fcFilter = fb.dataset.filter || 'all'; _paintFilter(); } return; }
@@ -9847,6 +9868,7 @@ const FieldCleaner = (() => {
     const list = subj && _orgUrl && typeof sftkHistoryUndoableFor === 'function'
       ? sftkHistoryUndoableFor(await sftkHistoryAll(), { tool: 'Field Cleaner', orgUrl: _orgUrl, subject: subj }) : [];
     if (subj !== _fcSubject() || _undoAllBusy) return;   // another field was picked while History was read
+    if (_undoAllN !== list.length) { _undoAllN = list.length; _refreshFixEvery(); }
     // the summary of the last Undo all stays (through the re-scan) until the field or the list of changes moves on
     if (doneHtml !== undefined) _undoAllNote = doneHtml ? { subj, n: list.length, html: doneHtml } : null;
     else if (_undoAllNote && (_undoAllNote.subj !== subj || _undoAllNote.n !== list.length)) _undoAllNote = null;
@@ -9861,24 +9883,57 @@ const FieldCleaner = (() => {
     if (_undoAllBusy || !list.length) return;
     const gate = await sftkOrgWriteGate(_orgUrl);
     const stepsOf = e => ((e.toolUndo && e.toolUndo.steps) || []).length;
+    // WHICH ONES (owner 2026-11-18: "can we make them also selectable. if i want to restore only some? and make the
+    // text more readable"): every change has its tick — all ticked at first — and its line reads kind · name · what
+    // was done. The button says how many go back.
+    const picked = new Set(list.map(e => e.id));
+    const goText = () => picked.size === list.length ? `↩ Undo all ${list.length}` : picked.size ? `↩ Undo ${picked.size} of ${list.length}` : 'Nothing is ticked';
+    const rowsHtml = list.map((e, i) => {
+      const p = fcUndoRowParts(e.profileName, subj), n = stepsOf(e);
+      return `<label class="fc-us-row" data-i="${i}"><input type="checkbox" class="fc-us-tick" data-i="${i}" checked>
+        <span class="fc-us-what"><span class="fc-us-name">${esc(p.name || e.profileName)}</span><span class="fc-us-meta">${p.kind ? `${esc(p.kind)}` : ''}${p.did ? `${p.kind ? ' · ' : ''}${esc(p.did)}` : ''}${n > 1 ? ` · ${n} steps` : ''} · ${esc(sftkHistoryAgo(e.startedAt, Date.now()))}</span></span></label>`;
+    }).join('');
     const sure = await sftkConfirmDestructive({
-      title: `↩ Undo all — ${list.length} change${list.length === 1 ? '' : 's'} for ${subj}`,
+      title: `↩ Undo — ${subj}`,
       icon: '↩',
-      items: list.map(e => ({ label: e.profileName, sub: `${stepsOf(e)} step${stepsOf(e) === 1 ? '' : 's'}` })),
+      items: [],
       revOverride: {
-        html: 'Writes the previous state of each of these back, <strong>newest first</strong>. An undo has no undo — to redo a change, use the tool again.'
-          + '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">'
-          + '<li><b>Steps</b><span>One change at a time; each step is re-read from the org to confirm it</span></li>'
-          + '<li><b>A failure</b><span>Does not stop the rest — it is listed at the end with Salesforce’s reason</span></li>'
-          + '<li><b>Recorded</b><span>Every undo is its own entry in Activity</span></li>'
-          + '<li><b>Not included</b><span>A change Activity says cannot be undone (deleted flow versions, a deleted field) stays as it is</span></li></ol></div>',
+        html: 'Writes the earlier state of every ticked change back, <strong>newest first</strong>, one at a time; each is re-read from the org to confirm it. One that fails does not stop the rest — it is listed at the end with Salesforce’s reason. An undo has no undo: to redo a change, use the tool again.',
         needsCheckbox: true,
         ack: 'I understand this writes the earlier state back over whatever is there now',
       },
       revWord: 'Writes the earlier state back',
-      confirmLabel: `↩ Undo all ${list.length}`,
+      extraHtml: `<div class="fc-us"><div class="fc-us-bar"><span class="fc-us-count" id="fcUsCount"></span><input type="search" class="fc-us-find" id="fcUsFind" placeholder="Filter…" aria-label="Filter the list" autocomplete="off" spellcheck="false"><button type="button" class="fc-plan-link" id="fcUsAll">Tick all</button><button type="button" class="fc-plan-link" id="fcUsNone">Untick all</button></div><div class="fc-us-list">${rowsHtml}</div></div>`,
+      confirmLabel: goText(),
       production: gate.production ? { label: gate.label } : null,
+      onRender: () => {
+        document.getElementById('modalBox')?.classList.add('fc-plan-host');
+        const go = document.getElementById('sftkConfirmGo'), ack = document.getElementById('sftkConfirmAck'), cnt = document.getElementById('fcUsCount');
+        const sync = () => {
+          if (cnt) cnt.textContent = `${picked.size} of ${list.length} ticked`;
+          if (go) { go.textContent = goText(); go.disabled = !picked.size || !(ack && ack.checked); }
+        };
+        const shown = () => [...document.querySelectorAll('.fc-us-row')].filter(r => r.style.display !== 'none');
+        document.querySelector('.fc-us-list')?.addEventListener('change', ev => {
+          const t = ev.target.closest?.('.fc-us-tick'); if (!t) return;
+          const e = list[Number(t.dataset.i)]; if (!e) return;
+          if (t.checked) picked.add(e.id); else picked.delete(e.id);
+          sync();
+        });
+        // Tick all / Untick all act on what the filter shows
+        const setAll = on => { shown().forEach(r => { const t = r.querySelector('.fc-us-tick'), e = list[Number(r.dataset.i)]; if (!t || !e) return; t.checked = on; if (on) picked.add(e.id); else picked.delete(e.id); }); sync(); };
+        document.getElementById('fcUsAll')?.addEventListener('click', () => setAll(true));
+        document.getElementById('fcUsNone')?.addEventListener('click', () => setAll(false));
+        const find = document.getElementById('fcUsFind');
+        find?.addEventListener('input', () => { const q = find.value.trim().toLowerCase(); document.querySelectorAll('.fc-us-row').forEach(r => { r.style.display = !q || r.textContent.toLowerCase().includes(q) ? '' : 'none'; }); });
+        // the dialog's own gate looks at the acknowledgement only: nothing ticked keeps the button off
+        ack?.addEventListener('change', () => setTimeout(sync, 0));
+        sync();
+      },
     });
+    document.getElementById('modalBox')?.classList.remove('fc-plan-host');
+    if (!sure || !picked.size) return;
+    list = list.filter(e => picked.has(e.id));     // newest first, as it was
     if (!sure) return;
     const host = eid('fcUndoAll');
     _undoAllBusy = true;

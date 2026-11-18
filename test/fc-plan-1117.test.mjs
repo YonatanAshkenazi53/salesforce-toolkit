@@ -92,6 +92,37 @@ describe('the scan and a Lightning page that names the field only in free text',
   });
 });
 
+describe('↩ Undo all on the list’s header', () => {
+  // owner 2026-11-18: "can we place the undo all button here?" (the header, next to the note of the last run)
+  it('is drawn when the field has changes that can be undone, and presses the bar’s own button', () => {
+    expect(FC).toContain('class="btn btn-secondary btn-sm fc-undoall-top"');
+    expect(FC).toContain('↩ Undo all ${_undoAllN}</button>');
+    expect(FC).toContain("if (_undoAllN !== list.length) { _undoAllN = list.length; _refreshFixEvery(); }");
+    expect(FC).toContain("if (ev.target.closest?.('.fc-undoall-top')) { const b = eid('fcUndoAllBtn'); if (b) {");
+  });
+});
+
+describe('↩ Undo — which ones', () => {
+  // owner 2026-11-18: "can we make them also selectable. if i want to restore only some? and make the text more readable"
+  const { fcUndoRowParts } = extractFunctions('field-cleaner.js', ['fcUndoRowParts']);
+  const S = 'dlrs__LookupChild__c.SFTK_Pkg_Tag__c';
+  it('a line reads kind · name · what was done, without the field every line is about', () => {
+    expect(fcUndoRowParts(`✂ Paths — "SFTK Pkg Path — a key field of the step New" (${S} removed)`, S)).toEqual({ kind: '✂ Paths', name: 'SFTK Pkg Path — a key field of the step New', did: 'removed' });
+    expect(fcUndoRowParts(`✂ Custom Setting Records — "SFTK Gap Set · PkgRef (Field_Name__c)" removed (${S})`, S)).toEqual({ kind: '✂ Custom Setting Records', name: 'SFTK Gap Set · PkgRef (Field_Name__c)', did: 'removed' });
+    expect(fcUndoRowParts(`🗑 Apex Classes — "SFTK_Pkg_Class" deleted (${S})`, S)).toEqual({ kind: '🗑 Apex Classes', name: 'SFTK_Pkg_Class', did: 'deleted' });
+    expect(fcUndoRowParts(`✂ Flow — SFTK Pkg Sub (${S} removed)`, S)).toEqual({ kind: '✂ Flow', name: 'SFTK Pkg Sub', did: 'removed' });
+    expect(fcUndoRowParts('odd title', S)).toEqual({ kind: '', name: 'odd title', did: '' });
+    expect(fcUndoRowParts(null, null)).toEqual({ kind: '', name: '', did: '' });
+  });
+  it('every change has its tick; only the ticked ones are undone, newest first; nothing ticked keeps the button off', () => {
+    expect(FC).toContain('const picked = new Set(list.map(e => e.id));');
+    expect(FC).toContain("if (go) { go.textContent = goText(); go.disabled = !picked.size || !(ack && ack.checked); }");
+    expect(FC).toContain('if (!sure || !picked.size) return;');
+    expect(FC).toContain('list = list.filter(e => picked.has(e.id));');
+    expect(FC).toContain("ack?.addEventListener('change', () => setTimeout(sync, 0));");
+  });
+});
+
 describe('the Setup link of a search layout', () => {
   it('opens Object Manager’s own Search Layouts page, not the address that draws an empty panel', () => {
     expect(FC).toContain("function fcSearchLayoutsPage() { return 'MySearchLayouts'; }");

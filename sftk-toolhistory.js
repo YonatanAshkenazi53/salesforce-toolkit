@@ -29,6 +29,15 @@
   let _tab = '';                         // the tool that is open
   const _showAll = new Set();            // tabs whose full list was asked for
   const _said = new Map();               // entry id → the sentence its undo ended with
+  let _find = '';                        // what the window's filter box holds
+  let _askDel = '';                      // the entry whose 🗑 was pressed and waits for its "yes"
+  // does a card answer the filter? every word typed must be somewhere in its title, its org or its lines
+  function matches(e, q) {
+    const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return true;
+    const hay = [e.profileName, e.tool, e.status, orgName(e.targetOrg), ...(Array.isArray(e.what) ? e.what.map(w => w.text || w.describe) : [])].join(' ').toLowerCase();
+    return words.every(w => hay.includes(w));
+  }
 
   const labelOf = tab => String(tab) === '*' ? 'the Toolkit' : sftkHistoryTabLabel(tab);
   async function entriesFor(tab, subject) {
@@ -50,15 +59,24 @@
     const kind = tm ? tm[1] : '', subject = tm ? tm[2] : title, detail = tm && tm[3] ? tm[3] : '';
     const okN = what.filter(w => w.ok).length;
     const line = w => `<div>${icon(w)} ${esc(w.text || w.describe)}</div>`;
-    return `<div class="sftk-th-card" data-th-id="${esc(e.id)}">
+    // THE CARD (owner 2026-11-18, on the window as it was: "we need some better ui" · "allow deletion of individuals").
+    // One line says what and where; the lines under it say what the org showed. On the right: ↩ Undo only when it
+    // can be undone (why it cannot is said once, under the card — not on a dead button and again below), ⬇ the
+    // entry as a file, 🗑 this entry out of the list.
+    const canUndo = st.show && !st.disabled;
+    const why = e.undoOf ? '' : (e.toolUndo && e.toolUndo.done) ? `↩ ${e.toolUndo.done.ok ? 'Undone and verified' : 'An undo was run — not every step was confirmed'} on ${String(e.toolUndo.done.at || '').slice(0, 16).replace('T', ' ')}`
+      : (e.toolUndo && e.toolUndo.none) ? `No undo — ${e.toolUndo.none}` : (st.show && st.disabled) ? String(st.title || '') : '';
+    const asking = _askDel === e.id;
+    return `<div class="sftk-th-card sftk-th-is-${esc(e.status || 'failed')}${e.undoOf ? ' sftk-th-is-undo' : ''}" data-th-id="${esc(e.id)}">
       <div class="sftk-th-head">
-        <span class="sftk-th-status sftk-th-${esc(e.status || 'failed')}">${badge} ${esc(e.status || '')}</span>
-        ${kind ? `<span class="sftk-th-kind">${esc(kind)}</span>` : ''}
-        <span class="sftk-th-title">${esc(subject)}${detail ? ` <span class="sftk-th-detail" title="${esc(detail)}">${esc(detail)}</span>` : ''}</span>
-        ${e.undoOf ? '<span class="sftk-th-chip" title="This entry is the undo of an earlier change.">↩ undo</span>' : ''}
-        <span class="sftk-th-when" title="${esc(e.startedAt || '')}">${esc(sftkHistoryAgo(e.startedAt, Date.now()))} · ${esc(orgName(e.targetOrg))}</span>
-        ${st.show ? `<button class="btn btn-sm ${st.disabled ? 'btn-secondary' : 'btn-danger'} sftk-th-undo" ${st.disabled ? 'disabled' : ''} data-th-undo="${esc(e.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>${st.disabled && st.title ? `<span class="sftk-th-why">${esc(st.title)}</span>` : ''}` : ''}
-        <button class="btn btn-sm btn-secondary" data-th-report="${esc(e.id)}" title="Download this entry as a JSON file: what was written, where, when, and what the org showed.">⬇ Report</button>
+        <span class="sftk-th-ico" title="${esc(e.status || 'failed')}">${badge}</span>
+        <span class="sftk-th-main">
+          <span class="sftk-th-title">${e.undoOf ? '<span class="sftk-th-chip" title="This entry is the undo of an earlier change — it has no undo of its own; redo the change from the tool.">↩ undo of</span> ' : ''}${kind ? `<span class="sftk-th-kind">${esc(kind)}</span> ` : ''}${esc(subject)}</span>
+          <span class="sftk-th-meta">${detail ? `<span class="sftk-th-detail" title="${esc(detail)}">${esc(detail)}</span> · ` : ''}<span title="${esc(e.startedAt || '')}">${esc(sftkHistoryAgo(e.startedAt, Date.now()))}</span> · ${esc(orgName(e.targetOrg))}</span>
+        </span>
+        <span class="sftk-th-btns">${asking
+          ? `<span class="sftk-th-ask">${canUndo ? 'Its Undo goes with it. ' : ''}Delete this entry?</span><button class="btn btn-sm btn-danger" data-th-del-yes="${esc(e.id)}">Delete</button><button class="btn btn-sm btn-secondary" data-th-del-no="1">Keep</button>`
+          : `${canUndo ? `<button class="btn btn-sm btn-primary sftk-th-undo" data-th-undo="${esc(e.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>` : ''}<button class="sftk-th-icon" data-th-report="${esc(e.id)}" title="Download this entry as a JSON file: what was written, where, when, and what the org showed." aria-label="Download this entry as a file">⬇</button><button class="sftk-th-icon sftk-th-del" data-th-del="${esc(e.id)}" title="Delete this entry from the list. Nothing in Salesforce is changed${canUndo ? '; its Undo goes with it' : ''}." aria-label="Delete this entry">🗑</button>`}</span>
       </div>
       <div class="sftk-th-what">
         ${!what.length ? '<div>— nothing was written</div>'
@@ -66,7 +84,7 @@
           : `<details class="sftk-th-more"><summary>${okN === what.length ? `all ${what.length} steps verified by re-reading the org` : `${okN} of ${what.length} steps verified`} — show them</summary>${what.map(line).join('')}</details>`}
         ${said ? `<div class="sftk-th-said">${esc(said)}</div>` : ''}
       </div>
-      ${e.toolUndo && (e.toolUndo.none || e.toolUndo.done) ? `<div class="sftk-th-foot">${e.toolUndo.none ? `↩ no undo — ${esc(e.toolUndo.none)}` : ''}${e.toolUndo.done ? `↩ ${e.toolUndo.done.ok ? 'undone and verified' : 'undo attempted — not every step confirmed'} on ${esc(e.toolUndo.done.at)}` : ''}</div>` : ''}
+      ${why ? `<div class="sftk-th-foot">${esc(why)}</div>` : ''}
     </div>`;
   }
 
@@ -74,14 +92,30 @@
   // (the modal re-opens itself; an inline list just redraws).
   async function render(host, tab, after, subject) {
     if (!host) return 0;
-    const list = await entriesFor(tab, subject);
+    const every = await entriesFor(tab, subject);
     host.setAttribute('data-sftk-th', tab);
-    if (!list.length) { host.innerHTML = ''; return 0; }
-    const all = _showAll.has(tab);
+    const inModal = host.id === 'sftkThModalList';
+    const list = inModal ? every.filter(e => matches(e, _find)) : every;
+    const cnt = inModal ? document.getElementById('sftkThCount') : null;
+    if (cnt) cnt.textContent = !every.length ? '' : list.length === every.length ? `${every.length.toLocaleString('en-US')} change${every.length === 1 ? '' : 's'}` : `${list.length.toLocaleString('en-US')} of ${every.length.toLocaleString('en-US')}`;
+    if (!every.length) { host.innerHTML = ''; return 0; }
+    if (!list.length) { host.innerHTML = '<div class="sftk-th-sub">Nothing here matches the filter.</div>'; return every.length; }
+    const all = _showAll.has(tab) || (inModal && !!_find.trim());
     const shown = all ? list : list.slice(0, SHOWN);
     host.innerHTML = `${shown.map(cardHtml).join('')}
       ${list.length > shown.length ? `<button class="btn btn-sm btn-secondary" data-th-more="1">Show all ${list.length}</button>` : ''}`;
     host.querySelector('[data-th-more]')?.addEventListener('click', () => { _showAll.add(tab); render(host, tab, after, subject); });
+    // 🗑 on a card: asked on the card itself, then only that entry leaves the list
+    host.querySelectorAll('[data-th-del]').forEach(b => b.addEventListener('click', () => { _askDel = b.dataset.thDel; render(host, tab, after, subject); }));
+    host.querySelector('[data-th-del-no]')?.addEventListener('click', () => { _askDel = ''; render(host, tab, after, subject); });
+    host.querySelector('[data-th-del-yes]')?.addEventListener('click', async ev => {
+      const id = ev.currentTarget.dataset.thDelYes; _askDel = '';
+      ev.currentTarget.disabled = true;
+      const gone = typeof sftkHistoryRemove === 'function' ? await sftkHistoryRemove(id) : false;
+      _said.delete(id);
+      if (!gone) say(tab, '⚠ That entry was not found in the list any more.', true);
+      else render(host, tab, after, subject);      // the storage event redraws the window too; this is for a page without it
+    });
     host.querySelectorAll('[data-th-report]').forEach(b => b.addEventListener('click', () => {
       const e = list.find(x => x.id === b.dataset.thReport); if (!e) return;
       const blob = new Blob([JSON.stringify(sftkHistoryReport(e), null, 2)], { type: 'application/json' });
@@ -100,7 +134,7 @@
       if (!r.cancelled) _said.set(id, r.text);
       if (typeof after === 'function') after(r); else render(host, tab, after, subject);
     }));
-    return list.length;
+    return every.length;
   }
 
   // ── ⬇ Back up / ⬆ Restore (owner 2026-11-16: "and a way for users to backup their activity … along with undo") ──
@@ -175,12 +209,23 @@
   async function open(tab) {
     const t = tab || _tab; if (!t || typeof showModal !== 'function') return;
     if (t !== '*' && !sftkHistoryTabLabel(t)) return;
-    showModal(`<div class="modal-header">🧾 ${t === '*' ? 'Toolkit changes — back up, restore, clear' : `History — ${esc(sftkHistoryTabLabel(t))}`}</div>
+    showModal(`<div class="sftk-th-top">
+        <div class="sftk-th-top-t"><span class="sftk-th-top-name">🧾 ${t === '*' ? 'Toolkit changes' : `Activity — ${esc(sftkHistoryTabLabel(t))}`}</span><span class="sftk-th-count" id="sftkThCount"></span></div>
+        <button type="button" class="sftk-cf-x" id="sftkThClose" aria-label="Close" title="Close">✕</button>
+      </div>
+      <div class="sftk-th-tools">
+        <input type="search" class="sftk-th-find" id="sftkThFind" placeholder="Filter — a name, a kind, an org…" aria-label="Filter the list" autocomplete="off" spellcheck="false">
+        <span class="sftk-th-acts"><button class="btn btn-sm btn-secondary" id="sftkThBackup" style="display:none" title="${TIP_BACKUP}">⬇ Back up</button><button class="btn btn-sm btn-secondary" id="sftkThRestore" title="${TIP_RESTORE}">⬆ Restore a backup</button><button class="btn btn-sm btn-secondary sftk-th-clear" id="sftkThClear" style="display:none" title="${TIP_CLEAR}">🗑 Clear all</button></span>
+      </div>
       <div class="sftk-th-intro">${t === '*' ? 'Every change made with a Toolkit tool, newest first. Deployments are in Data Studio › History.' : 'Every change this tool made, newest first. A change made by another tool is in that tool; deployments are in Data Studio › History.'}</div>
-      <div id="sftkThModalNote">${noteHtml(t)}</div><div class="sftk-th-list sftk-th-modal" id="sftkThModalList"></div>
-      <div class="modal-actions sftk-th-actions"><span class="sftk-th-acts"><button class="btn btn-secondary" id="sftkThBackup" style="display:none" title="${TIP_BACKUP}">⬇ Back up</button><button class="btn btn-secondary" id="sftkThRestore" title="${TIP_RESTORE}">⬆ Restore a backup</button><button class="btn btn-secondary sftk-th-clear" id="sftkThClear" style="display:none" title="${TIP_CLEAR}">🗑 Clear activity</button></span><button class="btn btn-secondary" id="sftkThClose">Close</button></div>`);
+      <div id="sftkThModalNote">${noteHtml(t)}</div><div class="sftk-th-list sftk-th-modal" id="sftkThModalList"></div>`);
     const box = document.getElementById('modalBox'); if (box) box.style.width = 'min(860px, 94vw)';
     document.getElementById('sftkThClose')?.addEventListener('click', () => closeModal());
+    const find = document.getElementById('sftkThFind');
+    if (find) {
+      find.value = _find;
+      find.addEventListener('input', () => { _find = find.value; _askDel = ''; render(document.getElementById('sftkThModalList'), t, () => open(t)); });
+    }
     const n = await render(document.getElementById('sftkThModalList'), t, () => open(t));
     const cb = document.getElementById('sftkThClear');
     // the confirmation uses the page's one dialog: this list steps aside, and comes back when it was not cleared

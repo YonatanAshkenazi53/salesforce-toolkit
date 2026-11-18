@@ -43,7 +43,9 @@ describe('the confirmation and the disabled undo say it', () => {
   });
   it('a disabled undo prints its reason next to the button — the feed, History, the tool list', () => {
     expect(read('sftk-feed.js')).toContain('${st.disabled && st.title ? `<span class="sftk-feed-why">${esc(st.title)}</span>` : \'\'}');
-    expect(read('sftk-toolhistory.js')).toContain('${st.disabled && st.title ? `<span class="sftk-th-why">${esc(st.title)}</span>` : \'\'}');
+    // the tool's own window (2026-11-18): no dead button — the reason is the one line under the card
+    expect(read('sftk-toolhistory.js')).toContain("(st.show && st.disabled) ? String(st.title || '') : '';");
+    expect(read('sftk-toolhistory.js')).toContain('${why ? `<div class="sftk-th-foot">${esc(why)}</div>` : \'\'}');
     const H = read('studio-history.js');
     expect(H).toContain('${st.disabled && st.title ? `<span class="ds-hist-why">${esc(st.title)}</span>` : \'\'}');
     expect(H).toContain('${undoSt.disabled && undoSt.title ? `<span class="ds-hist-why">${esc(undoSt.title)}</span>` : \'\'}');

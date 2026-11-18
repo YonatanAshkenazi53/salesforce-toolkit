@@ -513,6 +513,24 @@ async function sftkHistoryClearTab(tab) {
   if (keep.length !== list.length) await chrome.storage.local.set({ sftk_history: keep });
   return list.length - keep.length;
 }
+// One entry removed (owner 2026-11-18, in the Activity window: "and allow deletion of individuals"). Only the record
+// goes, and with it that change's ↩ Undo — nothing in an org is touched. → true when an entry was removed.
+async function sftkHistoryRemove(id) {
+  const key = String(id || '');
+  if (!key) return false;
+  if (_sftkHistStudio()) {
+    const i = _history.findIndex(h => h && h.id === key);
+    if (i < 0) return false;
+    _history.splice(i, 1); await storageSaveHistory();
+    return true;
+  }
+  let list = [];
+  try { list = (await chrome.storage.local.get('sftk_history')).sftk_history || []; } catch (_) { list = []; }
+  const keep = list.filter(h => !(h && h.id === key));
+  if (keep.length === list.length) return false;
+  await chrome.storage.local.set({ sftk_history: keep });
+  return true;
+}
 // ── A backup file of one tool's History, WITH its undo (owner 2026-11-16: "and a way for users to backup their
 // activity … along with undo") ──────────────────────────────────────────────────────────────────────────────────
 // The file is the entries as they are stored — the earlier state each ↩ Undo writes back is inside the entry — so a

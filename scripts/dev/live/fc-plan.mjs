@@ -97,13 +97,49 @@ export default async function (h) {
   const fixed = await h.eval(`[...document.querySelectorAll('#fcResults .fc-item-fixed')].map(e => e.querySelector('.fc-item-name').textContent + ' → ' + ((e.querySelector('.fc-item-ok') || {}).textContent || '').slice(0, 90))`);
   for (const f of fixed) h.log('  done:', f);
   h.log('history entries made:', (await histLen(h)) - hist0);
+  // the tool's Activity window: everything that acts is on top, a card can be deleted (asked on the card)
+  await h.eval(`(() => { window.sftkToolHistoryOpen('fields'); return true; })()`);
+  await h.waitFor("!!document.querySelector('#sftkThModalList .sftk-th-card')", 30000, 200);
+  await h.sleep(400);
+  h.log('activity:', await h.eval(`document.getElementById('sftkThCount').textContent + ' | top buttons: ' + [...document.querySelectorAll('.sftk-th-tools button')].filter(b => b.style.display !== 'none').map(b => b.textContent.trim()).join(' · ')`));
+  await both(h, TAG + '-7-activity');
+  await h.eval(`(() => { document.querySelector('#sftkThModalList [data-th-del]').click(); return true; })()`);
+  await h.sleep(300);
+  h.log('delete asks:', await h.eval(`(document.querySelector('.sftk-th-ask') || {}).textContent || ''`));
+  await both(h, TAG + '-8-activity-delete');
+  await h.eval(`(() => { document.querySelector('[data-th-del-no]').click(); return true; })()`);
+  await h.eval(`(() => { const f = document.getElementById('sftkThFind'); f.value = 'lookup'; f.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  await h.sleep(400);
+  h.log('filter "lookup":', await h.eval(`document.getElementById('sftkThCount').textContent`));
+  await h.eval(`(() => { document.getElementById('sftkThClose').click(); return true; })()`);
+  await h.sleep(400);
   if (process.env.UNDO === '0') return;
   // ↩ Undo all takes every change of the run back (the list is scanned again afterwards)
   await h.waitFor("!!document.getElementById('fcUndoAllBtn')", 60000, 300);
+  // the header carries ↩ Undo all too; it is the one pressed here
+  await h.waitFor("!!document.querySelector('.fc-undoall-top')", 30000, 300);
+  await h.eval(`(() => { document.getElementById('fcFixEvery').scrollIntoView({ block: 'center' }); return true; })()`);
+  h.log('header:', await h.eval(`document.getElementById('fcFixEvery').innerText.replace(/\s+/g, ' ')`));
+  await both(h, TAG + '-9-header-undo');
   h.log('undo-all bar:', await h.eval(`document.getElementById('fcUndoAll').innerText.replace(/\s+/g, ' ')`));
-  await h.eval(`(() => { document.getElementById('fcUndoAllBtn').click(); return true; })()`);
+  await h.eval(`(() => { document.querySelector('.fc-undoall-top').click(); return true; })()`);
   await h.waitFor("!!document.getElementById('sftkConfirmGo')", 30000, 200);
   await h.sleep(400);
+  // which ones: every change has its tick; the button follows
+  const us = () => h.eval(`(() => ({ count: document.getElementById('fcUsCount').textContent, go: document.getElementById('sftkConfirmGo').textContent.trim(), off: document.getElementById('sftkConfirmGo').disabled, rows: [...document.querySelectorAll('.fc-us-row')].map(r => r.innerText.replace(/\s+/g, ' ').trim()) }))()`);
+  const u0 = await us();
+  h.log('undo dialog:', u0.count, '·', u0.go, '· rows:', JSON.stringify(u0.rows));
+  await both(h, TAG + '-10-undo-dialog');
+  await h.eval(`(() => { document.querySelector('.fc-us-tick').click(); return true; })()`);
+  const u1 = await us();
+  h.log('one unticked:', u1.count, '·', u1.go);
+  if (u1.go === u0.go) throw new Error('FAILED: the button must say how many are ticked');
+  await h.eval(`(() => { document.getElementById('fcUsNone').click(); document.getElementById('sftkConfirmAck').click(); return true; })()`);
+  await h.sleep(200);
+  const u2 = await us();
+  h.log('none ticked, acknowledged:', u2.go, '· button off:', u2.off);
+  if (!u2.off) throw new Error('FAILED: nothing ticked must keep the button off');
+  await h.eval(`(() => { document.getElementById('sftkConfirmAck').click(); document.getElementById('fcUsAll').click(); return true; })()`);
   await h.eval(`(() => { const a = document.getElementById('sftkConfirmAck'); if (a && !a.checked) a.click(); document.getElementById('sftkConfirmGo').click(); return true; })()`);
   await h.waitFor("!!document.querySelector('#fcUndoAll .sftk-prog')", 30000, 100);
   await h.eval(`(() => { document.getElementById('fcUndoAll').scrollIntoView({ block: 'center' }); return true; })()`);
