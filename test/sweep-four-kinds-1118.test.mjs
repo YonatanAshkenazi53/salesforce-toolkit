@@ -36,3 +36,20 @@ describe('the four kinds', () => {
     expect(Object.keys(r.byType).sort()).toEqual(['CleanDataService', 'Scontrol']);
   });
 });
+
+// owner 2026-11-18 ("why we missed them?" → "Go"): the regular scan lists a Lightning web component that only NAMES
+// the field under 👀, as the kind LwcText — the same bundle as LightningComponentBundle to the engine.
+// Live on npc2 (scripts/dev/live/fc-lwctext.mjs, fixture lwc/sftkKindText): listed under 👀, Salesforce accepts the
+// delete, 🔍 shows 2 files / 3 lines, 🗑 deleted and verified, ↩ Undo put it back.
+describe('an LWC that only names the field', () => {
+  const M = extractFunctions('sftk-mdapi.js', ['sftkMdDeleteSpec', '_sftkMdDeleteTable', 'sftkMdCodeWays', 'sftkMdBundleFiles', '_sftkPkgXml', 'sftkMdEscape', '_sftkApiVer']);
+  it('is the same bundle to the engine: read, replaced, edited, deleted — and put back under its real type name', () => {
+    expect(M.sftkMdDeleteSpec('LwcText')).toMatchObject({ bundle: 'lwc', tooling: 'LightningComponentBundle', mdType: 'LightningComponentBundle' });
+    expect(M.sftkMdCodeWays('LwcText')).toEqual({ replace: true, edit: true, remove: false });
+    const files = M.sftkMdBundleFiles('LwcText', 'sftkKindText', [{ path: 'lwc/sftkKindText/sftkKindText.js', source: 'x' }], { apiVersion: 62, isExposed: false });
+    const pkg = files.find(f => f.name === 'package.xml').text;
+    expect(pkg).toContain('<name>LightningComponentBundle</name>');
+    expect(pkg).not.toContain('LwcText');
+    expect(files.some(f => f.name === 'lwc/sftkKindText/sftkKindText.js-meta.xml' && f.text.includes('<LightningComponentBundle '))).toBe(true);
+  });
+});

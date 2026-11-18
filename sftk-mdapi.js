@@ -603,6 +603,9 @@ function _sftkMdDeleteTable() {
   ApexPage:                { code: 'Markup', folder: 'pages',      suffix: 'page',      what: 'Visualforce page',      tooling: 'ApexPage',      metaTag: 'ApexPage' },
   ApexComponent:           { code: 'Markup', folder: 'components', suffix: 'component', what: 'Visualforce component', tooling: 'ApexComponent', metaTag: 'ApexComponent' },
   LightningComponentBundle: { bundle: 'lwc',  what: 'Lightning web component', tooling: 'LightningComponentBundle' },
+  // the same bundle, listed by Field Cleaner under 👀 when it only NAMES the field as text (owner 2026-11-18: "why we
+  // missed them?") — read, replaced, edited and deleted exactly as the kind above
+  LwcText:                 { bundle: 'lwc',  what: 'Lightning web component', tooling: 'LightningComponentBundle', mdType: 'LightningComponentBundle' },
   AuraDefinitionBundle:    { bundle: 'aura', what: 'Aura component',           tooling: 'AuraDefinitionBundle' },
   // the three the user asked for by name ("צריך את כולם", 2026-11-07): a duplicate rule is deleted — and since
   // 2026-11-08 ("צריך להיות בכולם") edited — only from its own explicit buttons, the diff confirmed, a restore point
@@ -701,7 +704,8 @@ function sftkMdCodeFiles(type, name, source, apiVersion, extra) {
 function sftkMdBundleFiles(type, name, resources, meta) {
   const s = sftkMdDeleteSpec(type);
   if (!s || !s.bundle) return null;
-  const files = [{ name: 'package.xml', text: _sftkPkgXml([[type, name]]) }];
+  // s.mdType: the kind's name in the Metadata API — LwcText (a 👀 row of Field Cleaner) is a LightningComponentBundle
+  const files = [{ name: 'package.xml', text: _sftkPkgXml([[s.mdType || type, name]]) }];
   for (const r of (resources || [])) {
     const p = String(r.path || '');
     files.push({ name: p.startsWith(`${s.bundle}/`) ? p : `${s.bundle}/${name}/${p}`, text: String(r.source || '') });
@@ -716,16 +720,17 @@ function sftkMdBundleFiles(type, name, resources, meta) {
     try { return new TextDecoder().decode(Uint8Array.from(atob(t.replace(/\s+/g, '')), ch => ch.charCodeAt(0))); } catch { return t; }
   };
   const targets = m.targets ? [].concat(m.targets.target != null ? m.targets.target : []).filter(Boolean) : [];
-  const tc = type === 'LightningComponentBundle' ? tcXml(m.targetConfigs) : '';
+  const lwc = s.bundle === 'lwc';   // LightningComponentBundle, and its 👀 twin LwcText
+  const tc = lwc ? tcXml(m.targetConfigs) : '';
   const lwcMeta = () => (m.description ? `<description>${sftkMdEscape(m.description)}</description>` : '')
     + `<isExposed>${m.isExposed === true ? 'true' : 'false'}</isExposed>${m.masterLabel ? `<masterLabel>${sftkMdEscape(m.masterLabel)}</masterLabel>` : ''}`
     + (tc ? `<targetConfigs>${tc}</targetConfigs>` : '')
     + (targets.length ? `<targets>${targets.map(t => `<target>${sftkMdEscape(t)}</target>`).join('')}</targets>` : '');
-  const tag = type === 'LightningComponentBundle' ? 'LightningComponentBundle' : 'AuraDefinitionBundle';
-  const metaFile = type === 'LightningComponentBundle' ? `${s.bundle}/${name}/${name}.js-meta.xml` : `${s.bundle}/${name}/${name}.cmp-meta.xml`;
+  const tag = lwc ? 'LightningComponentBundle' : 'AuraDefinitionBundle';
+  const metaFile = lwc ? `${s.bundle}/${name}/${name}.js-meta.xml` : `${s.bundle}/${name}/${name}.cmp-meta.xml`;
   files.push({ name: metaFile, text: '<?xml version="1.0" encoding="UTF-8"?>\n'
     + `<${tag} xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>${sftkMdEscape(_sftkApiVer(m.apiVersion))}</apiVersion>`
-    + (type === 'LightningComponentBundle' ? lwcMeta() : (m.description ? `<description>${sftkMdEscape(m.description)}</description>` : ''))
+    + (lwc ? lwcMeta() : (m.description ? `<description>${sftkMdEscape(m.description)}</description>` : ''))
     + `</${tag}>` });
   return files;
 }

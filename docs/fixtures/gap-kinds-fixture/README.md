@@ -43,3 +43,9 @@ package data (CPQ, OmniStudio are not installed).
 `kinds-app/main/default/homePageComponents/SFTK_Kind_Home` — an HTML home page component whose body names
 `SFTK_Kind__c.Tag__c`. Deployed to npc2. The check-only delete of the field is ACCEPTED (does not block); 🧭 lists it
 under 👀 Home page components. Its `<width>` is `narrow` (`NarrowComponents` is refused by the deploy).
+
+### 2026-11-18 — an LWC that only names the field
+
+`kinds-app/main/default/lwc/sftkKindText` — its template (`field-name="Tag__c"`) and a string in its script name
+`SFTK_Kind__c.Tag__c`; there is no `@salesforce/schema` import. Deployed to npc2. The check-only delete of the field is
+ACCEPTED. The regular scan lists it under 👀 "Lightning Web Components (name the field as text)".

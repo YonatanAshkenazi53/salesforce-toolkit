@@ -518,6 +518,9 @@ function fcScopeLegs(scope, objApi) {
     leadMapping: blockers && ['lead', 'account', 'contact', 'opportunity'].includes(o),
     objectRules: blockers && (o === 'lead' || o === 'case'),
     reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions, validationRulesOff: mentions,
+    // 2026-11-18 (owner: "why we missed them?" → "Go"): a Lightning web component that only NAMES the field — in its
+    // HTML, or as text in its script — breaks after the delete and was never listed. Same one query as the lwc leg.
+    lwcText: mentions,
     emailTemplates: mentions,
     // 2026-11-11 (user: "תוסיף את אלו שעלולים לחסום אבל גם custom settings"): entitlement processes run on Case and
     // WorkOrder only; custom-setting RECORDS are data that can hold the field's name as text (👀)
@@ -559,7 +562,7 @@ function fcEstimateScanCalls(counts, scope, objApi) {
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
   // + the check-only delete (🩺 Ask Salesforce, every scan that looks for blockers): the deploy and its status read
   let now = 2 + (fcScopeNorm(scope) === 'mentions' ? 0 : 2) + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
-    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts, L.entitlements, L.customSettings].filter(Boolean).length
+    L.approvals, L.sharingRules, L.duplicateRules, (L.lwc || L.lwcText), L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts, L.entitlements, L.customSettings].filter(Boolean).length
     + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
@@ -2450,9 +2453,10 @@ const FieldCleaner = (() => {
     // into the component, so Salesforce refuses the delete. (A field named
     // only in the HTML does not block — live-tested.) One Tooling query reads
     // every JS source in the org.
-    if (L.lwc) try {
+    if (L.lwc || L.lwcText) try {
       msg('Scanning Lightning web components…');
-      const res = await sfQ("SELECT Id, FilePath, Source, LightningComponentBundleId, LightningComponentBundle.DeveloperName, LightningComponentBundle.MasterLabel FROM LightningComponentResource WHERE Format = 'js'", true);
+      // every script — and, for the 👀 pass, every template too
+      const res = await sfQ(`SELECT Id, FilePath, Source, LightningComponentBundleId, LightningComponentBundle.DeveloperName, LightningComponentBundle.MasterLabel FROM LightningComponentResource WHERE ${L.lwcText ? "Format IN ('js', 'html')" : "Format = 'js'"}`, true);
       const want = new RegExp(`@salesforce/schema/${objLc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.${fieldLc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9_])`, 'i');
       const seenBundle = new Set();
       for (const r of (res?.records || [])) {
@@ -2461,7 +2465,21 @@ const FieldCleaner = (() => {
         const bid = r.LightningComponentBundleId || r.Id;
         if (seenBundle.has(bid)) continue;
         seenBundle.add(bid);
-        add('LightningComponentBundle', bid, r.LightningComponentBundle?.MasterLabel || r.LightningComponentBundle?.DeveloperName || r.FilePath);
+        if (L.lwc) add('LightningComponentBundle', bid, r.LightningComponentBundle?.MasterLabel || r.LightningComponentBundle?.DeveloperName || r.FilePath);
+      }
+      // 👀 a component that names the field as a whole word in a script or a template, and does not import it: the
+      // delete goes through, the component breaks where it reads the field. One row per component.
+      if (L.lwcText) {
+        const named = new RegExp(`(?<![A-Za-z0-9_])${fieldLc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i');
+        const seenText = new Set();
+        for (const r of (res?.records || [])) {
+          if (!/\.(js|html)$/i.test(String(r.FilePath || ''))) continue;
+          const bid = r.LightningComponentBundleId || r.Id;
+          if (seenBundle.has(bid) || seenText.has(bid)) continue;         // an importer is a blocker, listed above
+          if (!named.test(String(r.Source || ''))) continue;
+          seenText.add(bid);
+          add('LwcText', bid, r.LightningComponentBundle?.MasterLabel || r.LightningComponentBundle?.DeveloperName || r.FilePath);
+        }
       }
     } catch (e) { miss('Lightning web components', e); }
 
@@ -2927,6 +2945,9 @@ const FieldCleaner = (() => {
                       note: 'The rule’s record filter names the field — active or not, Salesforce refuses the delete. ✂ / ⇄ / ✎ edit the filter here (the diff shown first, a restore point kept), 🗑 delete the rule, or edit it in Setup → Duplicate Management. Nothing switches a duplicate rule off or edits one behind a deployment.' },
     LightningComponentBundle: { icon: '⚡', label: 'Lightning Web Components', fixable: false, sev: 'blocker',
                       note: 'The component imports the field’s schema (@salesforce/schema). Remove the import in the code and deploy. A field named only in the HTML does not block — and is not listed.' },
+    LwcText:        { icon: '⚡', label: 'Lightning Web Components (name the field as text)', fixable: false, sev: 'silent',
+                      note: 'The component’s template or script names the field without importing it. Salesforce lets the delete through; the component then shows nothing there, or fails where it reads the field. ⇄ renames it in the code, ✎ edits it, 🗑 deletes the component.',
+                      replNote: 'The field’s name is renamed to {new} in every file of the component.' },
     AskNamed:       { icon: '🩺', label: 'Named by Salesforce', fixable: false, sev: 'blocker',
                       note: 'Salesforce refuses the delete over this, in its own words, and the scan did not find it. Clear it in Setup; Salesforce is asked again when the list is clear.' },
     AuraDefinitionBundle: { icon: '⚡', label: 'Aura Components', fixable: false, sev: 'blocker',
@@ -8139,6 +8160,7 @@ const FieldCleaner = (() => {
       SharingCriteriaRule: '/lightning/setup/SecuritySharing/home',
       DuplicateRule:  '/lightning/setup/DuplicateRules/home',
       LightningComponentBundle: '/lightning/setup/LightningComponentBundles/home',
+      LwcText: '/lightning/setup/LightningComponentBundles/home',
       CustomMetadataRecord: '/lightning/setup/CustomMetadata/home',
       CustomMetadataText: '/lightning/setup/CustomMetadata/home',
       EntitlementProcess: '/lightning/setup/EntitlementProcesses/home',
@@ -9000,7 +9022,7 @@ const FieldCleaner = (() => {
         verifyOf: (path, source) => ({ query: `SELECT Id, ${spec.code} FROM ${spec.tooling} WHERE Name = '${q(fullName)}'`, tooling: true, pick: 'records', where: { field: spec.code, equals: source, loose: true } }) };
     }
     let resources = [], verifyOf;
-    if (type === 'LightningComponentBundle') {
+    if (spec.bundle === 'lwc') {
       const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: `SELECT Id, FilePath, Source FROM LightningComponentResource WHERE LightningComponentBundleId = '${componentId}'` });
       if (!r || r.error) throw new Error(`the files of "${fullName}" could not be read (${_feText((r && r.error) || 'no answer')})`);
       resources = (r.records || []).filter(x => !/-meta\.xml$/.test(String(x.FilePath || ''))).map(x => ({ path: x.FilePath, file: String(x.FilePath || '').split('/').pop(), source: x.Source }));
