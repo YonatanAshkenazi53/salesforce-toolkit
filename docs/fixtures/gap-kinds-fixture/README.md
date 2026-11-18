@@ -37,3 +37,9 @@ Deployed to npc2: `sf project deploy start -o npc2 --source-dir kinds-app --test
 Not built yet: bots, Prompt Builder templates (both types exist in npc and npc2), a dashboard filter. Not possible in
 these orgs: CRM Analytics (no Wave types), territory rules (see above), Einstein Lead Scoring, field names held in
 package data (CPQ, OmniStudio are not installed).
+
+### 2026-11-18 — home page component (owner: "and add all the 4")
+
+`kinds-app/main/default/homePageComponents/SFTK_Kind_Home` — an HTML home page component whose body names
+`SFTK_Kind__c.Tag__c`. Deployed to npc2. The check-only delete of the field is ACCEPTED (does not block); 🧭 lists it
+under 👀 Home page components. Its `<width>` is `narrow` (`NarrowComponents` is refused by the deploy).

@@ -57,11 +57,14 @@ function sftkSweepHits(text, forms) {
 // containers of others. Folder kinds (Report, Dashboard, EmailTemplate,
 // Document) must be listed folder by folder; CustomObject's wildcard covers
 // custom objects only — standard objects are named from the org's describe.
+// 2026-11-18 (owner: "and add all the 4"): data integration rules (CleanDataService — field mappings), Embedded
+// Service configuration (pre-chat fields), home page components (HTML) and s-controls (code) are READ: each can
+// hold a field's name.
 function _sftkSweepSkip() {
   return new Set([
   'StaticResource', 'Document', 'ContentAsset', 'SiteDotCom', 'Certificate', 'InstalledPackage',
-  'Settings', 'EmbeddedServiceConfig', 'ManagedContentType', 'Audience', 'LightningBolt',
-  'Package', 'Scontrol', 'Portal', 'Letterhead', 'WaveDataflow', 'WaveDataset', 'WaveLens',
+  'Settings', 'ManagedContentType', 'Audience', 'LightningBolt',
+  'Package', 'Portal', 'Letterhead', 'WaveDataflow', 'WaveDataset', 'WaveLens',
   'WaveRecipe', 'WaveTemplateBundle', 'WaveXmd', 'DiscoveryAIModel', 'DiscoveryGoal', 'DiscoveryStory',
   'ExternalDataSource', 'ExternalServiceRegistration', 'NamedCredential', 'ExternalCredential',
   'SamlSsoConfig', 'AuthProvider', 'ConnectedApp', 'RemoteSiteSetting', 'CspTrustedSite',
@@ -70,9 +73,9 @@ function _sftkSweepSkip() {
   'ChatterExtension', 'Skill', 'LiveChatAgentConfig', 'LiveChatButton', 'LiveChatDeployment',
   'LiveChatSensitiveDataRule', 'PresenceUserConfig', 'PresenceDeclineReason', 'ServiceChannel',
   'ServicePresenceStatus', 'QueueRoutingConfig', 'CustomSite', 'CustomTab', 'CustomApplication',
-  'AppMenu', 'HomePageLayout', 'HomePageComponent', 'CustomPageWebLink', 'ProfilePasswordPolicy',
+  'AppMenu', 'HomePageLayout', 'CustomPageWebLink', 'ProfilePasswordPolicy',
   'ProfileSessionSetting', 'MutingPermissionSet', 'PermissionSetGroup', 'PlatformCachePartition',
-  'EventDelivery', 'EventSubscription', 'EclairGeoData', 'OauthCustomScope', 'CleanDataService',
+  'EventDelivery', 'EventSubscription', 'EclairGeoData', 'OauthCustomScope',
   'EmailServicesFunction', 'MyDomainDiscoverableLogin', 'LightningExperienceTheme', 'LightningMessageChannel',
   'NotificationTypeConfig', 'ProfileSearchLayouts', 'CustomNotificationType', 'ApexEmailNotifications',
   'IframeWhiteListUrlSettings', 'RedirectWhitelistUrl', 'StandardValueSet', 'StandardValueSetTranslation',
@@ -267,6 +270,11 @@ function sftkSweepKindTable() {
   Translations:           { label: 'Translations', sev: 'mention', why: 'the translated text goes with the field' },
   PlatformEventChannelMember: { label: 'Change Data Capture channels', sev: 'mention', why: 'the channel sends the field with every change event (an enriched field) — nothing stops the delete (check-only, live 2026-11-17); the events no longer carry it' },
   StaticResource:         { label: 'Static Resources', sev: 'mention', why: 'a script or data file names the field as text — nothing stops the delete, the page that loads the file breaks where it reads the field' },
+  // 2026-11-18 (owner: "and add all the 4") — none was put to a delete live; each is said as what it is: a mention
+  CleanDataService:       { label: 'Data integration rules', sev: 'mention', why: 'the rule maps the field to a data service — the mapping breaks when the field is gone' },
+  EmbeddedServiceConfig:  { label: 'Embedded Service (chat) configuration', sev: 'mention', why: 'the chat or messaging setup names the field (a pre-chat field) — the form loses it' },
+  HomePageComponent:      { label: 'Home page components', sev: 'mention', why: 'the component’s HTML names the field as text — it breaks where it reads it' },
+  Scontrol:               { label: 'S-controls', sev: 'mention', why: 'the s-control’s code names the field as text — it breaks where it reads it' },
   ExperienceBundle:       { label: 'Experience Cloud pages', sev: 'mention', why: 'the page or component names the field as text — it breaks where it reads it' },
   CustomLabel:            { label: 'Custom Labels', sev: 'mention', why: 'a label’s text holds the field’s name — nothing stops the delete' },
   DocText:                { label: 'Named only in descriptive text', sev: 'mention', why: 'the name stands only in a description, help text, label or message of the component — plain text Salesforce does not read as a reference; nothing stops the delete and nothing breaks, the text just goes stale' },
@@ -448,6 +456,10 @@ function sftkSweepKind(path, text, hit, forms) {
     case 'experiences': return K('ExperienceBundle', seg[1] || base, seg.slice(2).join('/'));
     case 'labels': return K('CustomLabel', base);
     case 'staticresources': return K('StaticResource', base);
+    case 'cleanDataServices': return K('CleanDataService', base);
+    case 'EmbeddedServiceConfig': return K('EmbeddedServiceConfig', base);
+    case 'homePageComponents': return K('HomePageComponent', base);
+    case 'scontrols': return K('Scontrol', base);
     case 'platformEventChannelMembers': return K('PlatformEventChannelMember', base);
     default: return K('Other', `${dir} › ${base}`);
   }
