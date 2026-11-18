@@ -49,3 +49,9 @@ under 👀 Home page components. Its `<width>` is `narrow` (`NarrowComponents` i
 `kinds-app/main/default/lwc/sftkKindText` — its template (`field-name="Tag__c"`) and a string in its script name
 `SFTK_Kind__c.Tag__c`; there is no `@salesforce/schema` import. Deployed to npc2. The check-only delete of the field is
 ACCEPTED. The regular scan lists it under 👀 "Lightning Web Components (name the field as text)".
+
+### 2026-11-18 — Apex that names the field only inside a string
+
+`kinds-app/main/default/classes/SFTK_Kind_Dyn` — `r.get('Tag__c')` and a SOQL string; nothing compiles against the
+field. Deployed to npc2. The check-only delete is ACCEPTED. The regular scan lists it under 👀 "Apex Classes (name the
+field in a string)". A SOSL search does not look inside class bodies (read live), so the scan reads them by Tooling.

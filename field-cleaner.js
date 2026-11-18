@@ -313,6 +313,33 @@ function fcCmtTypeApi(fullName) {
 // object): Object Manager's own "Search Layouts" link is …/MySearchLayouts/view; …/SearchLayouts/view draws an
 // empty panel on both (owner: "When i navigated to the search layout. it opened a blank screen"). PURE.
 function fcSearchLayoutsPage() { return 'MySearchLayouts'; }
+// Does this Apex source name the field INSIDE A STRING (dynamic SOQL, get('Field__c'), a field list) — the mentions
+// Salesforce's index does not know, because nothing compiles against them? Comments are not read. To keep another
+// object's same-named field out, the object must be named too: in the same string ("Obj.Field", "… FROM Obj"), or
+// anywhere in the code. PURE. → true | false
+function fcApexStringNames(body, objApi, fieldApi) {
+  const src = String(body == null ? '' : body), f = String(fieldApi || ''), o = String(objApi || '');
+  if (!src || !f) return false;
+  const strings = [];
+  let code = '';
+  for (let i = 0; i < src.length;) {
+    const c = src[i], d = src[i + 1];
+    if (c === '/' && d === '/') { const e = src.indexOf('\n', i); i = e < 0 ? src.length : e; continue; }
+    if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); i = e < 0 ? src.length : e + 2; continue; }
+    if (c === "'") {
+      let j = i + 1, t = '';
+      while (j < src.length && src[j] !== "'") { if (src[j] === '\\' && j + 1 < src.length) { t += src[j + 1]; j += 2; } else { t += src[j]; j++; } }
+      strings.push(t); i = j + 1; continue;
+    }
+    code += c; i++;
+  }
+  const word = w => new RegExp(`(?<![A-Za-z0-9_])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i');
+  const fRe = word(f), oRe = o ? word(o) : null;
+  const hits = strings.filter(s => fRe.test(s));
+  if (!hits.length) return false;
+  if (!oRe) return true;
+  return hits.some(s => oRe.test(s)) || strings.some(s => oRe.test(s)) || oRe.test(code);
+}
 // A change's title, split for a list about ONE field (owner 2026-11-18, on the ↩ Undo all dialog: "make the text more
 // readable … the actual component texts"). "✂ Paths — "SFTK Pkg Path" (Obj.Field__c removed)" → the kind, the
 // component's name, and what was done — the field's own name is left out: every line of the list is about it. PURE.
@@ -521,6 +548,8 @@ function fcScopeLegs(scope, objApi) {
     // 2026-11-18 (owner: "why we missed them?" → "Go"): a Lightning web component that only NAMES the field — in its
     // HTML, or as text in its script — breaks after the delete and was never listed. Same one query as the lwc leg.
     lwcText: mentions,
+    // Apex classes and triggers that name the field only inside a string (fcApexStringNames): up to 1,500 of each
+    apexText: mentions,
     emailTemplates: mentions,
     // 2026-11-11 (user: "תוסיף את אלו שעלולים לחסום אבל גם custom settings"): entitlement processes run on Case and
     // WorkOrder only; custom-setting RECORDS are data that can hold the field's name as text (👀)
@@ -562,7 +591,7 @@ function fcEstimateScanCalls(counts, scope, objApi) {
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
   // + the check-only delete (🩺 Ask Salesforce, every scan that looks for blockers): the deploy and its status read
   let now = 2 + (fcScopeNorm(scope) === 'mentions' ? 0 : 2) + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
-    L.approvals, L.sharingRules, L.duplicateRules, (L.lwc || L.lwcText), L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts, L.entitlements, L.customSettings].filter(Boolean).length
+    L.approvals, L.sharingRules, L.duplicateRules, (L.lwc || L.lwcText), L.apexText, L.apexText, L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts, L.entitlements, L.customSettings].filter(Boolean).length
     + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
@@ -2470,18 +2499,38 @@ const FieldCleaner = (() => {
       // 👀 a component that names the field as a whole word in a script or a template, and does not import it: the
       // delete goes through, the component breaks where it reads the field. One row per component.
       if (L.lwcText) {
-        const named = new RegExp(`(?<![A-Za-z0-9_])${fieldLc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i');
-        const seenText = new Set();
+        const wordRe = w => new RegExp(`(?<![A-Za-z0-9_])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i');
+        const named = wordRe(fieldLc), namesObj = wordRe(objLc);
+        // another object's same-named field is kept out: the component must name THIS object too, in any of its files
+        const by = new Map();   // bundle id → { field, obj, label }
         for (const r of (res?.records || [])) {
           if (!/\.(js|html)$/i.test(String(r.FilePath || ''))) continue;
           const bid = r.LightningComponentBundleId || r.Id;
-          if (seenBundle.has(bid) || seenText.has(bid)) continue;         // an importer is a blocker, listed above
-          if (!named.test(String(r.Source || ''))) continue;
-          seenText.add(bid);
-          add('LwcText', bid, r.LightningComponentBundle?.MasterLabel || r.LightningComponentBundle?.DeveloperName || r.FilePath);
+          if (seenBundle.has(bid)) continue;                               // an importer is a blocker, listed above
+          const b = by.get(bid) || { field: false, obj: false, label: r.LightningComponentBundle?.MasterLabel || r.LightningComponentBundle?.DeveloperName || r.FilePath };
+          const src = String(r.Source || '');
+          if (named.test(src)) b.field = true;
+          if (namesObj.test(src)) b.obj = true;
+          by.set(bid, b);
         }
+        for (const [bid, b] of by) if (b.field && b.obj) add('LwcText', bid, b.label);
       }
     } catch (e) { miss('Lightning web components', e); }
+
+    // 10a. Apex that names the field only inside a string (2026-11-18, owner: "Go"). Salesforce's index lists a class
+    // that COMPILES against the field; dynamic SOQL and get('Field__c') it does not know, and the delete goes through
+    // while the code fails at run time. The org's own classes and triggers are read — up to 1,500 of each; a larger
+    // org is told so, and the 🧭 full text scan reads them all.
+    if (L.apexText) for (const [real, kind, words] of [['ApexClass', 'ApexClassText', 'Apex classes'], ['ApexTrigger', 'ApexTriggerText', 'Apex triggers']]) try {
+      msg(`Reading ${words} for the field’s name in a string…`);
+      const res = await sfQ(`SELECT Id, Name, Body FROM ${real} WHERE NamespacePrefix = null ORDER BY Name LIMIT 1501`, true);
+      const rows = res?.records || [];
+      for (const r of rows.slice(0, 1500)) {
+        if (seen.has(`${real}|${String(r.Id || '').substring(0, 15)}`)) continue;      // Salesforce's index lists it already, as a blocker
+        if (fcApexStringNames(r.Body, obj, _selField.api)) add(kind, r.Id, r.Name);
+      }
+      if (rows.length > 1500) miss(`${words} (the field’s name in a string)`, new Error(`this org has more than 1,500 of its own — the first 1,500 by name were read; the full metadata text scan reads them all`));
+    } catch (e) { miss(`${words} (the field’s name in a string)`, e); }
 
     // 10b. Aura components (2026-11-10). Salesforce's index is supposed to return them and did not: live on npc it
     // returned NO row for a field that an Aura bundle's markup ({!v.account.Field__c}) and controller name, and
@@ -2948,6 +2997,12 @@ const FieldCleaner = (() => {
     LwcText:        { icon: '⚡', label: 'Lightning Web Components (name the field as text)', fixable: false, sev: 'silent',
                       note: 'The component’s template or script names the field without importing it. Salesforce lets the delete through; the component then shows nothing there, or fails where it reads the field. ⇄ renames it in the code, ✎ edits it, 🗑 deletes the component.',
                       replNote: 'The field’s name is renamed to {new} in every file of the component.' },
+    ApexClassText:  { icon: '☕', label: 'Apex Classes (name the field in a string)', fixable: false, sev: 'silent',
+                      note: 'The class names the field inside a string — dynamic SOQL, get(\'Field__c\') or a field list. Nothing compiles against it, so Salesforce lets the delete through; the code then fails when it runs. ⇄ renames it in the code, ✎ edits it, 🗑 deletes the class.',
+                      replNote: 'The field’s name is renamed to {new} in the class, strings included.' },
+    ApexTriggerText: { icon: '⚡', label: 'Apex Triggers (name the field in a string)', fixable: false, sev: 'silent',
+                      note: 'The trigger names the field inside a string. Salesforce lets the delete through; the trigger then fails when it runs. ⇄ renames it in the code, ✎ edits it, 🗑 deletes the trigger.',
+                      replNote: 'The field’s name is renamed to {new} in the trigger, strings included.' },
     AskNamed:       { icon: '🩺', label: 'Named by Salesforce', fixable: false, sev: 'blocker',
                       note: 'Salesforce refuses the delete over this, in its own words, and the scan did not find it. Clear it in Setup; Salesforce is asked again when the list is clear.' },
     AuraDefinitionBundle: { icon: '⚡', label: 'Aura Components', fixable: false, sev: 'blocker',
@@ -8161,6 +8216,8 @@ const FieldCleaner = (() => {
       DuplicateRule:  '/lightning/setup/DuplicateRules/home',
       LightningComponentBundle: '/lightning/setup/LightningComponentBundles/home',
       LwcText: '/lightning/setup/LightningComponentBundles/home',
+      ApexClassText: '/lightning/setup/ApexClasses/home',
+      ApexTriggerText: '/lightning/setup/ApexTriggers/home',
       CustomMetadataRecord: '/lightning/setup/CustomMetadata/home',
       CustomMetadataText: '/lightning/setup/CustomMetadata/home',
       EntitlementProcess: '/lightning/setup/EntitlementProcesses/home',

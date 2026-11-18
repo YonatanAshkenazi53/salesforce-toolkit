@@ -600,6 +600,10 @@ function _sftkMdDeleteTable() {
   FlexiPage:               { folder: 'flexipages',       suffix: 'flexipage',         what: 'Lightning page',             tooling: 'FlexiPage' },
   ApexClass:               { code: 'Body',   folder: 'classes',    suffix: 'cls',       what: 'Apex class',            tooling: 'ApexClass',     metaTag: 'ApexClass' },
   ApexTrigger:             { code: 'Body',   folder: 'triggers',   suffix: 'trigger',   what: 'Apex trigger',          tooling: 'ApexTrigger',   metaTag: 'ApexTrigger' },
+  // the same class / trigger, listed by Field Cleaner under 👀 when it names the field only inside a string
+  // (dynamic SOQL, get('Field__c')) — owner 2026-11-18: "Go". Read, replaced, edited and deleted as the kinds above.
+  ApexClassText:           { code: 'Body',   folder: 'classes',    suffix: 'cls',       what: 'Apex class',            tooling: 'ApexClass',     metaTag: 'ApexClass',   mdType: 'ApexClass' },
+  ApexTriggerText:         { code: 'Body',   folder: 'triggers',   suffix: 'trigger',   what: 'Apex trigger',          tooling: 'ApexTrigger',   metaTag: 'ApexTrigger', mdType: 'ApexTrigger' },
   ApexPage:                { code: 'Markup', folder: 'pages',      suffix: 'page',      what: 'Visualforce page',      tooling: 'ApexPage',      metaTag: 'ApexPage' },
   ApexComponent:           { code: 'Markup', folder: 'components', suffix: 'component', what: 'Visualforce component', tooling: 'ApexComponent', metaTag: 'ApexComponent' },
   LightningComponentBundle: { bundle: 'lwc',  what: 'Lightning web component', tooling: 'LightningComponentBundle' },
@@ -693,7 +697,7 @@ function sftkMdCodeFiles(type, name, source, apiVersion, extra) {
     + (!isApex && x.label ? `<label>${sftkMdEscape(x.label)}</label>` : '')
     + `</${s.metaTag}>`;
   return [
-    { name: 'package.xml', text: _sftkPkgXml([[type, name]]) },
+    { name: 'package.xml', text: _sftkPkgXml([[s.mdType || type, name]]) },   // the Metadata API's name: ApexClassText is an ApexClass
     { name: `${s.folder}/${name}.${s.suffix}`, text: String(source || '') },
     { name: `${s.folder}/${name}.${s.suffix}-meta.xml`, text: meta },
   ];

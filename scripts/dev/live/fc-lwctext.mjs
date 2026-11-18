@@ -1,6 +1,7 @@
 // LIVE, WRITES and takes it back: a Lightning web component that only NAMES the field (its template and a string in
 // its script — no @salesforce/schema import) is listed by the regular scan under 👀 (owner 2026-11-18: "what about
 // lwc and aura components … will they break?" · "why we missed them?" · "Go").
+//   GROUP=ApexClassText runs the same round on the Apex class that names the field only inside a string (classes/SFTK_Kind_Dyn)
 //   1  scan → the row "Lightning Web Components (name the field as text)", with 🔍 and 🗑; Salesforce accepts the delete
 //   2  🔍 → the component's files, the lines that name the field marked
 //   3  🗑 Delete, confirm → gone, verified by re-read;  ↩ Undo → the row is back
@@ -14,7 +15,7 @@ async function pick(h, inputSel, dropSel, api) {
   await h.eval(`(() => { const it = document.querySelector('${dropSel} .fc-dd-item[data-api="${api}"]'); it.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); return true; })()`);
   await h.sleep(800);
 }
-const G = '#fcGroup_LwcText';
+const G = process.env.GROUP ? '#fcGroup_' + process.env.GROUP : '#fcGroup_LwcText';
 const row = h => h.eval(`(() => { const g = document.querySelector('${G}'); const it = g && g.querySelector('.fc-item'); return it ? { sev: g.dataset.sev, head: (g.querySelector('.fc-group-hd, .fc-group-head, summary') || g).innerText.replace(/\\s+/g, ' ').slice(0, 160), fixed: it.classList.contains('fc-item-fixed'), text: it.innerText.replace(/\\s+/g, ' ').slice(0, 300) } : null; })()`);
 const confirm = async h => {
   await h.waitFor("!!document.getElementById('sftkConfirmGo')", 60000, 300); await h.sleep(400);

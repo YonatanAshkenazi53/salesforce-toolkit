@@ -53,3 +53,36 @@ describe('an LWC that only names the field', () => {
     expect(files.some(f => f.name === 'lwc/sftkKindText/sftkKindText.js-meta.xml' && f.text.includes('<LightningComponentBundle '))).toBe(true);
   });
 });
+
+// owner 2026-11-18 ("Go"), PART 2: Apex that names the field only inside a string. Live on npc2 (fixture
+// classes/SFTK_Kind_Dyn, GROUP=ApexClassText scripts/dev/live/fc-lwctext.mjs). Read live the same day: a SOSL search
+// does NOT look inside a class body (FIND {SFTK_Pkg_Tag__c} RETURNING ApexClass → nothing; by the class's name → found),
+// so the bodies are read through the Tooling API.
+describe('Apex that names the field only inside a string', () => {
+  const { fcApexStringNames: f } = extractFunctions('field-cleaner.js', ['fcApexStringNames']);
+  const O = 'SFTK_Kind__c', F = 'Tag__c', BS = String.fromCharCode(92);
+  it('dynamic SOQL and get(…) are found — with the object named in the string or anywhere in the code', () => {
+    expect(f("public class A { Object r(SObject s) { return s.get('Tag__c'); } String q() { return 'SELECT Id FROM SFTK_Kind__c'; } }", O, F)).toBe(true);
+    expect(f("class A { String q = 'SELECT Tag__c FROM SFTK_Kind__c'; }", O, F)).toBe(true);
+    expect(f("class A { SFTK_Kind__c k; String s = 'x Tag__c'; }", O, F)).toBe(true);
+    expect(f("class A { String s = 'tag__c sftk_kind__c'; }", O, F)).toBe(true);
+    expect(f("class A { SFTK_Kind__c k; String s = 'it" + BS + "'s Tag__c'; }", O, F)).toBe(true);   // an escaped quote stays inside the string
+  });
+  it('not another object’s same-named field, not compiled code, not a comment, not part of a longer name', () => {
+    expect(f("class A { String q = 'SELECT Tag__c FROM Other__c'; }", O, F)).toBe(false);
+    expect(f("class A { void m(SFTK_Kind__c k) { k.Tag__c = 'x'; } }", O, F)).toBe(false);
+    expect(f("class A { // 'Tag__c' on SFTK_Kind__c" + String.fromCharCode(10) + " /* 'Tag__c' SFTK_Kind__c */ }", O, F)).toBe(false);
+    expect(f("class A { String s = 'My_Tag__c SFTK_Kind__c'; }", O, F)).toBe(false);
+    expect(f(null, O, F)).toBe(false);
+    expect(f('x', O, '')).toBe(false);
+  });
+  it('is the same class to the engine, and goes back under its real type name', () => {
+    const M = extractFunctions('sftk-mdapi.js', ['sftkMdDeleteSpec', '_sftkMdDeleteTable', 'sftkMdCodeWays', 'sftkMdCodeFiles', '_sftkPkgXml', 'sftkMdEscape', '_sftkApiVer']);
+    expect(M.sftkMdDeleteSpec('ApexClassText')).toMatchObject({ code: 'Body', tooling: 'ApexClass', metaTag: 'ApexClass', mdType: 'ApexClass' });
+    expect(M.sftkMdDeleteSpec('ApexTriggerText')).toMatchObject({ code: 'Body', tooling: 'ApexTrigger', mdType: 'ApexTrigger' });
+    expect(M.sftkMdCodeWays('ApexClassText')).toEqual({ replace: true, edit: true, remove: false });
+    const files = M.sftkMdCodeFiles('ApexClassText', 'SFTK_Kind_Dyn', 'public class SFTK_Kind_Dyn {}', 62, {});
+    expect(files.find(x => x.name === 'package.xml').text).toContain('<name>ApexClass</name>');
+    expect(files.some(x => x.name === 'classes/SFTK_Kind_Dyn.cls')).toBe(true);
+  });
+});
