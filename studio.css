@@ -6937,3 +6937,7 @@ details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
 .sftk-cf-x { flex: 0 0 auto; margin: -4px -8px 0 4px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--subtext); font-size: 15px; line-height: 1; cursor: pointer; }
 .sftk-cf-x:hover { background: rgba(127,127,127,.18); color: var(--text); }
 .sftk-cf-x:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 1px; }
+
+/* who owns the record in both orgs — above the field compare (owner 2026-11-19) */
+.ds-dc-owner { font-size: 12.5px; color: var(--text); background: var(--surface2, rgba(127,127,127,.08)); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; line-height: 1.5; }
+.ds-dc-owner[hidden] { display: none; }

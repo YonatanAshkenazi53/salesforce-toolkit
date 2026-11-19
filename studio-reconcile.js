@@ -5009,6 +5009,40 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 
 // The per-source-record map for tgtOrgUrl, or null. Mirrors the engine's
 // reader exactly: any stored key resolving to the same org identity counts.
+// WHO OWNS THE RECORD, IN BOTH ORGS (owner 2026-11-19: "when you click data deployment record and look for the owner
+// field, we will not see who is the owner in the target" · "what about owners in the record?"). The owner is left out
+// of the field compare on purpose when the deployment does not copy owners (a different owner there is expected, and
+// listing it as a difference kept every record "changed" for ever) — so the window never said who owns the record.
+// It says it now, in one line above the fields, with what the deployment does about it. PURE.
+//   o: { src, tgt (owner names; '' = not read), mode: 'match' | 'skip', fallbackName, srcLabel, tgtLabel }
+function sftkOwnerLineText(o) {
+  const x = o || {}, src = String(x.src || ''), tgt = String(x.tgt || '');
+  if (!src && !tgt) return '';
+  const sl = x.srcLabel || 'the source', tl = x.tgtLabel || 'the target';
+  const who = `${src ? `${src} in ${sl}` : `not read in ${sl}`} · ${tgt ? `${tgt} in ${tl}` : `not read in ${tl}`}`;
+  if (x.mode !== 'match') return `${who}. This deployment does not copy owners — the record keeps ${tgt || 'its owner'} in ${tl}.`;
+  if (src && tgt && src.toLowerCase() === tgt.toLowerCase()) return `${who}. The same owner on both sides.`;
+  const fb = x.fallbackName ? `the fallback user ${x.fallbackName}` : 'no fallback user is set, so the owner there stays as it is';
+  return `${who}. This deployment matches owners: on ▶ Deploy the record is given the user in ${tl} that matches ${src || 'the source owner'} — when there is none, ${fb}.`;
+}
+// The two owners, read from the two orgs. A detail record of a master-detail has no owner of its own: then nothing.
+async function sftkOwnerLineFetch(prof, obj, srcId, tgtId) {
+  try {
+    const all = _buildAllSessions();
+    const one = async (url, id) => {
+      const sess = _resolveSession(url, all);
+      if (!sess || !sess.sid || !id) return '';
+      const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
+        query: `SELECT Owner.Name FROM ${obj} WHERE Id = '${String(id).replace(/[^A-Za-z0-9]/g, '')}' LIMIT 1` });
+      const r = q && !q.error && q.records && q.records[0];
+      return (r && r.Owner && r.Owner.Name) || '';
+    };
+    const [src, tgt] = await Promise.all([one(prof.sourceOrg, srcId), one(prof.targetOrg, tgtId)]);
+    const om = prof.ownerMapping || {};
+    return sftkOwnerLineText({ src, tgt, mode: om.mode === 'match' ? 'match' : 'skip', fallbackName: om.fallbackUserName || '',
+      srcLabel: orgLabel(prof.sourceOrg || ''), tgtLabel: orgLabel(prof.targetOrg || '') });
+  } catch (_) { return ''; }
+}
 // The field-by-field compare opens in a WIDE modal, never inside a column
 // (user 2026-09-16: "you can't see the field values because it's too
 // small"). Root and child rows share it. `prof` is the profile — or, for a
@@ -5030,6 +5064,7 @@ async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtField
   const body = box ? box.querySelector('.ds-dc-modal-body') : null;
   if (!body) return;
   if (canEdit) eid('dsDcEditVals')?.addEventListener('click', () => openEditor(''));
+  const ownerP = sftkOwnerLineFetch(prof, obj, srcId, tgtId);   // beside the fields: it never delays them
   const res = await fetchDriftRowDetail(prof, obj, srcId, tgtId, srcFields, tgtFields);
   if (!body.isConnected) return;   // closed while loading
   if (res.error) {
@@ -5044,7 +5079,8 @@ async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtField
   // target record — the refetch repaints from live values so a fixed field
   // never keeps showing as drifted.
   const paint = r => {
-    body.innerHTML = renderDriftCompareTable(r.srcRec, r.tgtRec, srcFields, tgtFields, r.lookupMap || {}, r.types || null, { selectable: true, editable: canEdit });
+    body.innerHTML = '<div class="ds-dc-owner" id="dsDcOwner" hidden></div>' + renderDriftCompareTable(r.srcRec, r.tgtRec, srcFields, tgtFields, r.lookupMap || {}, r.types || null, { selectable: true, editable: canEdit });
+    ownerP.then(text => { const el = body.querySelector('#dsDcOwner'); if (el && text) { el.textContent = `👤 Owner — ${text}`; el.hidden = false; } });
     // A synced record has no differing rows — then the matching fields ARE the
     // answer, so show them instead of a folded line (user 2026-09-21).
     if (!body.querySelector('.ds-dc-diff')) body.querySelector('details.ds-dc-fold')?.setAttribute('open', '');
