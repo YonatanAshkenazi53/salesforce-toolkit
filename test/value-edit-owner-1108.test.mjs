@@ -25,9 +25,9 @@ describe('the Owner row', () => {
     expect(VE).toContain("const ownerText = o => o ? `${o.queue ? '👥' : '👤'} ${o.name}${o.queue ? ' (queue)' : ''}` : null;");
     expect(VE).toContain('data-ve-row="OwnerId" data-ve-search="owner ownerid user queue"');
     expect(VE).toContain("const mapOn = !!(p.ownerMapping && p.ownerMapping.mode === 'match');");
-    expect(VE).toContain('you — the deployment’s owner mapping is off, so the source owner is not copied; pick a user or a queue here to say otherwise');
-    expect(VE).toContain('in ${tgtL} if there is one, else the deployment’s fallback owner, else you');
-    expect(VE).toContain("' — a queue is not matched by name'");
+    // 2026-11-19 (owner: "here you dont see who will be the user in the target"): the default is said by sftkVeOwnerWill,
+    // with the running user's NAME — test/value-edit-owner-will-1119
+    expect(VE).toContain("const dfl = 'Will belong to ' + sftkVeOwnerWill({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL });");
     expect(VE).toContain('data-ve-own-clear="1" title="Forget this pick — the owner is matched by name again">✕ back to matching</button>');
   });
   it('the search lists the queues that take this object and the active standard users of the target, each a pick', () => {

@@ -6949,3 +6949,11 @@ details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
 .ds-dep-pause-kindhd[data-kind="rule"] { --k: var(--c-warn-fg, #b75d00); }
 .ds-dep-pause-kindhd[data-kind="dupe"] { --k: var(--c-good-fg, #2e844a); }
 .ds-dep-pause-kindhd .ds-dep-pause-tabn { background: var(--k); color: var(--surface, #fff); font-weight: 700; }
+
+/* a record that is opening: the Toolkit's own loader, full size (owner 2026-11-19) */
+.ds-rec-opening { font-style: normal; padding: 28px 8px; display: flex; justify-content: center; }
+.ds-rec-opening .sftk-cat { width: 72px; height: 72px; }
+.ds-prog-hdr { display: flex; align-items: center; gap: 14px; }
+
+/* the record editor's Owner row says who the record will belong to (owner 2026-11-19) */
+.ds-ve-own-will { display: block; margin-top: 4px; font-size: 12px; color: var(--text); line-height: 1.45; }

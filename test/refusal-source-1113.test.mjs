@@ -68,7 +68,7 @@ describe('the run log, easier to read', () => {
   it('one card per refusal reason, moved to a verdict box at the top, the ragdoll in the header while it runs', () => {
     expect(RC).toContain("log.html(card, 'ds-prog-refusal');");
     expect(RC).toContain("const cards = [...prog.querySelectorAll('.ds-prog-refusal')];   // moved up, not copied");
-    expect(RC).toContain("window.sftkCatSvg('load', 26)");
+    expect(RC).toContain("window.sftkCatSvg('load', 44)");   // 2026-11-19: bigger, on the owner's word
     expect(RC).toContain("prog.querySelector('.ds-prog-cat')?.remove();");
   });
   it('the log sits under the Dry run / Deploy buttons, above the automation card; both fold and are remembered', () => {

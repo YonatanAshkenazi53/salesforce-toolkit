@@ -3021,7 +3021,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   };
   // the flying ragdoll in the header while the run goes (owner 2026-11-14: "i want the kitty there when inserting"),
   // and the log comes into view (owner 2026-11-14, on a dry run: "kinda hard to see whats going on and you need to scroll down")
-  const runCat = window.sftkCatSvg ? `<span class="ds-prog-cat">${window.sftkCatSvg('load', 26)}</span>` : '';
+  const runCat = window.sftkCatSvg ? `<span class="ds-prog-cat">${window.sftkCatSvg('load', 44)}</span>` : '';   // 44 (drawn at about 90 px by the header's own scale), not 26 (owner 2026-11-19: "kitty here is not big enough")
   if (prog) prog.innerHTML = PROBE ? `<div class="ds-prog-hdr">${runCat}🧪 Dry run — nothing is written</div>` : `<div class="ds-prog-hdr">${runCat}Transfer progress</div>`;
   try { prog?.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { /* a view without the log */ }
   const runBtn = eid('dsRecRunBtn'); if (runBtn) runBtn.disabled = true;
@@ -5059,7 +5059,7 @@ async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtField
       ${canEdit ? '<button class="ds-btn ds-btn-xs" id="dsDcEditVals" title="Every writable field of this record, with the value it is written with on ▶ Deploy — type a value to write it instead of the source&#39;s">✏ Edit values — all the record\'s fields</button>' : ''}
       <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button>
     </div>
-    <div class="ds-modal-body ds-dc-modal-body"><div class="ds-drift-compare-loading">Loading…</div></div>`);
+    <div class="ds-modal-body ds-dc-modal-body"><div class="ds-drift-compare-loading ds-rec-opening">${window.sftkCat ? window.sftkCat('Reading the record in both orgs…') : 'Loading…'}</div></div>`);
   const box = eid('dsModalBox');
   const body = box ? box.querySelector('.ds-dc-modal-body') : null;
   if (!body) return;

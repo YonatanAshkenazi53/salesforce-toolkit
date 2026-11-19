@@ -11,6 +11,36 @@
 // p: the deployment (for a child object a VIEW rooted at that node; node is the
 // real tree node, so a pick lands on the saved tree). srcIds: one id or many.
 // tgtId: the paired target record on a Changed row, else null. mode: 'ins'|'chg'.
+// WHO THE RECORD WILL BELONG TO, in words (owner 2026-11-19: "here you dont see who will be the user in the target").
+// The engine: owners are copied only when the deployment matches owners; then a USER is matched in the target, a
+// queue is not; with no match the deployment's fallback user gets it, and with none set the user who runs the
+// deployment does. PURE.
+//   o: { many, mapOn, src: { name, queue } | null, me (the running user's name in the target, '' = not read),
+//        fallbackName, tgtL }
+function sftkVeOwnerWill(o) {
+  const x = o || {}, tl = x.tgtL || 'the target';
+  const me = x.me ? `${x.me} (you — the user who runs the deployment)` : 'you — the user who runs the deployment';
+  const last = x.fallbackName ? `the fallback user ${x.fallbackName}` : me;
+  if (!x.mapOn) return x.many ? `${me}. This deployment does not copy owners.` : `${me}. This deployment does not copy owners — pick a user or a queue here to give the record to someone else.`;
+  if (x.many) return `each record’s owner, matched in ${tl} — and where there is no such user, ${last}.`;
+  if (x.src && !x.src.queue) return `the user in ${tl} that matches ${x.src.name} — and when there is no such user, ${last}.`;
+  return `${last}${x.src ? ' — a queue is not matched between orgs' : ''}.`;
+}
+// The name of the user who runs the deployment, in that org (one read per org per page; '' when it cannot be read).
+const _sftkVeMe = new Map();
+async function sftkVeRunningUser(sess) {
+  if (!sess || !sess.sid) return '';
+  const k = String(sess.orgUrl || '');
+  if (_sftkVeMe.has(k)) return _sftkVeMe.get(k);
+  let name = '';
+  try {
+    const u = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/oauth2/userinfo', _suppressError: true });
+    name = (u && !u.error && (u.name || u.preferred_username)) || '';
+    if (!name) { const c = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/data/v62.0/chatter/users/me', _suppressError: true }); name = (c && !c.error && (c.displayName || c.name)) || ''; }
+  } catch (_) { name = ''; }
+  if (name) _sftkVeMe.set(k, name);
+  return name;
+}
 async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onSaved, opts) {
   const ids = [...new Set((Array.isArray(srcIds) ? srcIds : [srcIds]).filter(Boolean))];
   if (!ids.length || !node) return;
@@ -21,7 +51,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
         ? `a value typed here is written to EVERY one of the ${ids.length.toLocaleString('en-US')} records, the same value on each — a field left empty keeps each record's own value; a lookup picked here points every record at that one ${esc(tgtL)} record`
         : `every writable field and lookup, with the value this record is written with in ${esc(tgtL)} — change any box and it is saved as you type; a record picked for a lookup is where it points`}</span>
       <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
-    <div class="ds-modal-body ds-dc-modal-body"><div id="dsValEdHost" class="ds-ve"><div class="ds-drift-compare-loading">Reading the fields…</div></div></div>`);
+    <div class="ds-modal-body ds-dc-modal-body"><div id="dsValEdHost" class="ds-ve"><div class="ds-drift-compare-loading ds-rec-opening">${window.sftkCat ? window.sftkCat('Reading the record…') : ''}</div><div class="ds-drift-compare-loading" hidden>Reading the fields…</div></div></div>`);
   const host = eid('dsValEdHost');
   if (!host) return;
   const all = _buildAllSessions();
@@ -172,6 +202,9 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
       </div></td></tr>`;
   };
   // the Owner row: the source's owner by name (a user or a queue), a search over the target's users and queues
+  // the user who runs the deployment, by name in the target — said on the Owner row
+  let runMe = '';
+  try { const all = (typeof _buildAllSessions === 'function') ? _buildAllSessions() : null; const ts = all && typeof _resolveSession === 'function' ? _resolveSession(p.targetOrg, all) : null; runMe = await sftkVeRunningUser(ts); } catch (_) { runMe = ''; }
   const ownerOf = rec => { const o = rec && rec.Owner; return o && o.Name != null ? { name: o.Name, queue: String(o.Type || '').toLowerCase() === 'queue' || /^00G/.test(String(rec.OwnerId || '')) } : null; };
   const ownerText = o => o ? `${o.queue ? '👥' : '👤'} ${o.name}${o.queue ? ' (queue)' : ''}` : null;
   const ownerRow = () => {
@@ -182,15 +215,12 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     // the engine (background.js): owners are never copied unless the deployment's owner mapping is on ('match'),
     // and then a USER is matched by name — a queue is not
     const mapOn = !!(p.ownerMapping && p.ownerMapping.mode === 'match');
-    const dfl = many ? (mapOn ? `each record’s owner matched by name in ${tgtL}, else the deployment’s fallback owner, else you` : 'you — the deployment’s owner mapping is off, so the source owners are not copied')
-      : !mapOn ? 'you — the deployment’s owner mapping is off, so the source owner is not copied; pick a user or a queue here to say otherwise'
-      : src && !src.queue ? `the user named ${src.name} in ${tgtL} if there is one, else the deployment’s fallback owner, else you`
-      : `the deployment’s fallback owner, else you${src ? ' — a queue is not matched by name' : ''}`;
+    const dfl = 'Will belong to ' + sftkVeOwnerWill({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL });
     const curName = cur && cur !== '__mixed__' ? nameOf(cur) : '';
     return `<tr class="ds-ve-row ds-ve-owner${cur && cur !== '__mixed__' ? ' ds-ve-row-on' : ''}" data-ve-row="OwnerId" data-ve-search="owner ownerid user queue"><th scope="row">Owner<div class="ds-dep-muted">OwnerId · a user${ownerCanQueue ? ' or a queue' : ''} in ${esc(tgtL)}</div></th>${many ? '' : `<td class="ds-ve-src">${src ? val(ownerText(src)) : val(null)}</td>`}${many || !tgtId ? '' : `<td class="ds-ve-tgt">${tgtOwn ? val(ownerText(tgtOwn)) : val(null)}</td>`}<td class="ds-ve-cell">
       <div class="ds-ve-lkp ds-ve-own" data-ve-own="1" data-ve-own-dfl="${esc(dfl)}">
         <input type="search" class="ds-input ds-input-sm ds-ve-own-in${curName ? ' ds-ve-lkp-in-on' : ''}" value="${esc(curName)}" placeholder="🔍 pick a user${ownerCanQueue ? ' or a queue' : ''} in ${esc(tgtL)}…" aria-label="Pick the owner this record is written with in ${esc(tgtL)}"><div class="ds-lkpo-results ds-ve-own-res" style="display:none"></div>
-        <div class="ds-ve-lkp-cur">${cur === '__mixed__' ? '<span class="ds-dep-muted">different picks per record</span>' : cur ? `<span class="ds-ve-lkp-pick">✓ owner: <b>${esc(curName)}</b> <span class="ds-dep-muted">${esc(cur)}</span></span> <button class="ds-btn ds-btn-xs" data-ve-own-clear="1" title="Forget this pick — the owner is matched by name again">✕ back to matching</button>` : `<span class="ds-dep-muted">${esc(dfl)}</span>`}</div>
+        <div class="ds-ve-lkp-cur">${cur === '__mixed__' ? '<span class="ds-dep-muted">different picks per record</span>' : cur ? `<span class="ds-ve-lkp-pick">✓ owner: <b>${esc(curName)}</b> <span class="ds-dep-muted">${esc(cur)}</span></span> <button class="ds-btn ds-btn-xs" data-ve-own-clear="1" title="Forget this pick — the owner is matched by name again">✕ back to matching</button>` : `<span class="ds-ve-own-will">${esc(dfl)}</span>`}</div>
       </div></td></tr>`;
   };
   const piiNote = p.piiPolicy && Object.values(p.piiPolicy).some(Boolean) ? ' A field the PII policy covers keeps its masked value — the policy wins.' : '';
@@ -327,7 +357,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
       const tr = box.closest('tr');
       box.querySelector('.ds-ve-lkp-cur').innerHTML = id
         ? `<span class="ds-ve-lkp-pick">✓ owner: <b>${esc(name)}</b> <span class="ds-dep-muted">${esc(id)}</span></span> <button class="ds-btn ds-btn-xs" data-ve-own-clear="1" title="Forget this pick — the owner is matched by name again">✕ back to matching</button>`
-        : `<span class="ds-dep-muted">${esc(box.dataset.veOwnDfl || '')}</span>`;
+        : `<span class="ds-ve-own-will">${esc(box.dataset.veOwnDfl || '')}</span>`;
       inp.value = id ? name : ''; inp.classList.toggle('ds-ve-lkp-in-on', !!id);
       if (tr) tr.classList.toggle('ds-ve-row-on', !!id);
       box.querySelector('[data-ve-own-clear]')?.addEventListener('click', async () => {

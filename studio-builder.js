@@ -16,6 +16,9 @@ function openProfileBuilder(existingProfile) {
         // excludes it automatically (an org is never its own target).
         sourceOrg: (typeof currentSourceOrg === 'function' ? currentSourceOrg() : (_workingPair.src || '')),
         targetOrg: _workingPair.tgt || '',
+        // owners: the same user in the target when there is one, else the user who runs the deployment (no fallback
+        // user is set) — the owner's rule, 2026-11-19. Only a NEW deployment starts this way.
+        ownerMapping: { mode: 'match', fallbackUserId: null, fallbackUserName: null, matching: bldOwnerMatchingFromControls(['Email', 'Name'], { emailLower: true, trim: true }) },
         // Diff configuration — drives the "is record X already in target?"
         // signal in the Pick Records modal + the "drift" summary on cards.
         // matchField is the field used as cross-org record identity (since
@@ -136,8 +139,8 @@ function renderBuilder() {
         </label>
         <div class="ds-builder-owner-ctls">
           <select id="dsProfileOwnerMode" class="ds-select" aria-label="How record owners transfer">
-            <option value="skip"  ${p.ownerMapping?.mode !== 'match' ? 'selected' : ''}>Don't copy owners — the target assigns its default (the running user)</option>
-            <option value="match" ${p.ownerMapping?.mode === 'match' ? 'selected' : ''}>Match owners in the target; unmatched → a fallback user</option>
+            <option value="match" ${p.ownerMapping?.mode === 'match' ? 'selected' : ''}>Keep the same owner — the matching user in the target; when there is none, the fallback user, else you</option>
+            <option value="skip"  ${p.ownerMapping?.mode !== 'match' ? 'selected' : ''}>Don't copy owners — every record belongs to you (the user who runs the deployment)</option>
           </select>
           <!-- display: is still an inline style on these two. The owner-mode
                change handler shows/hides them with el.style.display, so the
@@ -145,7 +148,7 @@ function renderBuilder() {
                [hidden] here would leave them hidden when the handler cleared
                the inline value. -->
           <select id="dsProfileOwnerFallback" class="ds-select" aria-label="Fallback user for unmatched owners" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
-            <option value="">${p.ownerMapping?.fallbackUserId ? esc(p.ownerMapping.fallbackUserName || 'saved fallback user') : '— fallback user (loads from target org) —'}</option>
+            <option value="">${p.ownerMapping?.fallbackUserId ? esc(p.ownerMapping.fallbackUserName || 'saved fallback user') : '— no fallback: you (the user who runs the deployment) —'}</option>
           </select>
         </div>
         ${(() => {
