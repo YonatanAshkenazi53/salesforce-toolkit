@@ -15,6 +15,7 @@ extensions containing root files that start with `_`).
 
 ## 1.1.0 — 2026-11-04
 
+- **Field Cleaner: a clearer done line** (2026-11-20). After a fix, the row shows what was done as a green chip (Deleted, Removed, Replaced), then what happened in plain words, then a small mark when the change was read back from the org. A row that was undone, or where nothing had to change, shows a quiet chip. A run now shows its count once, under the bar.
 - **Field Cleaner rows are lighter and line up** (2026-11-17). Every row now ends with a Setup link that opens that kind in Salesforce Setup. The actions sit in fixed columns (Replace, Remove, Delete, view, Setup), the buttons have no boxes, and the delete button just says Delete.
 - **Every confirmation closes with an X** (2026-11-17). Each confirmation window has a close button in its top corner. In a Remove all or Replace all walk it replaces the Pause button: closing the window leaves the walk waiting, and Continue goes on from the same item.
 - **Rows that cannot be removed keep their name** (2026-11-17). A Field Cleaner row with a note saying Remove is not possible lost its name and showed its buttons on the left. The name and buttons now stay on one line and the note sits under them.

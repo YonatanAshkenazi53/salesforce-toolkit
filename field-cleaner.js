@@ -421,6 +421,17 @@ function fcUndoRowParts(title, subject) {
 //   ⇄ where a replacement is picked and the row can take it → ✂ where the component works without the field →
 //   🗑 only for a row that BLOCKS the delete and is of a kind that holds no logic of its own → else it is left.
 // Automation and code (a flow, Apex, a rule) are never picked for deletion: the owner picks that on the row. PURE.
+// A done label ("✅ Deleted — the Apex class is gone — verified by re-reading the org") in its parts: the verb, what
+// happened, and whether it was re-read from the org. A label with no short verb in front is all detail under "Done". PURE.
+function fcDoneParts(label) {
+  const t = String(label || '').replace(/^[\s✅↩✓]+/u, '').trim();
+  const parts = t.split(/\s+—\s+/).filter(Boolean);
+  let verified = false;
+  if (parts.length > 1 && /^(put back, )?verified by re-reading the org\.?$/i.test(parts[parts.length - 1])) { verified = true; const last = parts.pop(); if (/^put back/i.test(last)) parts.push('put back'); }
+  const short = parts.length && parts[0].length <= 24 && parts[0].split(/\s+/).length <= 3 && !/[.:]/.test(parts[0]);
+  const verb = short ? parts.shift() : 'Done';
+  return { verb, detail: parts.join(' — '), verified };
+}
 function fcPlanDefault(kinds, type, sev) {
   const k = Array.isArray(kinds) ? kinds : [];
   if (k.includes('replace')) return 'replace';
@@ -1711,7 +1722,7 @@ const FieldCleaner = (() => {
   function _planOutcome(row) {
     const item = eid(`fcItem_${row.id}`);
     if (!item) return { ok: false, text: 'the row is no longer on the page' };
-    if (item.classList.contains('fc-item-fixed')) return { ok: true, text: (item.querySelector('.fc-item-ok')?.childNodes[0]?.textContent || 'Done').replace(/^✅s*/, '').trim() };
+    if (item.classList.contains('fc-item-fixed')) return { ok: true, text: (item.querySelector('.fc-item-ok')?.dataset.label || 'Done').replace(/^✅\s*/, '').trim() };
     const e = [...item.querySelectorAll('.fc-item-err')].pop() || item.querySelector('.fc-item-pre');
     if (!e) return { ok: false, text: 'nothing was changed' };
     const c = e.cloneNode(true); c.querySelectorAll('a, button').forEach(x => x.remove());
@@ -5124,7 +5135,7 @@ const FieldCleaner = (() => {
     if (!r || r.cancelled) return;
     const item = eid(`fcItem_${componentId}`);
     if (!r.ok) { appendInlineError(componentId, `The undo did not finish — ${r.text || 'no answer'}`); return; }
-    if (item) { const ok = item.querySelector('.fc-item-ok'); if (ok) ok.textContent = `↩ Undone — ${r.text || 'put back, verified by re-reading the org'}`; item.querySelector('.fc-item-undo')?.remove(); }
+    if (item) { const ok = item.querySelector('.fc-item-ok'); if (ok) { const l = `↩ Undone — ${r.text || 'put back, verified by re-reading the org'}`; ok.dataset.label = l; ok.innerHTML = _okHtml(l, true); item.classList.add('fc-item-undone'); } item.querySelector('.fc-item-undo')?.remove(); }
     // what the page lists is from before the undo: scan again, so nothing shown is assumed
     const scan = eid('fcScanBtn');
     if (scan && !scan.disabled && subj === _fcSubject()) scan.click();
@@ -5391,6 +5402,12 @@ const FieldCleaner = (() => {
   // one line per fact).
   // did marking this row done change the org? (a row that was only settled — "nothing uses the field here" — did not)
   function _fixedRowChanged(label) { return !/^✅ (Nothing uses the field here|No version of this flow references)/.test(String(label || '')); }
+  // The done line, drawn (owner 2026-11-20: "can we make the success line more satisfying to look at"): the verb as a
+  // green chip, what happened in plain text, and "verified" as its own small mark — instead of one dim green sentence.
+  function _okHtml(label, undone) {
+    const p = fcDoneParts(label), same = !undone && !_fixedRowChanged(label);   // a row that was only settled changed nothing: a quiet chip
+    return `<span class="fc-ok-chip${undone || same ? ' fc-ok-chip-undo' : ''}"><span class="fc-ok-tick">${undone ? '↩' : '✓'}</span>${esc(same ? 'Nothing to do' : p.verb)}</span>${p.detail ? `<span class="fc-ok-what">${esc(p.detail)}</span>` : ''}${p.verified ? '<span class="fc-ok-ver" title="After the change the Toolkit read the component again from the org, and it shows the change">verified in the org</span>' : ''}`;
+  }
   function markFixed(componentId, label = '✅ Done', extraLinksHtml = '', detailHtml = '') {
     const item = eid(`fcItem_${componentId}`);
     if (!item) return;
@@ -5404,7 +5421,7 @@ const FieldCleaner = (() => {
     if (changed && _lastScan) _lastScan.cleared = true;   // the next ask gives Salesforce time to catch up
     item.innerHTML = `
       <span class="fc-item-name">${esc(name)}</span>
-      <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>${changed ? '<button type="button" class="btn btn-secondary btn-sm fc-item-undo" title="Takes this change back — it asks first, each step is re-read from the org, and the list is scanned again">↩ Undo</button>' : ''}${detailHtml}`;
+      <span class="fc-item-ok" data-label="${esc(label)}">${_okHtml(label)}${extraLinksHtml}</span>${changed ? '<button type="button" class="btn btn-secondary btn-sm fc-item-undo" title="Takes this change back — it asks first, each step is re-read from the org, and the list is scanned again">↩ Undo</button>' : ''}${detailHtml}`;
     item.querySelector('.fc-item-undo')?.addEventListener('click', ev => undoRow(componentId, ev.currentTarget));
     // Close any open XML inspector for this item
     const xmlPanel = eid(`fcXml_${componentId}`);

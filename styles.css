@@ -5992,8 +5992,21 @@ body.sftk-dark .fc-badge-del { background: #4a1b1f; color: #ffb4b0; border-color
 }
 .fc-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
 .fc-item-btns { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.fc-item-ok    { font-size: 11px; color: #2e7d32; }
-.fc-item-fixed { opacity: .65; }
+/* the done line: a chip for the verb, plain words for what happened, a small mark for "verified" (owner 2026-11-20) */
+.fc-item-ok    { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 8px; max-width: 72%; font-size: 12px; color: var(--text); text-align: right; }
+.fc-ok-chip    { display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px 2px 4px; border-radius: 999px; font-weight: 700; font-size: 11.5px; white-space: nowrap;
+                 background: var(--c-good-bg); color: var(--c-good-fg); border: 1px solid var(--c-good-border); }
+.fc-ok-tick    { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--c-good-fg); color: var(--c-good-bg); font-size: 10.5px; line-height: 1; animation: fc-ok-pop .38s cubic-bezier(.2, 1.6, .4, 1) both; }
+.fc-ok-what    { color: var(--text); opacity: .86; line-height: 1.4; }
+.fc-ok-ver     { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--c-good-fg); white-space: nowrap; opacity: .9; }
+.fc-ok-ver::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.fc-ok-chip-undo { background: transparent; color: var(--text-muted, var(--text)); border-color: var(--border); }
+.fc-ok-chip-undo .fc-ok-tick { background: var(--border); color: var(--text); }
+.fc-item-fixed { border-color: var(--c-good-border); box-shadow: inset 3px 0 0 var(--c-good-fg); padding-left: 13px; }
+.fc-item-fixed .fc-item-name { opacity: .6; }
+.fc-item-fixed.fc-item-undone { border-color: var(--border); box-shadow: none; }
+@keyframes fc-ok-pop { from { transform: scale(0); } to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .fc-ok-tick { animation: none; } }
 /* Honest disclosure of dependency types we can't scan affordably */
 .fc-unscanned-note {
   margin: 6px 0 10px;
