@@ -64,3 +64,11 @@ field in a string)". A SOSL search does not look inside class bodies (read live)
   `<columns>SFTK_Kind__c.Tag__c</columns>`. Read live: `Kind__r.Tag__c` and `Kind__c.Tag__c` are refused; Salesforce
   returns the column as `01Ibm00000EVKon.Tag__c` and refuses THAT on a deploy.
 Both deployed to npc2. Neither blocks the delete; the regular scan lists both under 👀.
+
+### 2026-11-19 — a prompt template that merges the field (BLOCKS)
+
+`kinds-app/main/default/genAiPromptTemplates/SFTK_Kind_Prompt` — a flex template (`einstein_gpt__flex`) with one input
+`SOBJECT://SFTK_Kind__c` and the merge field `{!$Input:Kind.Tag__c}`. Deployed to npc2 with no model to copy from — the
+XML above is one Salesforce accepts. The check-only delete of the field is REFUSED: "This custom field is referenced
+elsewhere in salesforce.com. : Generative AI Prompt Template Version - 3vN…". `GenAiPromptTemplate` is not an sObject
+(SOQL and Tooling: "sObject type 'GenAiPromptTemplate' is not supported").

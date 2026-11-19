@@ -594,6 +594,10 @@ function _sftkMdDeleteTable() {
   ApprovalProcess:         { folder: 'approvalProcesses', suffix: 'approvalProcess',  what: 'approval process' },
   ServiceChannel:          { folder: 'serviceChannels',   suffix: 'serviceChannel',   what: 'service channel' },   // 2026-11-11: its secondary routing priority field blocks, live
   EntitlementProcess:      { folder: 'entitlementProcesses', suffix: 'entitlementProcess', what: 'entitlement process' },   // 2026-11-11: blocks the delete, live
+  // an Agentforce / Prompt Builder template whose text merges the field (owner 2026-11-19: "what about agentforce
+  // components"). Read live the same day (npc2): Salesforce REFUSES the field's delete over it — "referenced elsewhere
+  // … Generative AI Prompt Template Version". No sObject of its own: listed and read through the Metadata API.
+  GenAiPromptTemplate:     { folder: 'genAiPromptTemplates', suffix: 'genAiPromptTemplate', what: 'prompt template' },
   RestrictionRule:         { folder: 'restrictionRules', suffix: 'rule',              what: 'scoping or restriction rule', tooling: 'RestrictionRule' },
   CustomMetadataRecord:    { mdType: 'CustomMetadata',   folder: 'customMetadata',    suffix: 'md',               what: 'custom metadata record' },
   CustomMetadataText:      { mdType: 'CustomMetadata',   folder: 'customMetadata',    suffix: 'md',               what: 'custom metadata record' },   // the same record, held as plain text (a mention, not a blocker)
@@ -1609,6 +1613,25 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       xml = r.xml; how.push(`${plural(r.n, 'mapping line')} now ${nf}`);
       break;
     }
+    case 'GenAiPromptTemplate': {
+      // a merge field reads an INPUT's field: {!$Input:Name.Field}; the input's object is its <definition>
+      // (SOBJECT://Object). Only inputs of this object count — another input's same-named field is that object's.
+      const names = [];
+      _sftkMdWalk(xml, 'inputs', body => {
+        const def = String(sftkMdChildText(body, 'definition') || '').trim().toLowerCase();
+        if (def === `sobject://${String(objApi || '').toLowerCase()}`) { const ref = String(sftkMdChildText(body, 'referenceName') || '').trim(); if (ref) names.push(ref); }
+        return 'keep';
+      });
+      if (!nf) { refuse('a prompt cannot lose a merge field and keep its meaning — ⇄ Replace it with another field, ✎ edit the prompt, or 🗑 delete the template'); break; }
+      let n = 0;
+      for (const ref of [...new Set(names)]) {
+        const rx = new RegExp(`(\\{!\\$${ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.)${String(fieldApi).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\})`, 'gi');
+        xml = xml.replace(rx, (m, a, b) => { n++; return a + nf + b; });
+      }
+      if (!n) { refuse('no merge field of the prompt reads the field directly from an input of this object — ✎ edit the prompt, or change it in Prompt Builder'); break; }
+      how.push(`prompt: ${plural(n, 'merge field')} ${verb}`);
+      break;
+    }
     default:
       refuse('this kind is not edited here — 🗑 delete it, or edit it in Setup');
   }
@@ -1628,6 +1651,7 @@ function sftkMdEditWays(type) {
     AssignmentRule: 'rr', AutoResponseRule: 'rr', EscalationRule: 'rr', ApprovalProcess: 'rr', DuplicateRule: 'rr',
     CustomMetadataRecord: 'rr', CustomMetadataText: 'rr', LeadConvertSettings: 'rr',
     ListView: 'rr', CompactLayout: 'rr', QuickAction: 'rr', ValidationRuleInactive: 'r', PathAssistant: 'rr',
+    GenAiPromptTemplate: 'r',
   }[type];
   return t ? { remove: t === 'rr', replace: true } : null;
 }

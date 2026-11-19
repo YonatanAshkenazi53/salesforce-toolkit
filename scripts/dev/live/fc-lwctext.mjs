@@ -37,7 +37,7 @@ export default async function (h) {
   h.log('1 groups:', await h.eval(`[...document.querySelectorAll('#fcResults .fc-group')].map(g => g.id.replace('fcGroup_', '') + ':' + g.dataset.sev).join(', ')`));
   h.log('1 Salesforce:', await h.eval(`(document.getElementById('fcAskBox') || document.querySelector('.fc-ask') || {}).innerText ? (document.getElementById('fcAskBox') || document.querySelector('.fc-ask')).innerText.replace(/\\s+/g, ' ').slice(0, 200) : ''`));
   if (!r0) throw new Error('FAILED: the component that only names the field must be listed');
-  if (r0.sev === 'must') throw new Error('FAILED: it does not block — it belongs under 👀');
+  if (r0.sev === 'must' && process.env.MUST !== '1') throw new Error('FAILED: it does not block — it belongs under 👀');
   if (!/Delete/.test(r0.text) || !/Setup/.test(r0.text)) throw new Error('FAILED: the row needs its ways — ' + r0.text);
   await h.eval(`(() => { document.querySelector('${G}').scrollIntoView({ block: 'center' }); return true; })()`);
   await h.shot(h.shots + '/lwctext-1-row.png');

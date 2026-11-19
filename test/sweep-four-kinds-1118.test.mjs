@@ -3,6 +3,7 @@
 // field's name. Live on npc2 the same day (docs/fixtures/gap-kinds-fixture/kinds-app, home page component
 // SFTK_Kind_Home): 1,098 components read, the component listed under its own group; Salesforce accepts the delete.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { extractFunctions } from './extract.mjs';
 const S = extractFunctions('sftk-sweep.js', [
   'sftkSweepForms', 'sftkSweepHits', 'sftkSweepSections', '_sftkSweepSectionAt', 'sftkSweepKind', 'sftkSweepRun',
@@ -84,5 +85,33 @@ describe('Apex that names the field only inside a string', () => {
     const files = M.sftkMdCodeFiles('ApexClassText', 'SFTK_Kind_Dyn', 'public class SFTK_Kind_Dyn {}', 62, {});
     expect(files.find(x => x.name === 'package.xml').text).toContain('<name>ApexClass</name>');
     expect(files.some(x => x.name === 'classes/SFTK_Kind_Dyn.cls')).toBe(true);
+  });
+});
+
+// owner 2026-11-19: "Also what about agentforce components like form templates, actions, etc" → "Let's finish all
+// features.." — read live on npc2 (fixture genAiPromptTemplates/SFTK_Kind_Prompt): Salesforce REFUSES the field's
+// delete over a prompt template that merges it ("referenced elsewhere … Generative AI Prompt Template Version"), and
+// the type has no sObject to query. The regular scan lists it as a blocker; 🔍 / ✎ / ⇄ / 🗑 work on it
+// (GROUP=GenAiPromptTemplate MUST=1 scripts/dev/live/fc-lwctext.mjs: listed 🔒, inspected, deleted and verified, undone).
+describe('a prompt template that merges the field', () => {
+  const { fcPromptNamesField: p } = extractFunctions('field-cleaner.js', ['fcPromptNamesField']);
+  const M = new Function(`${readFileSync(new URL('../sftk-mdapi.js', import.meta.url), 'utf8')}
+return { sftkMdEditField, sftkMdDeleteSpec, sftkMdEditWays };`)();
+  const tpl = (obj, text) => `<developerName>P</developerName><masterLabel>P</masterLabel><templateVersions><content>${text}</content><inputs><apiName>Kind</apiName><definition>SOBJECT://${obj}</definition><referenceName>Input:Kind</referenceName></inputs></templateVersions>`;
+  it('is found when it has an input of the object and names the field', () => {
+    expect(p(tpl('SFTK_Kind__c', 'Tag is {!$Input:Kind.Tag__c}.'), 'SFTK_Kind__c', 'Tag__c')).toBe(true);
+    expect(p(tpl('Other__c', 'Tag is {!$Input:Kind.Tag__c}.'), 'SFTK_Kind__c', 'Tag__c')).toBe(false);
+    expect(p(tpl('SFTK_Kind__c', 'Name is {!$Input:Kind.Name}. My_Tag__c'), 'SFTK_Kind__c', 'Tag__c')).toBe(false);
+    expect(p('', 'SFTK_Kind__c', 'Tag__c')).toBe(false);
+  });
+  it('⇄ points the merge field at the new field; ✂ is refused with the reason; another input’s field is left', () => {
+    const x = tpl('SFTK_Kind__c', 'A {!$Input:Kind.Tag__c} B {!$Input:Other.Tag__c}');
+    const r = M.sftkMdEditField('GenAiPromptTemplate', x, 'SFTK_Kind__c', 'Tag__c', 'Tag2__c');
+    expect(r.refused).toBeFalsy();
+    expect(r.xml).toContain('{!$Input:Kind.Tag2__c}');
+    expect(r.xml).toContain('{!$Input:Other.Tag__c}');
+    expect(M.sftkMdEditField('GenAiPromptTemplate', x, 'SFTK_Kind__c', 'Tag__c', null).refused).toMatch(/cannot lose a merge field/);
+    expect(M.sftkMdEditWays('GenAiPromptTemplate')).toEqual({ remove: false, replace: true });
+    expect(M.sftkMdDeleteSpec('GenAiPromptTemplate')).toMatchObject({ folder: 'genAiPromptTemplates', suffix: 'genAiPromptTemplate', what: 'prompt template' });
   });
 });

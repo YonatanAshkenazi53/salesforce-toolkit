@@ -313,6 +313,15 @@ function fcCmtTypeApi(fullName) {
 // object): Object Manager's own "Search Layouts" link is …/MySearchLayouts/view; …/SearchLayouts/view draws an
 // empty panel on both (owner: "When i navigated to the search layout. it opened a blank screen"). PURE.
 function fcSearchLayoutsPage() { return 'MySearchLayouts'; }
+// Does a prompt template (its XML) read the field? It has an input of this object (<definition>SOBJECT://Object)
+// and names the field as a whole word. PURE.
+function fcPromptNamesField(xml, objApi, fieldApi) {
+  const s = String(xml || ''), o = String(objApi || ''), f = String(fieldApi || '');
+  if (!s || !o || !f) return false;
+  const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`<definition>\\s*SOBJECT://${esc(o)}\\s*</definition>`, 'i').test(s)) return false;
+  return new RegExp(`(?<![A-Za-z0-9_])${esc(f)}(?![A-Za-z0-9_])`, 'i').test(s);
+}
 // RELATED-LIST COLUMNS ON A PARENT'S LAYOUT (owner 2026-11-18/19: "Go" · "Continue please"). A parent's page layout
 // shows this object's records in a related list, and the field can be one of its columns: the delete goes through
 // and the column is gone. Is this related list one of objApi's records? A custom child is named "Child__c.Lookup__c";
@@ -588,6 +597,8 @@ function fcScopeLegs(scope, objApi) {
     flexiPages: true,
     matchingRules: blockers, workflowFieldUpdates: blockers, workflow: blockers, approvals: blockers,
     sharingRules: blockers, duplicateRules: blockers, lwc: blockers, aura: blockers, customMetadata: blockers,
+    // Agentforce / Prompt Builder templates: a merge field of the field BLOCKS the delete (live 2026-11-19)
+    promptTemplates: blockers,
     leadMapping: blockers && ['lead', 'account', 'contact', 'opportunity'].includes(o),
     objectRules: blockers && (o === 'lead' || o === 'case'),
     reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions, validationRulesOff: mentions,
@@ -642,7 +653,7 @@ function fcEstimateScanCalls(counts, scope, objApi) {
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
   // + the check-only delete (🩺 Ask Salesforce, every scan that looks for blockers): the deploy and its status read
   let now = 2 + (fcScopeNorm(scope) === 'mentions' ? 0 : 2) + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
-    L.approvals, L.sharingRules, L.duplicateRules, (L.lwc || L.lwcText), L.apexText, L.apexText, L.relatedLists, L.childListViews, L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts, L.entitlements, L.customSettings].filter(Boolean).length
+    L.approvals, L.sharingRules, L.duplicateRules, (L.lwc || L.lwcText), L.apexText, L.apexText, L.relatedLists, L.childListViews, L.promptTemplates, L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts, L.entitlements, L.customSettings].filter(Boolean).length
     + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
@@ -2635,6 +2646,18 @@ const FieldCleaner = (() => {
       } catch (e) { miss('list views of child objects', e); }
     }
 
+    // 10d. Prompt templates (2026-11-19). Salesforce refuses the delete over a template whose text merges the field
+    // ("referenced elsewhere … Generative AI Prompt Template Version"), and neither its index nor a query lists
+    // them (the type has no sObject) — they are listed and read through the Metadata API, ten at a time.
+    if (L.promptTemplates) try {
+      msg('Scanning prompt templates…');
+      const listed = (await mdList('GenAiPromptTemplate')).filter(x => x && x.fullName && !x.namespacePrefix);
+      if (listed.length) {
+        const recs = await mdRead('GenAiPromptTemplate', listed.map(x => x.fullName));
+        for (const rec of recs) if (fcPromptNamesField(rec.innerXml, obj, _selField.api)) add('GenAiPromptTemplate', rec.fullName, sftkMdChildText(rec.innerXml, 'masterLabel') || rec.fullName);
+      }
+    } catch (e) { miss('prompt templates', e); }
+
     // 10b. Aura components (2026-11-10). Salesforce's index is supposed to return them and did not: live on npc it
     // returned NO row for a field that an Aura bundle's markup ({!v.account.Field__c}) and controller name, and
     // Salesforce refused the delete over both. One Tooling query reads every Aura source in the org; a source that
@@ -3100,6 +3123,9 @@ const FieldCleaner = (() => {
     LwcText:        { icon: '⚡', label: 'Lightning Web Components (name the field as text)', fixable: false, sev: 'silent',
                       note: 'The component’s template or script names the field without importing it. Salesforce lets the delete through; the component then shows nothing there, or fails where it reads the field. ⇄ renames it in the code, ✎ edits it, 🗑 deletes the component.',
                       replNote: 'The field’s name is renamed to {new} in every file of the component.' },
+    GenAiPromptTemplate: { icon: '✨', label: 'Prompt Templates', fixable: false, sev: 'blocker',
+                      note: 'An Agentforce / Prompt Builder template merges the field into its prompt. Salesforce refuses the delete while it does (live-tested). ⇄ points the merge field at another field, ✎ edits the prompt, 🗑 deletes the template — or change it in Prompt Builder.',
+                      replNote: 'The merge field in the prompt reads {new} instead.' },
     LayoutRelatedList: { icon: '📋', label: 'Related-list columns (on a parent’s layout)', fixable: true, sev: 'silent',
                       note: 'A parent object’s page layout shows this object’s records in a related list, and the field is one of its columns. The delete goes through and the column is gone. ✂ takes the column out now.',
                       replNote: '{new} takes the column’s place in the related list.', doneLabel: '✅ Done' },
@@ -8393,6 +8419,7 @@ const FieldCleaner = (() => {
       LwcText: '/lightning/setup/LightningComponentBundles/home',
       ApexClassText: '/lightning/setup/ApexClasses/home',
       LayoutRelatedList: '/lightning/setup/ObjectManager/home',
+      GenAiPromptTemplate: '/lightning/setup/EinsteinPromptStudio/home',
       ApexTriggerText: '/lightning/setup/ApexTriggers/home',
       CustomMetadataRecord: '/lightning/setup/CustomMetadata/home',
       CustomMetadataText: '/lightning/setup/CustomMetadata/home',
