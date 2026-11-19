@@ -76,6 +76,79 @@ function sftkProgLine(st, now) {
   return parts.join(' · ');
 }
 
+// ONE ITEM'S OWN PROGRESS, in real time (owner 2026-11-20: "i want to see it fills up for every component that is
+// currently removed in real time. one after one with the real time progress"). A change to one component is three
+// things, in this order: it is READ from the org (and a restore point kept), it is CHANGED in Salesforce, and it is
+// READ AGAIN to verify. Which of the three a call to Salesforce belongs to follows from the call itself: a read
+// before the first write is the reading, a write is the change, a read after a write is the verifying. PURE.
+const SFTK_ITEM_LEGS = [
+  { key: 'read', label: 'Reading it from the org' },
+  { key: 'write', label: 'Changing it in Salesforce' },
+  { key: 'verify', label: 'Reading it again to verify' },
+];
+function sftkCallIsRead(type) { return /(_GET|QUERY|_READ|_LIST|DESCRIBE|RETRIEVE|VALIDATE|SESSIONS)/.test(String(type || '')); }
+function sftkStepOfCall(type, wrote) {
+  if (!/^SF_/.test(String(type || ''))) return '';             // not a call to Salesforce
+  if (!sftkCallIsRead(type)) return 'write';
+  return wrote > 0 ? 'verify' : 'read';
+}
+// the line next to an item's bar while it is in work
+function sftkItemLineText(leg, wrote, sec) {
+  const l = SFTK_ITEM_LEGS.find(x => x.key === leg);
+  if (!l) return 'Starting…';
+  return l.label + (leg === 'write' && wrote > 1 ? ` — change ${wrote}` : '') + (sec >= 2 ? ` · ${sftkProgFmtSec(sec)}` : '');
+}
+
+(function () {
+  'use strict';
+  // every call a tool sends to Salesforce is told here, as it starts — the trackers below listen
+  const watchers = new Set();
+  window.sftkBgNote = function (msg) { if (!watchers.size || !msg) return; watchers.forEach(w => { try { w(msg); } catch (_) { /* a tracker never breaks a call */ } }); };
+  // sftkItemTrack(listEl) → { start(label), end(ok, text), close() }: one row per item, each with its own three-part
+  // bar that fills as that item's calls go out; a finished row keeps its result, the next one opens under it.
+  window.sftkItemTrack = function (listEl) {
+    const e2 = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    let cur = null;
+    const paint = () => {
+      if (!cur || !cur.li.isConnected) return;
+      const idx = SFTK_ITEM_LEGS.findIndex(l => l.key === cur.leg);
+      cur.li.querySelectorAll('.sftk-it-seg').forEach((s, i) => { s.classList.toggle('done', i < idx); s.classList.toggle('now', i === idx); });
+      cur.li.querySelector('.sftk-it-line').textContent = sftkItemLineText(cur.leg, cur.wrote, (Date.now() - cur.legAt) / 1000);
+    };
+    const onCall = msg => {
+      if (!cur) return;
+      const k = sftkStepOfCall(msg.type, cur.wrote);
+      if (!k) return;
+      if (k === 'write') cur.wrote++;
+      if (k !== cur.leg) { cur.leg = k; cur.legAt = Date.now(); }
+      paint();
+    };
+    watchers.add(onCall);
+    const timer = setInterval(paint, 1000);
+    const h = {
+      start(label) {
+        if (cur) h.end(true, '');
+        const li = document.createElement('li');
+        li.className = 'sftk-it sftk-it-now';
+        li.innerHTML = `<span class="sftk-it-name">${e2(label)}</span><span class="sftk-it-bar">${SFTK_ITEM_LEGS.map(l => `<span class="sftk-it-seg" title="${e2(l.label)}"></span>`).join('')}</span><span class="sftk-it-line">Starting…</span>`;
+        if (listEl) { listEl.appendChild(li); try { li.scrollIntoView({ block: 'nearest' }); } catch (_) { /* not laid out */ } }
+        cur = { li, leg: '', wrote: 0, legAt: Date.now() };
+        return h;
+      },
+      end(ok, text) {
+        if (!cur) return h;
+        const li = cur.li; cur = null;
+        li.className = `sftk-it ${ok ? 'sftk-it-ok' : 'sftk-it-bad'}`;
+        li.querySelectorAll('.sftk-it-seg').forEach(s => { s.classList.remove('now'); s.classList.toggle('done', !!ok); });
+        li.querySelector('.sftk-it-line').textContent = (ok ? '✓ ' : '✕ ') + (text || (ok ? 'Done' : 'Not done'));
+        return h;
+      },
+      close() { watchers.delete(onCall); clearInterval(timer); cur = null; },
+    };
+    return h;
+  };
+})();
+
 (function () {
   'use strict';
   const STORE = 'sftkProgDur';

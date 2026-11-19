@@ -15,6 +15,7 @@ extensions containing root files that start with `_`).
 
 ## 1.1.0 — 2026-11-04
 
+- **Field Cleaner: each item shows its own progress** (2026-11-20). During All at once and Undo all, every item gets its own row under the main bar. Its three-part bar fills as the item is read from the org, changed in Salesforce and read again to verify, one item after the other. A finished row keeps its result; a refused one turns red and says why.
 - **Field Cleaner: a clearer done line** (2026-11-20). After a fix, the row shows what was done as a green chip (Deleted, Removed, Replaced), then what happened in plain words, then a small mark when the change was read back from the org. A row that was undone, or where nothing had to change, shows a quiet chip. A run now shows its count once, under the bar.
 - **Field Cleaner rows are lighter and line up** (2026-11-17). Every row now ends with a Setup link that opens that kind in Salesforce Setup. The actions sit in fixed columns (Replace, Remove, Delete, view, Setup), the buttons have no boxes, and the delete button just says Delete.
 - **Every confirmation closes with an X** (2026-11-17). Each confirmation window has a close button in its top corner. In a Remove all or Replace all walk it replaces the Pause button: closing the window leaves the walk waiting, and Continue goes on from the same item.

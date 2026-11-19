@@ -853,6 +853,7 @@ const FieldCleaner = (() => {
 
   // ── Background calls ───────────────────────────────────────
   function bgRaw(msg) {
+    if (typeof sftkBgNote === 'function') sftkBgNote(msg);   // an item's own progress listens (sftkItemTrack)
     return new Promise(resolve => {
       chrome.runtime.sendMessage(msg, resp => {
         resolve(resp || { error: chrome.runtime.lastError?.message || 'No response' });
@@ -1744,11 +1745,13 @@ const FieldCleaner = (() => {
     let prog = null;
     if (host) {
       host.className = 'fc-plan-run';
-      host.innerHTML = '<div class="fc-plan-run-prog"></div><button class="btn btn-secondary btn-sm fc-plan-stop" title="The item in work is finished; the ones after it are left as they are">⏹ Stop after this one</button>';
+      host.innerHTML = '<div class="fc-plan-run-prog"></div><ol class="sftk-it-list fc-plan-run-list"></ol><button class="btn btn-secondary btn-sm fc-plan-stop" title="The item in work is finished; the ones after it are left as they are">⏹ Stop after this one</button>';
       host.querySelector('.fc-plan-stop').addEventListener('click', ev => { if (_planRun) { _planRun.stop = true; ev.currentTarget.disabled = true; ev.currentTarget.textContent = 'Stopping after this one…'; } });
       if (typeof sftkProgress === 'function') prog = sftkProgress(host.querySelector('.fc-plan-run-prog'), { what: `Running ${todo.length} change${todo.length === 1 ? '' : 's'} for ${_fcSubject()}…`, key: 'fc-plan', orgUrl: _orgUrl, total: todo.length, unit: 'changes' });
       try { host.scrollIntoView({ block: 'center' }); } catch (_) { /* not laid out */ }
     }
+    // each item's own bar, one after the other, as its calls go out (owner 2026-11-20)
+    const track = host && typeof sftkItemTrack === 'function' ? sftkItemTrack(host.querySelector('.fc-plan-run-list')) : null;
     let at = 0;
     try {
       for (const row of todo) {
@@ -1759,16 +1762,19 @@ const FieldCleaner = (() => {
         // twice … so delete the upper one") — this line names the row being worked on
         _planBar(`<span class="fc-plan-prog">⚡ Running…</span>`);
         if (prog) prog.say(`${_PLAN_ICO[row.pick]} ${row.name}`);
+        if (track) track.start(`${_PLAN_ICO[row.pick]} ${row.name}`);
         const opt = row.opts.find(o => o.kind === row.pick);
-        if (!opt) { not.push({ row, text: 'that way is no longer offered on the row' }); continue; }
+        if (!opt) { not.push({ row, text: 'that way is no longer offered on the row' }); if (track) track.end(false, 'that way is no longer offered on the row'); continue; }
         try { await fixOne(row.type, row.id, row.name, fieldId, opt.swap, opt.way); }
         catch (e) { appendInlineError(row.id, e && e.message ? e.message : String(e)); }
         const o = _planOutcome(row);
         (o.ok ? done : not).push({ row, text: o.text });
+        if (track) { const dp = fcDoneParts(o.text); track.end(o.ok, o.ok && dp.verb !== 'Done' ? dp.verb + (dp.verified ? ' — verified in the org' : '') : o.text); }
         if (prog) prog.count(at, todo.length);
       }
     } finally {
       sftkConfirmPlanned(null);
+      if (track) track.close();
       try { if (prog) prog.done(); } catch (_) { /* gone */ }
       if (host) host.remove();
       const stoppedAt = _planRun.stop ? at : 0;
@@ -10238,26 +10244,28 @@ const FieldCleaner = (() => {
     if (!sure) return;
     const host = eid('fcUndoAll');
     _undoAllBusy = true;
-    host.innerHTML = '<div class="fc-undoall fc-undoall-run"><div class="fc-undoall-prog"></div><details class="fc-undoall-log" open><summary>What is being undone</summary><ol></ol></details></div>';
+    host.innerHTML = '<div class="fc-undoall fc-undoall-run"><div class="fc-undoall-prog"></div><details class="fc-undoall-log" open><summary>What is being undone</summary><ol class="sftk-it-list"></ol></details></div>';
     const ol = host.querySelector('ol');
     const prog = typeof sftkProgress === 'function'
       ? sftkProgress(host.querySelector('.fc-undoall-prog'), { what: `Undoing ${list.length} change${list.length === 1 ? '' : 's'} for ${subj}…`, key: 'fc-undo-all', orgUrl: _orgUrl, total: list.length, unit: 'changes' }) : null;   // full size, as the ⚡ run (owner 2026-11-17)
-    let li = null, res;
+    // each change's own bar, one after the other, as its calls go out (owner 2026-11-20)
+    const track = typeof sftkItemTrack === 'function' ? sftkItemTrack(ol) : null;
+    let res;
     try {
       res = await sftkHistoryUndoMany(list, {
         onStart: (i, n, e) => {
-          li = document.createElement('li'); li.className = 'fc-undoall-li fc-undoall-now';
-          li.textContent = `⏳ ${e.profileName}`; ol.appendChild(li); li.scrollIntoView({ block: 'nearest' });
+          if (track) track.start(`↩ ${e.profileName}`);
           if (prog) prog.say(`Undoing ${e.profileName}`);   // the count is the bar's own line, once
         },
         onEnd: (i, n, e, r) => {
-          if (li) { li.className = `fc-undoall-li ${r && r.ok ? 'fc-undoall-ok' : 'fc-undoall-bad'}`; li.textContent = `${r && r.ok ? '✅' : '❌'} ${e.profileName} — ${(r && r.text) || 'no answer'}`; }
+          if (track) track.end(!!(r && r.ok), (r && r.text) || 'no answer');
           if (prog) prog.count(i + 1, n);
         },
       });
     } catch (e) {
       res = { total: list.length, ran: 0, ok: 0, failed: [], stopped: String((e && e.message) || e) };
     } finally {
+      if (track) track.close();
       if (prog) prog.done();
       _undoAllBusy = false;
     }

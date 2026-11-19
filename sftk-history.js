@@ -275,6 +275,7 @@ async function sftkHistorySessionFor(orgUrl, send) {
 }
 
 function _sftkHistSend(msg) {
+  if (typeof sftkBgNote === 'function') sftkBgNote(msg);   // an item's own progress listens (sftkItemTrack)
   return new Promise(r => {
     try { chrome.runtime.sendMessage(msg, res => r(res || { error: (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'No response' })); }
     catch (e) { r({ error: (e && e.message) || String(e) }); }

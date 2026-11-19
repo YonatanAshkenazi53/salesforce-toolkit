@@ -7600,3 +7600,24 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-us-name { font-size: 13px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
 .fc-us-meta { font-size: 11.5px; color: var(--subtext); }
 .fc-us-row:has(.fc-us-tick:not(:checked)) .fc-us-name { font-weight: 400; color: var(--subtext); }
+
+/* one row per item of a run, each with its own three-part bar that fills as its calls go out (owner 2026-11-20) */
+.sftk-it-list { list-style: none; margin: 10px auto 0; padding: 0; max-width: 780px; max-height: 232px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; text-align: left; }
+.sftk-it { display: grid; grid-template-columns: minmax(0, 1.2fr) 132px minmax(0, 1.5fr); align-items: center; gap: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); font-size: 12px; color: var(--text); flex-shrink: 0; }
+.sftk-it-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.sftk-it-bar { display: flex; gap: 3px; }
+.sftk-it-seg { flex: 1; height: 6px; border-radius: 3px; background: var(--border); transition: background .3s; }
+.sftk-it-seg.done { background: var(--brand); }
+.sftk-it-seg.now { background: var(--brand); animation: fcScanPulse 1s ease-in-out infinite alternate; }
+.sftk-it-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; opacity: .85; }
+.sftk-it-now { border-color: var(--brand); }
+.sftk-it-ok .sftk-it-seg.done { background: var(--c-good-fg); }
+.sftk-it-ok .sftk-it-line { color: var(--c-good-fg); opacity: 1; }
+.sftk-it-bad { border-color: var(--c-critical-border); }
+.sftk-it-bad .sftk-it-line { color: var(--c-critical-fg); opacity: 1; white-space: normal; }
+/* in a run the list sits under the bar, full width; the stop stays beside the bar */
+.fc-plan-run { flex-wrap: wrap; }
+.fc-plan-run-list { flex: 1 1 100%; order: 3; max-width: none; margin-top: 4px; }
+.fc-undoall-log ol.sftk-it-list { padding-left: 0; max-width: none; }
+.sftk-it-ok .sftk-it-name, .sftk-it-bad .sftk-it-name { font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .sftk-it-seg.now { animation: none; } }
