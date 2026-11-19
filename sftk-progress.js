@@ -121,7 +121,7 @@ function sftkProgLine(st, now) {
     const el = document.createElement('div');
     el.className = `sftk-prog${opts.small ? ' sftk-prog-sm' : ''}`;
     el.setAttribute('data-mode', st.mode);
-    const cat = window.sftkCatSvg ? window.sftkCatSvg('load', opts.small ? 30 : 56) : '';
+    const cat = window.sftkCatSvg ? window.sftkCatSvg('load', opts.small ? 48 : 56) : '';
     el.innerHTML = `${cat}<div class="sftk-prog-msg">${esc(opts.what || 'Loading…')}</div>`
       + `<div class="sftk-prog-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div>`
       + `<div class="sftk-prog-line"></div>`

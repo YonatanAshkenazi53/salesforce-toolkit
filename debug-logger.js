@@ -424,7 +424,7 @@
 
   window.sftkCatSm = function (msg) {
     return '<div class="lp-robot-loading lp-robot-sm">' +
-           window.sftkCatSvg('load', 30) +
+           window.sftkCatSvg('load', 48) +
            '<div class="lp-robot-msg">' + msg + '</div></div>';
   };
 
