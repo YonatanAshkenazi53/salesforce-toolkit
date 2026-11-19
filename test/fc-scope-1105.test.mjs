@@ -47,10 +47,10 @@ describe('the scope', () => {
   it('the cost follows the scope: 24 fixed calls for everything, 16 for the blockers (both with the check-only delete: 2), 11 for the mentions; the fan-outs stay a "more if" until known', () => {
     const FAN = ['Lightning page in the org', 'list view on this object', 'create/update quick action on this object', '10 custom report types in the org', 'workflow rule, alert or outbound message on this object', '10 approval processes on this object', '10 duplicate rules on this object', '10 custom metadata records in the org (read up to 300)'];
     const CSF = 'custom setting in the org (the first 30)';   // 2026-11-11: custom-setting records are read for the field's name (👀)
-    expect(F.fcEstimateScanCalls(null)).toEqual({ now: 29, known: false, moreIf: [...FAN, CSF] });   // +1 on 2026-11-10: every email template's text is read; +1: the object's search layouts
+    expect(F.fcEstimateScanCalls(null)).toEqual({ now: 29, known: false, moreIf: [...FAN, CSF, 'page layout of a parent object'] });   // +1 on 2026-11-10: every email template's text is read; +1: the object's search layouts
     expect(F.fcEstimateScanCalls(null, 'blockers')).toEqual({ now: 16, known: false, moreIf: FAN.filter(w => !/list view|quick action|report types/.test(w)) });
-    expect(F.fcEstimateScanCalls(null, 'mentions')).toEqual({ now: 17, known: false, moreIf: [...FAN.slice(0, 4), CSF] });
-    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, customSettings: 0 }, 'mentions')).toEqual({ now: 68, known: true, moreIf: [] });
+    expect(F.fcEstimateScanCalls(null, 'mentions')).toEqual({ now: 17, known: false, moreIf: [...FAN.slice(0, 4), CSF, 'page layout of a parent object'] });
+    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, customSettings: 0, parentLayouts: 0 }, 'mentions')).toEqual({ now: 68, known: true, moreIf: [] });
     expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 2, approvals: 1, duplicateRules: 1, customMetadata: 0 }, 'blockers')).toEqual({ now: 60, known: true, moreIf: [] });   // 13 + 40 pages + 2 + 1 + 1
     // the lead mapping and the Lead/Case rules are read only for those objects: +1 and +3 fixed calls
     expect(F.fcEstimateScanCalls(null, 'blockers', 'Account').now).toBe(17);

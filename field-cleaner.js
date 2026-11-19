@@ -594,7 +594,7 @@ function fcScopeLegs(scope, objApi) {
     // 2026-11-18 (owner: "why we missed them?" → "Go"): a Lightning web component that only NAMES the field — in its
     // HTML, or as text in its script — breaks after the delete and was never listed. Same one query as the lwc leg.
     lwcText: mentions,
-    // Apex classes and triggers that name the field only inside a string (fcApexStringNames): up to 1,500 of each
+    // Apex classes and triggers that name the field only inside a string (fcApexStringNames): all of the org's own
     apexText: mentions,
     // a column of this object's related list on a parent's layout; a view of a child object that shows this field
     // through its lookup (2026-11-19)
@@ -636,6 +636,8 @@ function fcEstimateScanCalls(counts, scope, objApi) {
     L.customMetadata && { count: known(c.customMetadata), what: '10 custom metadata records in the org (read up to 300)' },
     L.entitlements   && { count: known(c.entitlements),   what: '10 entitlement processes in the org' },
     L.customSettings && { count: known(c.customSettings), what: 'custom setting in the org (the first 30)' },
+    // every layout of the objects this one looks up to is read for a related-list column (no bound — owner 2026-11-19)
+    L.relatedLists   && { count: known(c.parentLayouts),  what: 'page layout of a parent object' },
   ].filter(Boolean);
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
   // + the check-only delete (🩺 Ask Salesforce, every scan that looks for blockers): the deploy and its status read
@@ -2569,32 +2571,32 @@ const FieldCleaner = (() => {
 
     // 10a. Apex that names the field only inside a string (2026-11-18, owner: "Go"). Salesforce's index lists a class
     // that COMPILES against the field; dynamic SOQL and get('Field__c') it does not know, and the delete goes through
-    // while the code fails at run time. The org's own classes and triggers are read — up to 1,500 of each; a larger
-    // org is told so, and the 🧭 full text scan reads them all.
+    // while the code fails at run time. Every class and trigger of the org's own is read (no bound — owner
+    // 2026-11-19: "Why the scan limit" → "Do it"; the bodies come in batches).
     if (L.apexText) for (const [real, kind, words] of [['ApexClass', 'ApexClassText', 'Apex classes'], ['ApexTrigger', 'ApexTriggerText', 'Apex triggers']]) try {
       msg(`Reading ${words} for the field’s name in a string…`);
-      const res = await sfQ(`SELECT Id, Name, Body FROM ${real} WHERE NamespacePrefix = null ORDER BY Name LIMIT 1501`, true);
+      const res = await sfQ(`SELECT Id, Name, Body FROM ${real} WHERE NamespacePrefix = null ORDER BY Name`, true);
       const rows = res?.records || [];
-      for (const r of rows.slice(0, 1500)) {
+      for (const r of rows) {
         if (seen.has(`${real}|${String(r.Id || '').substring(0, 15)}`)) continue;      // Salesforce's index lists it already, as a blocker
         if (fcApexStringNames(r.Body, obj, _selField.api)) add(kind, r.Id, r.Name);
       }
-      if (rows.length > 1500) miss(`${words} (the field’s name in a string)`, new Error(`this org has more than 1,500 of its own — the first 1,500 by name were read; the full metadata text scan reads them all`));
     } catch (e) { miss(`${words} (the field’s name in a string)`, e); }
 
     // 10c. Related-list columns on a parent's layouts, and the list views of child objects (2026-11-19). The
-    // object's describe says who its parents and children are. Bounded: 40 parent layouts (one read each) and 30
-    // child objects (one metadata read per ten); beyond that it is said, and the 🧭 full text scan reads them all.
+    // object's describe says who its parents and children are. Every parent layout is read (one call each — the
+    // scan's cost line says so before it runs) and every child object (one metadata read per ten). No bound (owner
+    // 2026-11-19).
     if (L.relatedLists || L.childListViews) {
       let d = null;
       try { d = await _describeObj(obj); } catch (_) { d = null; }
       if (L.relatedLists) try {
         if (!d || d.error || !Array.isArray(d.fields)) throw new Error('the object’s describe gave no answer');
         msg('Scanning related lists on parent layouts…');
-        const parents = [...new Set(d.fields.filter(f => f.type === 'reference' && !/^(OwnerId|CreatedById|LastModifiedById)$/i.test(f.name)).flatMap(f => f.referenceTo || []))].filter(p => String(p).toLowerCase() !== objLc).slice(0, 20);
+        const parents = [...new Set(d.fields.filter(f => f.type === 'reference' && !/^(OwnerId|CreatedById|LastModifiedById)$/i.test(f.name)).flatMap(f => f.referenceTo || []))].filter(p => String(p).toLowerCase() !== objLc);
         if (parents.length) {
-          const lys = (await sfQ(`SELECT Id, Name, EntityDefinition.QualifiedApiName FROM Layout WHERE EntityDefinition.QualifiedApiName IN (${parents.map(p => `'${String(p).replace(/'/g, "\\'")}'`).join(',')}) ORDER BY Name LIMIT 41`, true))?.records || [];
-          const read = lys.slice(0, 40);
+          const lys = (await sfQ(`SELECT Id, Name, EntityDefinition.QualifiedApiName FROM Layout WHERE EntityDefinition.QualifiedApiName IN (${parents.map(p => `'${String(p).replace(/'/g, "\\'")}'`).join(',')}) ORDER BY Name`, true))?.records || [];
+          const read = lys;
           for (let i = 0; i < read.length; i += 5) {
             const got = await Promise.all(read.slice(i, i + 5).map(l => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Layout', id: l.Id, _suppressError: true })));
             got.forEach((g, k) => {
@@ -2603,7 +2605,6 @@ const FieldCleaner = (() => {
               if (fcRelatedListEdit(JSON.parse(JSON.stringify(g.Metadata)), obj, _selField.api, null)) add('LayoutRelatedList', l.Id, `${l.EntityDefinition?.QualifiedApiName || 'parent'} layout “${l.Name}”`);
             });
           }
-          if (lys.length > 40) miss('related lists on parent layouts', new Error('the parent objects have more than 40 layouts — the first 40 by name were read; the full metadata text scan reads them all'));
         }
       } catch (e) { miss('related lists on parent layouts', e); }
       if (L.childListViews) try {
@@ -2611,8 +2612,8 @@ const FieldCleaner = (() => {
         msg('Scanning list views of child objects…');
         const kids = [...new Set(d.childRelationships.filter(c => c && c.childSObject && c.field && !c.deprecatedAndHidden).map(c => c.childSObject))]
           .filter(k => String(k).toLowerCase() !== objLc && fcChildHasListViews(k))
-          .sort((a, b) => (/__c$/i.test(b) ? 1 : 0) - (/__c$/i.test(a) ? 1 : 0));   // the org's own objects first: the bound of 30 cuts the standard tail
-        const read = kids.slice(0, 30), found = [];   // [{ child, dev, label }]
+          .sort((a, b) => (/__c$/i.test(b) ? 1 : 0) - (/__c$/i.test(a) ? 1 : 0));   // the org's own objects first
+        const read = kids, found = [];   // [{ child, dev, label }]
         for (let i = 0; i < read.length; i += 10) {
           const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'CustomObject', fullNames: read.slice(i, i + 10), _suppressError: true });
           if (!r || r.error) { miss('list views of child objects', new Error(`${read.slice(i, i + 10).join(', ')}: ${(r && r.error) || 'no answer'}`)); continue; }
@@ -2631,7 +2632,6 @@ const FieldCleaner = (() => {
             else miss('list views of child objects', new Error(`the view “${x.label}” of ${x.child} names the field, but its record was not found`));
           }
         }
-        if (kids.length > 30) miss('list views of child objects', new Error(`this object has ${kids.length} child objects — the first 30 were read; the full metadata text scan reads them all`));
       } catch (e) { miss('list views of child objects', e); }
     }
 

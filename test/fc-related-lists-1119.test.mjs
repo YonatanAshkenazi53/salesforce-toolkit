@@ -106,3 +106,18 @@ describe('the engine and a list view of another object', () => {
     expect(r.xml).toContain('<columns>SFTK_Kind__c.Tag2__c</columns>');
   });
 });
+
+// owner 2026-11-19: "Why the scan limit" → "Do it" — the bounds of these passes were a guess. Everything is read;
+// what costs a call per item (a parent's layouts) is in the scan's cost line before it runs.
+describe('no bound on the breaks-later reads', () => {
+  it('every class, trigger, parent layout and child object is read', () => {
+    expect(FC).not.toMatch(/LIMIT 1501|LIMIT 41|lys.slice(0, 40)|kids.slice(0, 30)|more than 1,500/);
+    expect(FC).toContain('ORDER BY Name`, true);');
+    expect(FC).toContain('const read = kids, found = [];');
+  });
+  it('the layouts are named in the cost line until their number is known', () => {
+    const F2 = extractFunctions('field-cleaner.js', ['fcEstimateScanCalls', 'fcScopeLegs', 'fcScopeNorm']);
+    expect(F2.fcEstimateScanCalls(null, 'both', 'Account').moreIf).toContain('page layout of a parent object');
+    expect(F2.fcEstimateScanCalls(null, 'blockers', 'Account').moreIf).not.toContain('page layout of a parent object');
+  });
+});
