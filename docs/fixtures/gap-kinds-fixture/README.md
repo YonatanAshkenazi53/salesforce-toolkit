@@ -55,3 +55,12 @@ ACCEPTED. The regular scan lists it under 👀 "Lightning Web Components (name t
 `kinds-app/main/default/classes/SFTK_Kind_Dyn` — `r.get('Tag__c')` and a SOQL string; nothing compiles against the
 field. Deployed to npc2. The check-only delete is ACCEPTED. The regular scan lists it under 👀 "Apex Classes (name the
 field in a string)". A SOSL search does not look inside class bodies (read live), so the scan reads them by Tooling.
+
+### 2026-11-19 — a related-list column on a parent's layout, and a child object's list view
+
+- `SFTK_Kind__c.Acct__c` (lookup to Account) + layout `Account-SFTK Kind RL Layout`: its related list
+  `SFTK_Kind__c.Acct__c` shows `Tag__c` as a column. (An Account layout must hold `ParentId`, or the deploy is refused.)
+- object `SFTK_Kind_Child__c` (lookup `Kind__c` → SFTK_Kind__c) + list view `SFTK_Kind_Child_LV` with
+  `<columns>SFTK_Kind__c.Tag__c</columns>`. Read live: `Kind__r.Tag__c` and `Kind__c.Tag__c` are refused; Salesforce
+  returns the column as `01Ibm00000EVKon.Tag__c` and refuses THAT on a deploy.
+Both deployed to npc2. Neither blocks the delete; the regular scan lists both under 👀.

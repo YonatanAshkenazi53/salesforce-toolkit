@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata"><deploymentStatus>Deployed</deploymentStatus><description>Admin Toolkit fixture: a child of SFTK Kind, for a list view that shows the parent's field. Safe to delete.</description><label>SFTK Kind Child</label><pluralLabel>SFTK Kind Children</pluralLabel><nameField><label>Name</label><type>Text</type></nameField><sharingModel>ReadWrite</sharingModel></CustomObject>

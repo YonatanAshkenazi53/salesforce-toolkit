@@ -177,7 +177,7 @@ describe('the wiring', () => {
     expect(FC).toContain('_lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope, unread: scanUnread };');
     expect(FC).toContain("mdType: 'ReportType'");
     expect(FC).toContain("if (type === 'ReportType') label = (await fixReportType(componentId, componentName)) || label;");
-    expect(FC).toContain("['Report', 'ReportType', 'Layout', 'FlexiPage'].includes(type)");
+    expect(FC).toContain("['Report', 'ReportType', 'Layout', 'LayoutRelatedList', 'FlexiPage'].includes(type)");
     expect(FC).toContain("await _snapshotFix('ReportType', componentId, componentName, fullName, { innerXml: before });");
     expect(FC).toContain("} else if (snap.type === 'ReportType') {");
     expect(FC).toContain("msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBefore },");

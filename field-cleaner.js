@@ -313,6 +313,52 @@ function fcCmtTypeApi(fullName) {
 // object): Object Manager's own "Search Layouts" link is …/MySearchLayouts/view; …/SearchLayouts/view draws an
 // empty panel on both (owner: "When i navigated to the search layout. it opened a blank screen"). PURE.
 function fcSearchLayoutsPage() { return 'MySearchLayouts'; }
+// RELATED-LIST COLUMNS ON A PARENT'S LAYOUT (owner 2026-11-18/19: "Go" · "Continue please"). A parent's page layout
+// shows this object's records in a related list, and the field can be one of its columns: the delete goes through
+// and the column is gone. Is this related list one of objApi's records? A custom child is named "Child__c.Lookup__c";
+// a standard child's list is "Related<Object>List". PURE.
+function fcRelatedListIsOf(listName, objApi) {
+  const n = String(listName || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  if (!n || !o) return false;
+  return n.startsWith(o + '.') || n === `related${o}list`;
+}
+// Takes the field out of those related lists' columns (newField: it takes the column's place — or, when the list
+// shows it already, the old column just goes). A sort on the field goes with the column. Changes `metadata` (a
+// layout's Tooling Metadata) in place. PURE otherwise. → how many columns were changed
+function fcRelatedListEdit(metadata, objApi, fieldApi, newField) {
+  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const is = v => { const x = String(v == null ? '' : v).trim().toLowerCase(); return !!f && (x === f || x === `${o}.${f}`); };
+  const nf = newField ? String(newField) : '';
+  let n = 0;
+  for (const rl of ((metadata && metadata.relatedLists) || [])) {
+    if (!rl || !fcRelatedListIsOf(rl.relatedList, objApi) || !Array.isArray(rl.fields)) continue;
+    const at = rl.fields.findIndex(is);
+    if (at < 0) continue;
+    const hasNew = !!nf && rl.fields.some(x => String(x || '').toLowerCase() === nf.toLowerCase());
+    if (nf && !hasNew) rl.fields[at] = nf; else rl.fields.splice(at, 1);
+    rl.fields = rl.fields.filter((x, i) => !is(x) || (nf && !hasNew && i === at));
+    if (is(rl.sortField)) { if (nf) rl.sortField = nf; else { delete rl.sortField; delete rl.sortOrder; } }
+    n++;
+  }
+  return n;
+}
+// Can this child of the object have list views of its own? The describe lists every relationship, most of them the
+// platform's own bookkeeping (feeds, shares, history, attachments, approvals…) — none of those has a list view. PURE.
+function fcChildHasListViews(childApi) {
+  const k = String(childApi || '');
+  if (!k) return false;
+  if (/(Feed|History|Share|ChangeEvent|__Tag|__VoteStat|__ViewStat|__DataCategorySelection)$/i.test(k)) return false;
+  return !/^(AttachedContentDocument|AttachedContentNote|CombinedAttachment|ContentDocumentLink|ContentVersion|ContentDistribution|EntitySubscription|ProcessInstance|ProcessInstanceHistory|ProcessException|TopicAssignment|Note|NoteAndAttachment|Attachment|ActivityHistory|OpenActivity|EmailMessage|EmailMessageRelation|FeedComment|FeedItem|CollaborationGroupRecord|DuplicateRecordItem|FlowRecordRelation|FlowOrchestrationWorkItem|FlowExecutionErrorEvent|NetworkActivityAudit|NetworkUserHistoryRecent|RecordAction|RecordActionHistory|UserDefinedLabelAssignment|AIRecordInsight|AIInsightValue|OutgoingEmail|OutgoingEmailRelation|PendingServiceRoutingInteractionInfo|EventRelationChangeEvent|TaskRelationChangeEvent)$/i.test(k);
+}
+// Does a list view (its XML, as the object's metadata holds it) name "Object.Field" in a column or a filter?
+// That is how a view of another object shows this field through a lookup. PURE.
+// objId: a CUSTOM object's id — Salesforce hands such a column back as "01I….Field" (read live 2026-11-19).
+function fcListViewNamesQualified(lvXml, objApi, fieldApi, objId) {
+  const esc = t => String(t || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!objApi || !fieldApi) return false;
+  const id = /^01I[A-Za-z0-9]{12}/.test(String(objId || '')) ? String(objId).slice(0, 15) : '';
+  return new RegExp(`<(columns|field)>\\s*(?:${esc(objApi)}${id ? `|${esc(id)}` : ''})\\.${esc(fieldApi)}\\s*</\\1>`, 'i').test(String(lvXml || ''));
+}
 // Does this Apex source name the field INSIDE A STRING (dynamic SOQL, get('Field__c'), a field list) — the mentions
 // Salesforce's index does not know, because nothing compiles against them? Comments are not read. To keep another
 // object's same-named field out, the object must be named too: in the same string ("Obj.Field", "… FROM Obj"), or
@@ -550,6 +596,9 @@ function fcScopeLegs(scope, objApi) {
     lwcText: mentions,
     // Apex classes and triggers that name the field only inside a string (fcApexStringNames): up to 1,500 of each
     apexText: mentions,
+    // a column of this object's related list on a parent's layout; a view of a child object that shows this field
+    // through its lookup (2026-11-19)
+    relatedLists: mentions, childListViews: mentions,
     emailTemplates: mentions,
     // 2026-11-11 (user: "תוסיף את אלו שעלולים לחסום אבל גם custom settings"): entitlement processes run on Case and
     // WorkOrder only; custom-setting RECORDS are data that can hold the field's name as text (👀)
@@ -591,7 +640,7 @@ function fcEstimateScanCalls(counts, scope, objApi) {
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
   // + the check-only delete (🩺 Ask Salesforce, every scan that looks for blockers): the deploy and its status read
   let now = 2 + (fcScopeNorm(scope) === 'mentions' ? 0 : 2) + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
-    L.approvals, L.sharingRules, L.duplicateRules, (L.lwc || L.lwcText), L.apexText, L.apexText, L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts, L.entitlements, L.customSettings].filter(Boolean).length
+    L.approvals, L.sharingRules, L.duplicateRules, (L.lwc || L.lwcText), L.apexText, L.apexText, L.relatedLists, L.childListViews, L.aura, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff, L.emailTemplates, L.searchLayouts, L.entitlements, L.customSettings].filter(Boolean).length
     + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
@@ -1178,6 +1227,7 @@ const FieldCleaner = (() => {
   async function selectObject(api, label, durableId) {
     const gen = _orgGen;
     _selObj = { api, label, durableId: durableId || api };
+    if (typeof sftkMdKnowObjId === 'function') sftkMdKnowObjId(api, durableId);   // a view of another object names a custom parent by its id
     resetFieldAndBelow();
     // Clear the previous object's completeness state up front — a failed load
     // must not inherit the last object's "complete" claim.
@@ -2532,6 +2582,59 @@ const FieldCleaner = (() => {
       if (rows.length > 1500) miss(`${words} (the field’s name in a string)`, new Error(`this org has more than 1,500 of its own — the first 1,500 by name were read; the full metadata text scan reads them all`));
     } catch (e) { miss(`${words} (the field’s name in a string)`, e); }
 
+    // 10c. Related-list columns on a parent's layouts, and the list views of child objects (2026-11-19). The
+    // object's describe says who its parents and children are. Bounded: 40 parent layouts (one read each) and 30
+    // child objects (one metadata read per ten); beyond that it is said, and the 🧭 full text scan reads them all.
+    if (L.relatedLists || L.childListViews) {
+      let d = null;
+      try { d = await _describeObj(obj); } catch (_) { d = null; }
+      if (L.relatedLists) try {
+        if (!d || d.error || !Array.isArray(d.fields)) throw new Error('the object’s describe gave no answer');
+        msg('Scanning related lists on parent layouts…');
+        const parents = [...new Set(d.fields.filter(f => f.type === 'reference' && !/^(OwnerId|CreatedById|LastModifiedById)$/i.test(f.name)).flatMap(f => f.referenceTo || []))].filter(p => String(p).toLowerCase() !== objLc).slice(0, 20);
+        if (parents.length) {
+          const lys = (await sfQ(`SELECT Id, Name, EntityDefinition.QualifiedApiName FROM Layout WHERE EntityDefinition.QualifiedApiName IN (${parents.map(p => `'${String(p).replace(/'/g, "\\'")}'`).join(',')}) ORDER BY Name LIMIT 41`, true))?.records || [];
+          const read = lys.slice(0, 40);
+          for (let i = 0; i < read.length; i += 5) {
+            const got = await Promise.all(read.slice(i, i + 5).map(l => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Layout', id: l.Id, _suppressError: true })));
+            got.forEach((g, k) => {
+              const l = read[i + k];
+              if (!g || g.error || !g.Metadata) return;
+              if (fcRelatedListEdit(JSON.parse(JSON.stringify(g.Metadata)), obj, _selField.api, null)) add('LayoutRelatedList', l.Id, `${l.EntityDefinition?.QualifiedApiName || 'parent'} layout “${l.Name}”`);
+            });
+          }
+          if (lys.length > 40) miss('related lists on parent layouts', new Error('the parent objects have more than 40 layouts — the first 40 by name were read; the full metadata text scan reads them all'));
+        }
+      } catch (e) { miss('related lists on parent layouts', e); }
+      if (L.childListViews) try {
+        if (!d || d.error || !Array.isArray(d.childRelationships)) throw new Error('the object’s describe gave no answer');
+        msg('Scanning list views of child objects…');
+        const kids = [...new Set(d.childRelationships.filter(c => c && c.childSObject && c.field && !c.deprecatedAndHidden).map(c => c.childSObject))]
+          .filter(k => String(k).toLowerCase() !== objLc && fcChildHasListViews(k))
+          .sort((a, b) => (/__c$/i.test(b) ? 1 : 0) - (/__c$/i.test(a) ? 1 : 0));   // the org's own objects first: the bound of 30 cuts the standard tail
+        const read = kids.slice(0, 30), found = [];   // [{ child, dev, label }]
+        for (let i = 0; i < read.length; i += 10) {
+          const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'CustomObject', fullNames: read.slice(i, i + 10), _suppressError: true });
+          if (!r || r.error) { miss('list views of child objects', new Error(`${read.slice(i, i + 10).join(', ')}: ${(r && r.error) || 'no answer'}`)); continue; }
+          for (const rec of sftkMdExtractRecords(r.text).records) {
+            for (const lv of sftkMdChildren(rec.innerXml, 'listViews')) {
+              if (fcListViewNamesQualified(lv.innerXml, obj, _selField.api, _selObj.durableId)) found.push({ child: rec.fullName, dev: lv.fullName, label: sftkMdChildText(lv.innerXml, 'label') || lv.fullName });
+            }
+          }
+        }
+        if (found.length) {
+          const objs = [...new Set(found.map(x => x.child))];
+          const ids = (await sfQ(`SELECT Id, DeveloperName, SobjectType FROM ListView WHERE SobjectType IN (${objs.map(o => `'${String(o).replace(/'/g, "\\'")}'`).join(',')})`, false))?.records || [];
+          for (const x of found) {
+            const row = ids.find(v => String(v.SobjectType).toLowerCase() === String(x.child).toLowerCase() && String(v.DeveloperName).toLowerCase() === String(x.dev).toLowerCase());
+            if (row) add('ListView', row.Id, `${x.label} (a view of ${x.child})`);
+            else miss('list views of child objects', new Error(`the view “${x.label}” of ${x.child} names the field, but its record was not found`));
+          }
+        }
+        if (kids.length > 30) miss('list views of child objects', new Error(`this object has ${kids.length} child objects — the first 30 were read; the full metadata text scan reads them all`));
+      } catch (e) { miss('list views of child objects', e); }
+    }
+
     // 10b. Aura components (2026-11-10). Salesforce's index is supposed to return them and did not: live on npc it
     // returned NO row for a field that an Aura bundle's markup ({!v.account.Field__c}) and controller name, and
     // Salesforce refused the delete over both. One Tooling query reads every Aura source in the org; a source that
@@ -2997,6 +3100,9 @@ const FieldCleaner = (() => {
     LwcText:        { icon: '⚡', label: 'Lightning Web Components (name the field as text)', fixable: false, sev: 'silent',
                       note: 'The component’s template or script names the field without importing it. Salesforce lets the delete through; the component then shows nothing there, or fails where it reads the field. ⇄ renames it in the code, ✎ edits it, 🗑 deletes the component.',
                       replNote: 'The field’s name is renamed to {new} in every file of the component.' },
+    LayoutRelatedList: { icon: '📋', label: 'Related-list columns (on a parent’s layout)', fixable: true, sev: 'silent',
+                      note: 'A parent object’s page layout shows this object’s records in a related list, and the field is one of its columns. The delete goes through and the column is gone. ✂ takes the column out now.',
+                      replNote: '{new} takes the column’s place in the related list.', doneLabel: '✅ Done' },
     ApexClassText:  { icon: '☕', label: 'Apex Classes (name the field in a string)', fixable: false, sev: 'silent',
                       note: 'The class names the field inside a string — dynamic SOQL, get(\'Field__c\') or a field list. Nothing compiles against it, so Salesforce lets the delete through; the code then fails when it runs. ⇄ renames it in the code, ✎ edits it, 🗑 deletes the class.',
                       replNote: 'The field’s name is renamed to {new} in the class, strings included.' },
@@ -5120,7 +5226,7 @@ const FieldCleaner = (() => {
       revOverride: {
         html: type === 'Flow'
           ? `⚠ <strong>Flow versions that mention the field are deleted</strong> — Salesforce locks the field per version. A restore point of each is kept first: ↩ Undo in Activity puts the version that was active back as the active version, and ↩ Restore points in Activity hold every deleted version.${_flowPlanBoxHtml(asks && !activeMode ? null : activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : { rows: flowPlan.rows, lines: flowPlan.lines })}`
-          : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${type === 'SearchLayout' ? 'The layout as it is now is kept: ↩ Undo in Activity puts it back.' : ['Report', 'ReportType', 'Layout', 'FlexiPage'].includes(type)
+          : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${type === 'SearchLayout' ? 'The layout as it is now is kept: ↩ Undo in Activity puts it back.' : ['Report', 'ReportType', 'Layout', 'LayoutRelatedList', 'FlexiPage'].includes(type)
               ? 'A <strong>restore point</strong> is saved first — ↩ Restore points, in Activity, can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
         needsCheckbox: type === 'Flow',
@@ -5206,6 +5312,7 @@ const FieldCleaner = (() => {
           .map(l => `<li${l.warn ? ' class="fc-flow-warn"' : ''}><span class="fc-flow-ico">${l.icon}</span> ${esc(l.text)}</li>`).join('')}</ul>`;
       }
       if (type === 'Layout')    label = (await fixLayout(componentId, componentName)) || label;
+      if (type === 'LayoutRelatedList') label = (await fixLayoutRelatedList(componentId, componentName)) || label;
       if (type === 'FlexiPage') label = (await fixFlexiPage(componentId, componentName)) || label;
       if (type === 'Report')    label = await fixReport(componentId, componentName);
       if (type === 'ReportType') label = (await fixReportType(componentId, componentName)) || label;
@@ -7246,7 +7353,31 @@ const FieldCleaner = (() => {
     const dot = String(fullName).indexOf('.');
     return rc ? { type: 'SF_MD_READ', mdType: rc[0], fullNames: [String(fullName).slice(0, dot)] } : { type: 'SF_MD_READ', mdType, fullNames: [fullName] };
   }
+  // A LIST VIEW THAT SHOWS A CUSTOM PARENT'S FIELD. Read live 2026-11-19 (npc2): Salesforce hands such a column back
+  // as "<the parent's id>.Field" (<columns>01Ibm00000EVKon.Tag__c</columns>) and then REFUSES that same text on a
+  // deploy ("no CustomField named Child__c.01Ibm00000EVKon.Tag__c found") — it takes "Parent__c.Field". So a view read
+  // for an edit, a delete's restore point or an undo could never be deployed back as it was read. Every list view read
+  // here has those ids turned into the objects' API names (one Tooling query for the ids not known yet).
+  const _objIdNames = new Map();   // a custom object's 15-char id → its API name
+  async function _lvNamesForIds(xml) {
+    const src = String(xml || '');
+    const ids = [...new Set([...src.matchAll(/<(?:columns|field)>\s*(01I[A-Za-z0-9]{12})\./g)].map(m => m[1]))];
+    if (!ids.length) return src;
+    if (_selObj && /^01I[A-Za-z0-9]{12}/.test(String(_selObj.durableId || ''))) _objIdNames.set(String(_selObj.durableId).slice(0, 15), _selObj.api);
+    const need = ids.filter(i => !_objIdNames.has(i));
+    if (need.length) {
+      const r = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+        query: `SELECT DurableId, QualifiedApiName FROM EntityDefinition WHERE DurableId IN (${need.map(i => `'${i}'`).join(',')})` });
+      for (const e of ((r && r.records) || [])) if (e.DurableId && e.QualifiedApiName) _objIdNames.set(String(e.DurableId).slice(0, 15), e.QualifiedApiName);
+    }
+    return src.replace(/(<(?:columns|field)>\s*)(01I[A-Za-z0-9]{12})(?=\.)/g, (m, open, id) => _objIdNames.has(id) ? open + _objIdNames.get(id) : m);
+  }
   async function _mdReadOne(type, fullName, mdType) {
+    const got = await _mdReadOneRaw(type, fullName, mdType);
+    if (type === 'ListView' && got && got.rec && got.rec.innerXml) got.rec = { ...got.rec, innerXml: await _lvNamesForIds(got.rec.innerXml) };
+    return got;
+  }
+  async function _mdReadOneRaw(type, fullName, mdType) {
     const msg = _mdReadMsg(type, fullName, mdType);
     const r = await bg({ ...msg, orgUrl: _orgUrl, sid: _sid, _suppressError: true });
     if (!r || r.error) return { error: (r && r.error) || 'no answer' };
@@ -7514,6 +7645,50 @@ const FieldCleaner = (() => {
     return (list || []).map(b => b.type === type ? { ...b, count: Math.max(0, (Number(b.count) || 0) - 1) } : b).filter(b => b.count > 0);
   }
 
+  // ✂ / ⇄ on a related-list column of a PARENT's layout: the layout is read, only the column goes (or is renamed),
+  // the layout is written back the way fixLayout writes one, re-read to confirm, and the undo puts it back whole.
+  async function fixLayoutRelatedList(componentId, componentName) {
+    const res = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Layout', id: componentId });
+    if (res.error) throw new Error(`Could not read ${componentName}: ${_feText(res.error)}`);
+    const metadata = res.Metadata;
+    if (!metadata) throw new Error(`${componentName} returned no metadata.`);
+    const obj = _selObj.api, field = _selField.api, fullName = res.FullName || res.fullName;
+    const swap = _swapOn(), swapTo = swap ? _replField.api : '';
+    await _snapshotFix('Layout', componentId, componentName, fullName, metadata);
+    const beforeMetadata = JSON.parse(JSON.stringify(metadata));
+    const n = fcRelatedListEdit(metadata, obj, field, swapTo || null);
+    if (!n) throw new Error(`${componentName} no longer shows ${field} in a related list of ${obj} — re-scan.`);
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `📋 Related list — ${componentName} (${obj}.${field} ${swap ? `→ ${swapTo}` : 'removed'})`, orgUrl: _orgUrl });
+    let wr, patchRes = null;
+    try {
+      // confirmed-by: fixOne's sftkConfirmDestructive (the only caller)
+      wr = await sftkWriteVerified({
+        describe: `${componentName}, the related list of ${obj}`,
+        journal: j,
+        write: async () => {
+          patchRes = await patchLayoutMetadata(componentId, sanitizeLayoutMetadata(metadata));
+          if (!patchRes.error) return patchRes;
+          if (fullName) { const dep = await deployLayoutViaMetadataApi(fullName, metadata); if (dep && dep.success) return dep; }
+          return { error: patchRes.error };
+        },
+        verify: async () => {
+          const after = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true, sobject: 'Layout', id: componentId });
+          if (!after || after.error || !after.Metadata) return { ok: false, text: null };
+          const left = fcRelatedListEdit(JSON.parse(JSON.stringify(after.Metadata)), obj, field, null);
+          const hasNew = !swap || (after.Metadata.relatedLists || []).some(rl => rl && fcRelatedListIsOf(rl.relatedList, obj) && (rl.fields || []).some(x => String(x || '').toLowerCase() === swapTo.toLowerCase()));
+          return { ok: left === 0 && hasNew, text: null };
+        },
+      });
+      if (wr.accepted && wr.ok) return `✅ Related list updated · ${swap ? `${swapTo} is the column now` : 'the column is removed'} — verified by re-reading the org`;
+      if (wr.accepted) throw new Error(`${componentName} was saved, but on re-read the related list still shows ${field} — check it in Setup.`);
+      throw new Error(`Salesforce won't accept the layout update for ${componentName} (${_feText(String((patchRes && patchRes.error) || 'refused').replace(/^HTTP\s*\d+:\s*/i, '').trim())}). Nothing was changed.`);
+    } finally {
+      const st = wr && wr.accepted ? _layoutUndoStep(componentId, componentName, fullName, beforeMetadata, obj, field) : null;
+      // the layout's own undo step looks for the field OUTSIDE the related lists; here the related list is the point
+      if (st && st.verify && st.verify.pattern) { delete st.verify.strip; st.verify.pattern = `<relatedLists>(?:(?!</relatedLists>)[\\s\\S])*<fields>(?:${_rxEsc(obj)}\\.)?${_rxEsc(field)}</fields>`; st.verify.text = { ok: `${componentName}: the related list shows ${field} again — verified by re-reading the org`, bad: `${componentName}: the deploy was accepted, but on re-read the related list does not show ${field} yet` }; }
+      await sftkHistoryEnd(j, { undo: st ? { steps: [st] } : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
+    }
+  }
   async function fixLayout(componentId, componentName) {
     const res = await bg({
       type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
@@ -8217,6 +8392,7 @@ const FieldCleaner = (() => {
       LightningComponentBundle: '/lightning/setup/LightningComponentBundles/home',
       LwcText: '/lightning/setup/LightningComponentBundles/home',
       ApexClassText: '/lightning/setup/ApexClasses/home',
+      LayoutRelatedList: '/lightning/setup/ObjectManager/home',
       ApexTriggerText: '/lightning/setup/ApexTriggers/home',
       CustomMetadataRecord: '/lightning/setup/CustomMetadata/home',
       CustomMetadataText: '/lightning/setup/CustomMetadata/home',

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Acct__c</fullName>
+    <description>Admin Toolkit fixture: the lookup that puts SFTK Kinds on an Account's related list. Safe to delete.</description>
+    <deleteConstraint>SetNull</deleteConstraint>
+    <label>Account</label>
+    <referenceTo>Account</referenceTo>
+    <relationshipLabel>SFTK Kinds</relationshipLabel>
+    <relationshipName>SFTK_Kinds</relationshipName>
+    <required>false</required>
+    <type>Lookup</type>
+</CustomField>

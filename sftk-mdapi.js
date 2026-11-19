@@ -1073,6 +1073,15 @@ function _sftkMdHasLogic(xml) {
   const el = sftkMdFindElement(xml, 'booleanFilter', 0);
   return !!el && String(xml).slice(el.bodyStart, el.bodyEnd).trim() !== '';
 }
+// A CUSTOM object's id, told by the page that knows it (Field Cleaner's picker). A view of another object names a
+// custom parent's field by that id — read live 2026-11-19 (npc2): the view deployed with
+// <columns>SFTK_Kind__c.Tag__c</columns> comes back from Salesforce as <columns>01Ibm00000EVKon.Tag__c</columns>.
+function sftkMdKnowObjId(objApi, id) {
+  const k = String(objApi || '').toLowerCase(), v = String(id || '').slice(0, 15).toLowerCase();
+  sftkMdKnowObjId.ids = sftkMdKnowObjId.ids || new Map();
+  if (k && /^01i[a-z0-9]{12}$/.test(v)) sftkMdKnowObjId.ids.set(k, v);
+  return sftkMdKnowObjId.ids.get(k) || '';
+}
 function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
   const before = String(innerXml || '');
   const nf = newField ? String(newField) : null;
@@ -1110,11 +1119,11 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     });
     return { xml: r.xml, n, left: r.kept };
   };
-  // a list member whose TEXT is the field (<fields>X</fields>)
-  const texts = (src, tag) => {
+  // a list member whose TEXT is the field (<fields>X</fields>); is(v): the caller's own rule, as in items()
+  const texts = (src, tag, is) => {
     let n = 0;
     const r = _sftkMdWalk(src, tag, body => {
-      if (/</.test(body) || !_sftkMdFieldIs(sftkMdUnescape(body), ownApi, fieldApi)) return 'keep';
+      if (/</.test(body) || !(is ? is(sftkMdUnescape(body)) : _sftkMdFieldIs(sftkMdUnescape(body), ownApi, fieldApi))) return 'keep';
       n++;
       return nf ? { body: sftkMdEscape(_sftkMdRenameVal(sftkMdUnescape(body), nf)) } : 'drop';
     });
@@ -1488,10 +1497,24 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       break;
     }
     case 'ListView': {
-      const c = texts(xml, 'columns');
+      // A view of ANOTHER object can show this field through a lookup, and writes it "Object.Field" — read live
+      // 2026-11-19 (npc2): a child's view deploys with <columns>SFTK_Kind__c.Tag__c</columns>, while Kind__r.Tag__c and
+      // Kind__c.Tag__c are refused ("no CustomField named …"). So in such a view "Object.Field" IS this field, and a
+      // bare name is the view's own object's same-named field: only the first is edited.
+      const other = !!host && !listOwn;
+      // … and Salesforce hands a CUSTOM parent back by its id: "01I….Field" (sftkMdKnowObjId)
+      const idOf = typeof sftkMdKnowObjId === 'function' ? sftkMdKnowObjId(objApi) : '';
+      const qual = [objApi, ownApi, idOf].filter(Boolean).map(o => `${String(o).toLowerCase()}.${String(fieldApi || '').toLowerCase()}`);
+      const isQ = v => qual.includes(String(v == null ? '' : v).trim().toLowerCase());
+      // in another object's view the "Object.Field" entries are tried first; with none, it is judged as it always was
+      // (a bare name there is that object's own field — refused, with the reason)
+      const qc = other ? texts(xml, 'columns', isQ) : null;
+      const qr = other ? items(qc.xml, 'filters', 'field', null, isQ) : null;
+      const viaPath = !!(other && (qc.n || qr.n));
+      const c = viaPath ? qc : texts(xml, 'columns');
       const fl = sftkMdFindElement(c.xml, 'filters', 0);
-      const r = items(c.xml, 'filters', 'field');
-      if (notOwn(c.n + r.n, 'list view')) break;
+      const r = viaPath ? qr : items(c.xml, 'filters', 'field');
+      if (!viaPath && notOwn(c.n + r.n, 'list view')) break;
       if (!c.n && !r.n) { refuse('no column or filter of the view names the field — edit it in Setup'); break; }
       if (!nf && r.n && _sftkMdHasLogic(xml)) { refuse('the view’s filter logic numbers its filters — ⇄ Replace, or edit it in Setup'); break; }
       if (!nf && c.n && !c.left && !fl) { refuse('the field is the view’s only column — ⇄ Replace it, or 🗑 delete the view'); break; }

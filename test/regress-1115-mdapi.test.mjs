@@ -114,11 +114,15 @@ describe('2. a field set of another object: the spanning entry is resolved, the 
     const x = fs('Contact', [row('Name'), row(F)]).replace('Contact.FS', 'FS');
     expect(rm('FieldSet', x).refused).toBeNull();
   });
-  it('a list view keeps the cannot-tell refusal for a dotted column: its column names are not relationship paths', () => {
+  // 2026-11-19, read live (npc2): a Contact view DEPLOYS with <columns>Account.CustomerPriority__c</columns> — in a
+  // view of another object "Object.Field" is that object's field, so it is edited, not refused as "cannot tell".
+  it('a list view’s dotted column Account.F from a Contact view is Account’s field: replaced', () => {
     const x = lv('Contact', `Account.${F}`);
     const r = rp('ListView', x);
-    untouched(r, x, /cannot be told/);
-    expect(r.unsure).toBe(true);
+    expect(r.refused).toBeFalsy();
+    expect(r.changed).toBe(true);
+    expect(r.xml).toContain(`<columns>Account.${N}</columns>`);
+    expect(r.xml).not.toContain(`<columns>Account.${F}</columns>`);
   });
 });
 
