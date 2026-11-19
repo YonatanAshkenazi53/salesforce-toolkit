@@ -1744,8 +1744,10 @@ const FieldCleaner = (() => {
         if (_planRun.stop) break;
         at++;
         _planRun.name = row.name;
-        _planBar(`<span class="fc-plan-prog">⚡ Running — ${at} of ${todo.length}</span>`);
-        if (prog) prog.say(`${at} of ${todo.length} — ${_PLAN_ICO[row.pick]} ${row.name}`);
+        // one count only, the bar's own "N of M changes" (owner 2026-11-20: "nums here are different. and we dont need it
+        // twice … so delete the upper one") — this line names the row being worked on
+        _planBar(`<span class="fc-plan-prog">⚡ Running…</span>`);
+        if (prog) prog.say(`${_PLAN_ICO[row.pick]} ${row.name}`);
         const opt = row.opts.find(o => o.kind === row.pick);
         if (!opt) { not.push({ row, text: 'that way is no longer offered on the row' }); continue; }
         try { await fixOne(row.type, row.id, row.name, fieldId, opt.swap, opt.way); }
@@ -10229,7 +10231,7 @@ const FieldCleaner = (() => {
         onStart: (i, n, e) => {
           li = document.createElement('li'); li.className = 'fc-undoall-li fc-undoall-now';
           li.textContent = `⏳ ${e.profileName}`; ol.appendChild(li); li.scrollIntoView({ block: 'nearest' });
-          if (prog) prog.say(`Undoing ${i + 1} of ${n} — ${e.profileName}`);
+          if (prog) prog.say(`Undoing ${e.profileName}`);   // the count is the bar's own line, once
         },
         onEnd: (i, n, e, r) => {
           if (li) { li.className = `fc-undoall-li ${r && r.ok ? 'fc-undoall-ok' : 'fc-undoall-bad'}`; li.textContent = `${r && r.ok ? '✅' : '❌'} ${e.profileName} — ${(r && r.text) || 'no answer'}`; }

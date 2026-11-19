@@ -182,3 +182,13 @@ describe('the plan', () => {
     expect(FC).toContain('r.suggest = r.pick = fcPlanDefault(r.opts.map(o => o.kind), r.type, r.sev);');
   });
 });
+
+// owner 2026-11-20: "nums here are different. and we dont need it twice … so delete the upper one"
+describe('a run counts once', () => {
+  const FC = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8');
+  it('the line over the bar names the row; the count is the bar’s own line', () => {
+    expect(FC).toContain('if (prog) prog.say(`${_PLAN_ICO[row.pick]} ${row.name}`);');
+    expect(FC).toContain('if (prog) prog.say(`Undoing ${e.profileName}`);');
+    expect(FC).not.toContain('${at} of ${todo.length}');
+  });
+});
