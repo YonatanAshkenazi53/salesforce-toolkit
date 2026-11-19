@@ -1155,7 +1155,7 @@ async function openRecordPickerModal(pathStr) {
     const tieredHtml = matchStrategy === 'composite' ? `
       <label class="ds-match-tiered" style="display:inline-flex;align-items:flex-start;gap:6px;cursor:pointer;font-size:12px;margin-top:6px" title="The first field must be present and equal on both sides. A later field counts when both records hold a value: equal adds to the match, different rules the pair out, empty says nothing. The best unique match wins; a tie is listed under ⚠ Needs a decision.">
         <input type="checkbox" id="dsMatchTiered" ${matchTiered ? 'checked' : ''}>
-        <span><strong>Most specific first</strong> — a record that leaves a later field empty is matched by the fields it has</span>
+        <span><strong>Still match a record when one of its key fields is empty</strong> — it is matched by the key fields it does have (for example by the first field alone). When both records hold a value in a field, the values must be equal.</span>
       </label>` : '';
     return `
       <div class="ds-match-cfg" style="border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:8px 10px;margin-bottom:10px">

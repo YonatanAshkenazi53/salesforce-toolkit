@@ -120,7 +120,7 @@ describe('the wiring', () => {
     // 2026-11-13: BY OBJECT, everything listed up front — no tabs, no "tick the option to see the list"
     expect(DEP).not.toContain('ds-dep-pause-tab"');
     expect(DEP).not.toContain("const active = kinds.filter(k => k.on);");
-    expect(DEP).toContain("${secs.map(({ k, items }) => `<div class=\"ds-dep-pause-kindhd\">${k.title}");
+    expect(DEP).toContain("${secs.map(({ k, items }) => `<div class=\"ds-dep-pause-kindhd\" data-kind=\"${k.kind}\">${k.title}");
     expect(DEP).toContain('Automation in ${esc(tgt)} on the objects of this deployment');
     expect(DEP).toContain("if (!_depFlowPause.on || _depFlowPause.key !== key) load(); else paint();");
     expect(DEP).toContain("if (!_depRulePause.on || _depRulePause.key !== key) load(); else paint();");

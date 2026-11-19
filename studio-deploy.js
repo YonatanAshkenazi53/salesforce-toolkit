@@ -2217,7 +2217,7 @@ function _depPausePaint(p) {
       <div class="ds-dep-pause-obj${r.written ? '' : ' ds-dep-pause-unwritten'}">
         <div class="ds-dep-pause-objhd"><strong>${esc(r.object)}</strong><span class="ds-dep-pause-count">${n} automation${n === 1 ? '' : 's'}${r.written ? ` · ${off ? `${off} switched off for this run` : 'all stay on'}` : ' · no record of it is selected in this run'}</span>
           <span class="ds-dep-pause-acts"><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-want="on" title="Tick every flow and validation rule on ${esc(r.object)} — switched off for this run">pause all</button><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-want="off" title="Untick everything on ${esc(r.object)} — it all stays on">none</button></span></div>
-        ${secs.map(({ k, items }) => `<div class="ds-dep-pause-kindhd">${k.title} <span class="ds-dep-pause-tabn">${items.length}</span></div><div class="ds-dep-pause-rows">${items.map(x => item(k.kind, x, r.written)).join('')}</div>`).join('')}
+        ${secs.map(({ k, items }) => `<div class="ds-dep-pause-kindhd" data-kind="${k.kind}">${k.title} <span class="ds-dep-pause-tabn">${items.length}</span></div><div class="ds-dep-pause-rows">${items.map(x => item(k.kind, x, r.written)).join('')}</div>`).join('')}
       </div>`;
   };
   const withItems = rows.filter(r => r.total > 0), without = rows.filter(r => !r.total).map(r => r.object);
@@ -2385,7 +2385,7 @@ async function _depRuleLeftovers(p) {
     <div class="ds-rec-card-line">A deployment switched them off and did not get to switch them back on (the page closed during the run): ${ids.map(i => `${esc(left[i].name || i)} <span class="ds-subtext">(${esc(left[i].object || '')})</span>`).join(', ')}. Until they are back on, nothing in that org is validated by them.</div>
     <div class="ds-rec-card-line"><button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepRuleLeftOn">▶ Switch them back on</button></div></div>`;
   eid('dsDepRuleLeftOn')?.addEventListener('click', async () => {
-    const rules = ids.map(i => ({ id: i, name: left[i].name || i, object: left[i].object || '' }));
+    const rules = ids.map(i => ({ id: i, name: left[i].name || i, object: left[i].object || '', ...(left[i].pkg ? { pkg: left[i].pkg, fullName: left[i].fullName } : {}) }));   // a packaged rule is read by its full name (2026-11-19)
     const gate = await sftkOrgWriteGate(p.targetOrg, _orgs);
     const sure = await sftkConfirmDestructive({
       title: `▶ Switch ${rules.length} validation rule(s) back on in ${orgLabel(p.targetOrg)}`, icon: '▶',

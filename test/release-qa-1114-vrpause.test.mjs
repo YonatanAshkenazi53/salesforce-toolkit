@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { extractFunctions } from './extract.mjs';
 
 const VP = extractFunctions('sftk-vrpause.js',
-  ['_sftkVpLit', '_sftkVpMemory', '_sftkVpBody', '_sftkVpSwitch', 'sftkVrPauseOn'],
+  ['_sftkVpLit', '_sftkVpMemory', '_sftkVpBody', '_sftkVpWriteMsg', '_sftkVpReadPkg', 'sftkVrPausePkgInner', 'sftkVrPausePkgFiles', '_sftkVpSwitch', 'sftkVrPauseOn'],
   { 'sftk-write.js': ['sftkWriteVerified', '_sftkWriteVerifiedCore', 'sftkWriteVerifiedAll'] });
 
 const ORG = 'https://t.my.salesforce.com', KEY = 't.my.salesforce.com';

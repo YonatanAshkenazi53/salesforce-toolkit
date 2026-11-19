@@ -14,7 +14,8 @@ describe('Pick Records › Matching › Composite: most specific first', () => {
   });
   it('the switch sits under the fields, says what it does, and re-renders without a re-query', () => {
     expect(picker).toContain('<input type="checkbox" id="dsMatchTiered" ${matchTiered ? \'checked\' : \'\'}>');
-    expect(picker).toContain('<strong>Most specific first</strong> — a record that leaves a later field empty is matched by the fields it has');
+    // 2026-11-19 (owner, on the old wording "Most specific first — a record that leaves a later field empty is matched by the fields it has": "i dont understand this line.")
+    expect(picker).toContain('<strong>Still match a record when one of its key fields is empty</strong> — it is matched by the key fields it does have');
     expect(picker).toContain("eid('dsMatchTiered')?.addEventListener('change', e => {");
     const i = picker.indexOf("eid('dsMatchTiered')?.addEventListener");
     expect(picker.slice(i, i + 200)).toContain('matchTiered = e.target.checked;');

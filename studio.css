@@ -6941,3 +6941,11 @@ details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
 /* who owns the record in both orgs — above the field compare (owner 2026-11-19) */
 .ds-dc-owner { font-size: 12.5px; color: var(--text); background: var(--surface2, rgba(127,127,127,.08)); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; line-height: 1.5; }
 .ds-dc-owner[hidden] { display: none; }
+
+/* the pause panel's kind headers pop — one colour per kind, from the theme's own tokens so light, dark and black all
+   carry it (owner 2026-11-19: "this lines should have a different color and should also got in black and dark
+   theme. i want them to pop a bit more to the eye") */
+.ds-dep-pause-kindhd { --k: var(--brand); display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 11px; font-weight: 700; letter-spacing: .05em; color: var(--k); background: color-mix(in srgb, var(--k) 12%, transparent); border-left: 3px solid var(--k); border-top: 1px solid var(--border-light, var(--border)); }
+.ds-dep-pause-kindhd[data-kind="rule"] { --k: var(--c-warn-fg, #b75d00); }
+.ds-dep-pause-kindhd[data-kind="dupe"] { --k: var(--c-good-fg, #2e844a); }
+.ds-dep-pause-kindhd .ds-dep-pause-tabn { background: var(--k); color: var(--surface, #fff); font-weight: 700; }

@@ -13,14 +13,15 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = f => readFileSync(join(root, f), 'utf8');
 const select = extractFunction('sftk-vrpause.js', 'sftkVrPauseSelect');
 const VP = extractFunctions('sftk-vrpause.js',
-  ['_sftkVpLit', 'sftkVrPauseSelect', 'sftkVrPauseList', '_sftkVpMemory', 'sftkVrPausedLeftovers', '_sftkVpBody', '_sftkVpSwitch', 'sftkVrPauseOff', 'sftkVrPauseOn'],
+  ['_sftkVpLit', 'sftkVrPauseSelect', 'sftkVrPauseList', '_sftkVpReadPkg', 'sftkVrPausePkgInner', 'sftkVrPausePkgFiles', '_sftkVpWriteMsg', '_sftkVpMemory', 'sftkVrPausedLeftovers', '_sftkVpBody', '_sftkVpSwitch', 'sftkVrPauseOff', 'sftkVrPauseOn'],
   { 'sftk-write.js': ['sftkWriteVerified', '_sftkWriteVerifiedCore', 'sftkWriteVerifiedAll'] });
 
 const ORG = 'https://t.my.salesforce.com';
 const ROWS = [
   { Id: '03dA', ValidationName: 'Retail_Needs_Website', NamespacePrefix: null, ManageableState: 'unmanaged', EntityDefinition: { QualifiedApiName: 'Account' } },
   { Id: '03dC', ValidationName: 'Lab_Lead_Needs_Phone', NamespacePrefix: null, ManageableState: 'unmanaged', EntityDefinition: { QualifiedApiName: 'Contact' } },
-  { Id: '03dP', ValidationName: 'Pkg_Rule', NamespacePrefix: 'pkg', ManageableState: 'installed', EntityDefinition: { QualifiedApiName: 'Account' } },
+  { Id: '03dP', ValidationName: 'Pkg_Rule', NamespacePrefix: null, ManageableState: 'installed',   // installed with no namespace to read it by: named, left on (a namespaced one is switched — test/vrpause-packaged-1119)
+   EntityDefinition: { QualifiedApiName: 'Account' } },
 ];
 const MD = { '03dA': { active: true, errorConditionFormula: 'ISBLANK(Website)', errorMessage: 'needs a website', description: null },
              '03dC': { active: true, errorConditionFormula: 'ISBLANK(Phone)', errorMessage: 'needs a phone', description: 'd' } };
