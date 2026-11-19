@@ -124,3 +124,101 @@ scan catches a miss); the unverified research leads; splitting custom-metadata t
 - Final pass on the final packed build (0a14697), 02:00–03:00: `release-smoke` ✓, the upgrade test ✓, the first three `qa11` runs ✓ — then **npc ran out of its 15,000 daily API calls** (the night's QA used them) and every later run failed at login (`sf org open` refused, "TotalRequests Limit exceeded"). Not a product failure. STILL OWED before the store upload: `qa11`, `toolkit` and the `studio` / `studio2` subsets once more on the packed build when the quota is back (rolling 24 hours).
 - Final pass, 2026-11-11 13:00–14:10, packed build 9ee2bd5: 56 of 59 (qa11 20/21, toolkit 27/27, studio 6/7, studio2 3/4). The three: ↻ Retry lost its ticks again (the run's own tail clears the selection after the History entry exists — fenced with `_sftkRunTail` / `_depRescanBusy`; 4 of 4 live after), and two fixture-drift failures caused by the QA script itself (it threw before its rollback and left 4 accounts in npc2 — removed; the script now always rolls back). Re-run on the re-packed build: value-edit-nowrite, engine-bulk-rollback, allorgs-compare, retry-and-rollback, onepass-tree-rollback, deploy-tree, deploy-ticks, dryrun, pause-panel, pii-deploy, pkg-deploy, history-beforeafter, release-smoke — all exit 0. A full pass costs about 8,000 of npc's 15,000 daily API calls.
 - NOT re-run on the last build: the 27 Toolkit-batch scripts and the rest of qa11 (the change since their green run is confined to studio-deploy.js / studio-reconcile.js, Data Studio only).
+
+
+## Multi-agent review, 2026-11-20 (workflow qa-1-1, run wf_3e89570d-86d)
+
+Eleven read-only reviewers over master..HEAD, one skeptic per finding, a critic. 99 agents. Raised 87, stood 74, refuted 13; the critic added 2 (not checked by a skeptic). Full text of every finding, its evidence and the proposed fix: docs/qa/qa-1.1-workflow-result.json. Nothing was run against an org by the reviewers.
+
+| # | Severity | Area | Where | Finding | Status |
+|---|---|---|---|---|---|
+| 1 | data-loss | plan | field-cleaner.js:1727 | A plan run permanently deletes a flow's paused/failed interviews without ever telling the user | FIXED 2026-11-20 — test/fc-plan-1117 (QA 1.1 block); not run live |
+| 2 | data-loss | plan | field-cleaner.js:1586 | A flow with no active version using the field is planned as '✂ Remove', picked by default, and its versions are deleted with no undo | FIXED 2026-11-20 — test/fc-plan-1117 (QA 1.1 block); not run live |
+| 3 | data-loss | mdapi | sftk-mdapi.js:738 | Aura application / event / interface / tokens bundle is written back with a .cmp-meta.xml file | open |
+| 4 | data-loss | mdapi | sftk-mdapi.js:1069 | Search-layout edit on a custom object deploys <profileSearchLayouts> with its <fields> stripped | open |
+| 5 | data-loss | history | sftk-history.js:194 | A Toolkit change pushed past the 100-entry cap cannot be seen, undone, backed up or cleared anywhere | open |
+| 6 | data-loss | history | studio-history.js:931 | Data Studio's 'Clear All' also deletes every Toolkit change and its Undo, which the page says are not listed there | open |
+| 7 | data-loss | deploy-run | studio-deploy.js:2429 | A second run in the same page session PATCHes a rule's cached, stale Metadata and reverts edits made to the rule in between | open |
+| 8 | data-loss | deploy-build | studio-valueedit.js:239 | Suggest PII from a child record's editor replaces the saved deployment with the child-rooted view | open |
+| 9 | data-loss | deploy-build | studio-builder.js:2322 | 🎭 inside Fields & mapping now replaces the mapping window; first-time per-target exceptions are dropped | open |
+| 10 | data-loss | background | background.js:1310 | Dry run whose poison record is accepted deletes pre-existing target records that an upsert node merely updated | open |
+| 11 | security | sweep | sftk-sweep.js:701 | Exported CSV cells that begin with = + - @ are written as-is | open |
+| 12 | security | tools | user-copy.js:1617 | Flow Access and Copy Permissions re-send a write to ANOTHER org after SESSION_EXPIRED (the fix lightning-pages.js got in 1.1 was not applied here) | open |
+| 13 | wrong-result | plan | field-cleaner.js:7510 | A plan run switches a validation rule off (or rewrites its formula) under the label '✂ Remove' with the choice dialog never shown | FIXED 2026-11-20 — test/fc-plan-1117 (QA 1.1 block); not run live |
+| 14 | wrong-result | plan | field-cleaner.js:5203 | Flow whose decision outcome rests on the field: the plan silently takes the plain way, and the row can be reported Done while the new active version still names the field | FIXED 2026-11-20 — test/fc-plan-1117 (QA 1.1 block); not run live |
+| 15 | wrong-result | plan | field-cleaner.js:1782 | The run report says 'nothing was changed in these' for rows that were partly changed | open |
+| 16 | wrong-result | scan | field-cleaner.js:2281 | scanSupplemental's dedupe key cuts every id to 15 characters, so rows whose id is a NAME collide and are silently dropped | open |
+| 17 | wrong-result | scan | field-cleaner.js:2202 | Lightning-page leg lists a record page of ANOTHER object as a blocker when that object has a same-named field | open |
+| 18 | wrong-result | scan | field-cleaner.js:2668 | Aura leg lists every bundle that contains the field's name, with no tie to the object, as a blocker | open |
+| 19 | wrong-result | scan | field-cleaner.js:2350 | List-view, quick-action, search-layout and parent-layout legs take a failed read as 'nothing there' instead of reporting it unread | open |
+| 20 | wrong-result | scan | field-cleaner.js:2348 | List-view leg reads only the first page of sobjects/<obj>/listviews | open |
+| 21 | wrong-result | scan | field-cleaner.js:332 | fcRelatedListIsOf misses the standard related lists that are not named Related<Object>List, so those columns are never listed | open |
+| 22 | wrong-result | scan | field-cleaner.js:2463 | Workflow-field-update leg matches only the field being UPDATED, not a field read by the update's formula | open |
+| 23 | wrong-result | scan | field-cleaner.js:322 | Prompt-template leg requires an input typed as the scanned object, so a merge through a related record is a missed blocker | open |
+| 24 | wrong-result | scan | field-cleaner.js:655 | The scan's cost line leaves out per-item fan-outs of the child-list-view, inactive-validation-rule, Path, prompt-template and compact-layout legs | open |
+| 25 | wrong-result | mdapi | sftk-mdapi.js:1426 | Replace in rule-entry, workflow, approval and field-update formulas ignores 'cannot tell' paths and reports a half edit as verified | open |
+| 26 | wrong-result | mdapi | sftk-mdapi.js:1278 | Lookup filter edit misses the field on the other side of a condition (<valueField>Object.Field>, <field>$Source.Field>) | open |
+| 27 | wrong-result | mdapi | sftk-mdapi.js:925 | Replacing a lookup field leaves its relationship traversals (Old__r.X) in formulas, code and flows, and reports the item done | open |
+| 28 | wrong-result | mdapi | sftk-mdapi.js:1628 | Prompt template replace only rewrites {!$Input:Ref.Field}; a path form of the same field is left and the row is reported done | open |
+| 29 | wrong-result | sweep | sftk-sweep.js:683 | Sweep hides a fresh blocker whose name is a prefix of (or prefixed by) a component the scan already lists | open |
+| 30 | wrong-result | sweep | sftk-sweep.js:31 | A lookup field's relationship form (Field__r) and a person-account form (Field__pc) are never searched | open |
+| 31 | wrong-result | sweep | sftk-sweep.js:605 | Another object's flow or Lightning page with a same-named field is reported as a blocker of this field; its layouts, reports and permission sets as mentions | open |
+| 32 | wrong-result | sweep | sftk-sweep.js:380 | A field named only inside a code comment is an Apex blocker and joins the list with the ways of its kind | open |
+| 33 | wrong-result | sweep | field-cleaner.js:3943 | A report, dashboard or email-template folder whose listing call fails is skipped with no note, and the sweep still ends 'done' | open |
+| 34 | wrong-result | sweep | sftk-sweep.js:63 | Kinds that hold field names are skipped and the 'Kinds not read' line does not name them; the same line still says static resources are not read | open |
+| 35 | wrong-result | sweep | field-cleaner.js:4015 | A retrieve whose zip cannot be unpacked is counted as read, so the sweep ends green 'done'; retrieve warnings are dropped | open |
+| 36 | wrong-result | sweep | sftk-sweep.js:726 | The Tooling id lookup for a joined code hit takes the first row for a name, with no namespace filter | open |
+| 37 | wrong-result | history | sftk-history.js:401 | A failed undo attempt closes the Undo for good; a connection drop during Undo all burns every remaining change | open |
+| 38 | wrong-result | history | sftk-history.js:578 | Restore a backup says 'each with its Undo' while the oldest entries go straight to an archive nothing can read | open |
+| 39 | wrong-result | history | studio-history.js:992 | An archived Data Studio tool entry shows an enabled Undo that always answers 'no longer in Activity' | open |
+| 40 | wrong-result | history | studio-history.js:1094 | 'Show older' skips archived runs once an old entry has been put back at the end of the hot list | open |
+| 41 | wrong-result | history | studio-history.js:1110 | 'Export all (incl. archive)' writes the stale archived copy of an entry that is also in the hot list | open |
+| 42 | wrong-result | deploy-run | studio-reconcile.js:3027 | Nothing stops a second run or a dry run from starting while a run is on; it switches the paused rules and flows back on mid-run and tears down the live run's controls | open |
+| 43 | wrong-result | deploy-run | studio-deploy.js:2361 | A rule or flow that was switched off or re-versioned after the page read its list is switched ON (or back to the old version) when the run ends | open |
+| 44 | wrong-result | deploy-run | studio-deploy.js:789 | A dry run bypasses duplicate rules on every object, while the real run bypasses only the objects ticked in the pause panel | open |
+| 45 | wrong-result | deploy-run | studio-reconcile.js:5470 | The dry run tells the user a ticked packaged validation rule is NOT paused and the real run 'would be refused the same way' | open |
+| 46 | wrong-result | deploy-build | studio-reconcile.js:4866 | An owner picked in the record editor is overwritten by owner matching on a Changed (update) record | open |
+| 47 | wrong-result | deploy-build | studio-valueedit.js:218 | Owner row says 'Will belong to you' on a Changed record, where the update leaves the target's owner as it is | open |
+| 48 | wrong-result | deploy-build | studio-builder.js:2347 | PII example for Lead (and for records with no name) shows a different e-mail domain than the run writes | open |
+| 49 | wrong-result | background | background.js:1235 | Dry run packs up to 24 sObject Collections subrequests into one composite; Salesforce documents a limit of 5 per composite request | open |
+| 50 | wrong-result | background | background.js:1395 | Dry run ignores the per-object duplicate-rule choice: one bypass header for the whole composite | open |
+| 51 | wrong-result | tools | popup.js:1403 | Flows > Versions list drops a whole group of versions when a flow's label changed between versions (1.1 tree regression) | open |
+| 52 | wrong-result | tools | popup.js:2862 | Deleting an active flow version: a failed re-read after the switch-off leaves the flow OFF with no switch-back and no undo step | open |
+| 53 | wrong-result | tools | flow-permissions.js:290 | Flow Access joins flows to FlowDefinition by bare DeveloperName: a packaged flow and an own flow of the same name collapse to one Id | open |
+| 54 | wrong-result | tools | studio-compare.js:460 | Org Compare counts a partial read as real: 'incomplete' from SF_QUERY_ALL is never checked | open |
+| 55 | ui | deploy-run | studio-deploy.js:2372 | A failed read of the automation lists is never retried; 'press 🔄 Rescan to read them again' does nothing | open |
+| 56 | ui | background | background.js:5088 | A deploy that fails on Apex tests or coverage reports only "Deployment failed" | open |
+| 57 | ui | tools | popup.js:2899 | A flow version delete whose re-read never answered is reported as a plain verified success (track.unverified is written, never read) | open |
+| 58 | ui | ui | styles.css:7505 | The 'All at once' plan and the Undo picker use an undefined --accent: dark-blue text on dark surfaces, white on light red for the chosen Delete | open |
+| 59 | ui | ui | studio.css:6185 | Data Studio PII suggestion window: 'more' summary and All/None links use the undefined --accent, about 3:1 in dark and OLED | open |
+| 60 | stale | sweep | field-cleaner.js:3892 | Sweep rows of the previous field can be appended to the next field's scan while the join is still looking up ids | open |
+| 61 | stale | history | sftk-history.js:518 | An entry deleted or cleared in the Toolkit comes back when a Data Studio tab is open | open |
+| 62 | stale | deploy-run | sftk-vrpause.js:209 | Rules whose switch-off was accepted but could not be re-read stay OFF with no memory, no restore and no leftover card | open |
+| 63 | stale | deploy-run | sftk-vrpause.js:176 | A packaged rule whose switch-off deploy outlives the 100-second poll is treated as refused, then goes OFF later with nothing remembered | open |
+| 64 | stale | deploy-build | studio-valueedit.js:33 | The running user's name is cached per org URL, not per session | open |
+| 65 | stale | background | background.js:5049 | A production Apex deploy that runs tests outlives the 100 s poll, and History then records "nothing to undo" for a deploy that still completes | open |
+| 66 | stale | ui | CHANGELOG.md:42 | What's New promises a pausable Remove all / Replace all walk (Pause, Continue, End bar) that 1.1 removed | open |
+| 67 | stale | ui | CHANGELOG.md:227 | What's New shows internal test notes: dev org aliases, script paths, a fixture entry | open |
+| 68 | stale | ui | CHANGELOG.md:341 | The 1.1.0 card states superseded behaviour next to the entry that reversed it | open |
+| 69 | stale | ui | field-cleaner.js:5992 | Flow fix error tells the user to pick an option 'in a walk over all items' that no longer exists | open |
+| 70 | stale | ui | CHANGELOG.md:16 | The 1.1.0 card is dated 2026-11-04 while its entries run to 2026-11-19 | open |
+| 71 | stale | claims | CHANGELOG.md:42 | What's New still promises the Remove all / Replace all walk with Pause, Continue and End, which was removed | open |
+| 72 | stale | claims | scripts/dev/qa/batches.mjs:98 | Release-gate batch step fr-every-replace passes green while testing nothing; All at once is in no batch | open |
+| 73 | stale | claims | scripts/dev/video/sections.mjs:853 | Video chapter 'Field Cleaner' silently skips its three bulk steps and then narrates that everything was done | open |
+| 74 | stale | claims | CHANGELOG.md:101 | Older 1.1 bullets contradict newer ones in the same What's New section | open |
+| C1 | data-loss | critic | field-cleaner.js:8827 | Delete Field acts on whatever field is selected when each step runs, not the field the user confirmed: another field can be deleted, or the wrong field reported deleted | open — not checked by a skeptic |
+| C2 | wrong-result | critic | field-cleaner.js:3357 | A scan with no rows but with kinds it could not read shows 'No dependencies found' with Delete Field enabled; the unread list is never shown | open — not checked by a skeptic |
+
+### What no reviewer covered (the critic)
+
+- Field Cleaner's Delete Field path itself was read by no area: confirmDelete / doDelete / _deleteFieldViaMetadata / askSalesforce / _askJoin / _paintAsk / checkEnableDelete and the gate half of renderResults (field-cleaner.js 3349-3606, 5497-5541, 8468-8901). 'scan' and 'plan' both list it as not covered. This is the gap I reviewed; the two findings below come from it.
+- field-cleaner.js fix bodies nobody read: fixCodeReplace, fixEmailTemplate, fixLayout, fixLayoutRelatedList, fixReport, fixReportType, fixSearchLayout, _deleteRestorePlan / _extraDeleteSpec, and restoreSnapshot. I only skimmed restoreSnapshot: its Flow and Layout branches write with no journal entry and no re-read, unlike the other branches; I did not tie that to a concrete failure.
+- Restore points window (openRestorePoints / renderSnapshotLog): the list is filtered by the org at render time, but the click deploys with the live _orgUrl/_sid. Whether an org switch can happen while the modal is open (which would deploy org A's snapshot into org B) was not traced.
+- Changed files that no area lists at all: studio-rollback.js (31 lines; 'history' says not opened), studio-picklists.js (40), studio-sequences.js (35), studio-seed.js (18), sftk-reportclean.js (18), sftk-flowsurgery.js (32; only the head of sftkFlowSurgeryPlan was read), sftk-matching.js (6), apex-log-viewer.js, studio-ring.js, sftk-build.js, studio-fields.js, studio-schema.js, studio-readiness.js, popup.html, studio.html, PRIVACY.md, README.md.
+- Files listed but only skimmed as diff lines: sftk-run-progress.js (206), studio-transfer.js (165), studio-scan.js (15), and sftk-undo.js outside its hunks (the engine that runs every Data Studio undo).
+- dependency-map.js: the bulk flow-switch runner (Switches) was read only around its changed hunks by 'sweep'; 'tools' covered just the pure planner. A bulk switch that stops half way is not covered end to end.
+- studio-reconcile.js outside runReconcile (about 1,000 changed lines: scan rendering, child sections, match review, stamp identity, the reconcileOverwrite body) and the studio-deploy.js tree / parents-first / merge-copy hunks were not read by 'deploy-run' or 'deploy-build'.
+- background.js: Bulk API ingest and file-transfer changes, sftkWipeObject, getSfSession / getAllSfSessions / sftkCookieSessFor and the PII v2 fabrication patterns were skimmed only. PRIVACY.md changed and nobody checked its statements against what the code sends or stores.
+- Changelog claims for Data Deployment, Copy Permissions, Flow Access and Activity were not matched to code ('ui' says so); 'claims' did not match bullets dated before 2026-11-10 one by one.
+- Failure modes nobody asked about: chrome.storage.local write failures outside the restore-point save (history, deletion log, tool history); two extension pages (popup and Data Studio) writing the same storage keys at once, beyond the one history finding; the SESSION_EXPIRED re-send path inside Field Cleaner's own bg() wrapper (field-cleaner.js 884 onward), which is the same class as the Flow Access / Copy Permissions wrong-org finding and was not checked here.
+- Nothing was run or rendered by any reviewer except a few pure-function reproductions; no vitest file was executed by anyone, including me. Both findings below are from reading the code.

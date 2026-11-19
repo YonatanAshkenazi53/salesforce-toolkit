@@ -11,7 +11,7 @@ describe('Field Cleaner refuses "flow keeps running" up front when the fix would
   it('is checked right after the "nothing can be taken out" refusal, before any dialog', () => {
     const refuseNothing = SRC.indexOf("if (preset === 'replace' && !canReplace) {");
     const refuseEmpty = SRC.indexOf("if (preset === 'replace' && !swap && replaceLikelyRefused) {");
-    const dialog = SRC.indexOf('const sure = await sftkConfirmDestructive({\n      title: `${swap ? \'Replace\' : \'Remove\'} field reference');
+    const dialog = SRC.indexOf('      title: `${swap ? \'Replace\' : \'Remove\'} field reference');
     expect(refuseNothing).toBeGreaterThan(0);
     expect(refuseEmpty).toBeGreaterThan(refuseNothing);
     expect(dialog).toBeGreaterThan(refuseEmpty);

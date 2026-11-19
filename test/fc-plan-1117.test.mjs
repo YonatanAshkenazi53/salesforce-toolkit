@@ -192,3 +192,24 @@ describe('a run counts once', () => {
     expect(FC).not.toContain('${at} of ${todo.length}');
   });
 });
+
+// QA 1.1 (workflow wf_3e89570d, 2026-11-20), findings 1, 2, 13, 14: what a ⚡ run must never do without asking
+describe('QA 1.1 — a run asks where the plan screen did not say it', () => {
+  const FC = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8');
+  it('a dialog marked planAsk is never the plan’s to answer, whatever its items', () => {
+    expect(fcPlanOwnsDialog({ planAsk: true, items: [{ label: 'My Flow v3' }] }, 'My Flow')).toBe(false);
+    expect(fcPlanOwnsDialog({ planAsk: false, items: [{ label: 'My Flow v3' }] }, 'My Flow')).toBe(true);
+  });
+  it('a flow with paused or failed interviews, and a rule that would be switched off, are marked', () => {
+    expect(FC).toContain("planAsk: type === 'Flow' && !!(flowPlan && flowPlan.interviews && flowPlan.interviews.length),");
+    expect(FC).toContain("planAsk: vrChoice && vrMode === 'off',");
+  });
+  it('"Delete N old versions" is a delete: never picked by default', () => {
+    expect(FC).toContain('data-swap="0" data-way="versions" title="Delete the old versions that still mention the field">');
+    expect(FC).toContain("b.dataset.way === 'off' || b.dataset.way === 'versions') ? 'delete' : 'remove';");
+    expect(fcPlanDefault(['delete'], 'Flow', 'must')).toBe('leave');
+  });
+  it('a flow with a place the fix never rewrites has no ✂ in the plan, with the reason', () => {
+    expect(FC).toContain('if ((pv.remaining || []).length) return `the field also sits in ${pv.remaining.length} place');
+  });
+});

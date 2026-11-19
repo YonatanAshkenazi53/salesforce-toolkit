@@ -459,6 +459,7 @@ function fcPlanCountsText(c) {
 // the component itself ("Name", or "Name v3" for a flow version); anything else — the flow's paused interviews,
 // another button the user pressed meanwhile — is asked as always. PURE.
 function fcPlanOwnsDialog(opts, name) {
+  if (opts && opts.planAsk) return false;   // the dialog carries a choice or a loss the plan screen did not show: it is asked
   const items = (opts && Array.isArray(opts.items)) ? opts.items : [];
   const n = String(name == null ? '' : name);
   if (!n || !items.length) return false;
@@ -1481,7 +1482,7 @@ const FieldCleaner = (() => {
       // a Process Builder process is never rewritten here, but it can go as a whole (user 2026-11-07: "צריך את כולם")
       if (card && card.pb) return `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete every version of this process (switched off first if it runs) — its latest version is kept as a restore point; ↩ Undo deploys it back as a new, inactive version">🗑 Delete process</button>`;
       if (card && !card.active) {
-        return `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Delete the old versions that still mention the field">🗑 Delete ${card.versions.length} old version${card.versions.length === 1 ? '' : 's'}</button>`;
+        return `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" data-way="versions" title="Delete the old versions that still mention the field">🗑 Delete ${card.versions.length} old version${card.versions.length === 1 ? '' : 's'}</button>`;
       }
       if (card) {
         // A flow that RUNS on the field leaves one small decision, and it is
@@ -1595,7 +1596,7 @@ const FieldCleaner = (() => {
       let row = byId.get(id);
       if (!row) { row = { type, id, name: p.dataset.name || id, sev: g.dataset.sev === 'must' ? 'must' : 'later', kindLabel: (TYPE_CFG[type] || TYPE_CFG_DEFAULT).label || type, opts: [], why: _preWhy(id) }; byId.set(id, row); }
       p.querySelectorAll('.fc-fix-btn:not([disabled]):not(.fc-xml-fix)').forEach(b => {
-        const kind = b.dataset.swap === '1' ? 'replace' : (b.classList.contains('btn-danger') || b.dataset.way === 'off') ? 'delete' : 'remove';
+        const kind = b.dataset.swap === '1' ? 'replace' : (b.classList.contains('btn-danger') || b.dataset.way === 'off' || b.dataset.way === 'versions') ? 'delete' : 'remove';
         if (row.opts.some(o => o.kind === kind)) return;
         row.opts.push({ kind, swap: b.dataset.swap === '1', way: b.dataset.way || '', label: (b.textContent || '').replace(/\s+/g, ' ').trim() });
       });
@@ -1611,6 +1612,7 @@ const FieldCleaner = (() => {
       const pv = fp.preview;
       if (!pv || !pv.removed.length) return 'nothing can be taken out of its active version automatically';
       if ((pv.emptied || []).length) return `taking the field out leaves ${pv.emptied.slice(0, 3).map(e => `${e.kind} “${e.label || e.name || '?'}”`).join(', ')} with nothing in it, and Salesforce refuses a version like that`;
+      if ((pv.remaining || []).length) return `the field also sits in ${pv.remaining.length} place${pv.remaining.length === 1 ? '' : 's'} the fix never rewrites (a decision outcome that rests on the field alone, a numbered logic or a formula) — press ✂ on the flow’s own row to choose`;
       return '';
     } catch (_) { return ''; }
   }
@@ -5262,6 +5264,8 @@ const FieldCleaner = (() => {
     }
     const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
+      // QA 1.1: paused / failed interviews are deleted first and cannot be re-created — a ⚡ run asks, as the row does
+      planAsk: type === 'Flow' && !!(flowPlan && flowPlan.interviews && flowPlan.interviews.length),
       title: `${swap ? 'Replace' : 'Remove'} field reference — ${cfg.label || type}`,
       ...(swap ? { icon: '⇄' } : {}),
       items: type === 'Flow'
@@ -7547,6 +7551,8 @@ const FieldCleaner = (() => {
       ${vrWay('edit', '✎ Edit the rule myself', 'Change the formula by hand — exactly your text is deployed.')}
     </div><div id="fcVrDiff">${vrDiff(vrMode)}</div>` : '';
     const sure = await sftkConfirmDestructive({
+      // QA 1.1: when the only way offered first is to switch the rule OFF, a ⚡ run asks — the plan said "Remove"
+      planAsk: vrChoice && vrMode === 'off',
       title: vrChoice ? `The field in the ${spec.what} — ${cfg.label || type}` : `${verb} the field in the ${spec.what} — ${cfg.label || type}`,
       icon: ico,
       items: [{ label: componentName, sub: spec.what }],
