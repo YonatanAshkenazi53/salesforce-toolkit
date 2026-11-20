@@ -60,8 +60,12 @@ describe('the engine and the Builder', () => {
   it('a fallback queue that does not take the object is said, with who got the records', () => {
     expect(BG).toContain('the fallback queue does not take ${objType} records in the target, so ${ownerDefaulted} record(s) with no matching owner belong to the user who ran the deployment.');
   });
+  it('the picker comes after the match fields, as step 2', () => {
+    expect(BL.indexOf('data-owner-match-field')).toBeLessThan(BL.indexOf('id="dsProfileOwnerFallbackWrap"'));
+    expect(BL).toContain('1. A user is looked up in the target by these fields, a queue by its API name.');
+  });
   it('one picker: you, the target’s users, the target’s queues', () => {
-    expect(BL).toContain('<span class="ds-builder-owner-fb-lbl">When the target has no such owner, give the record to</span>');
+    expect(BL).toContain('<span class="ds-builder-owner-fb-lbl">2. Only when that finds no one, give the record to</span>');
     expect(BL).toContain('<option value="">You — the user who runs the deployment</option>');
     expect(BL).toContain('<optgroup label="Users">');
     expect(BL).toContain('<optgroup label="Queues — used on the objects each queue takes">');

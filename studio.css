@@ -5737,9 +5737,9 @@ body.ds-pro {
 .ds-builder-orgs-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  /* start, not stretch: the source card holds one line and the targets card
-     holds a list, so stretching left a 200px white void under "Production". */
-  align-items: start;
+  /* stretch: both cards hold the same three lines (heading, org, one hint), so they are the same height
+     (owner 2026-11-20: "can we put source and target in the same height") */
+  align-items: stretch;
   gap: var(--sp-5);
   padding: var(--sp-5);
   background: var(--c-surface-sunk);
@@ -6959,6 +6959,10 @@ details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
 .ds-ve-own-will { display: block; margin-top: 4px; font-size: 12px; color: var(--text); line-height: 1.45; }
 
 /* Record owners: the fallback picker carries its own sentence (owner 2026-11-20) */
-.ds-builder-owner-ctls .ds-builder-owner-fb { flex: 1 1 100%; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--text); }
+.ds-builder-owner-fb { margin: 8px 0 4px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--text); }
 .ds-builder-owner-fb-lbl { flex: 0 0 auto; }
-.ds-builder-owner-ctls .ds-builder-owner-fb .ds-select { flex: 1 1 280px; min-width: 240px; }
+.ds-builder-owner-fb .ds-select { flex: 1 1 280px; min-width: 240px; }
+
+/* an option with hover help says so with the cursor (owner 2026-11-20) */
+.ds-bld-chk[data-owner-help] { cursor: help; }
+.ds-bld-chk[data-owner-help] input { cursor: pointer; }

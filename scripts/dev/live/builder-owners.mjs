@@ -17,8 +17,11 @@ export default async function (h) {
   h.log('hint:', await h.eval("document.querySelector('#dsProfileOwnerHint')?.textContent"));
   await h.eval("(() => { const i = document.querySelector('#dsRootObj'); i.focus(); i.value = 'dlrs__LookupP'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");
   await h.sleep(1500);
-  await h.eval("document.querySelector('.ds-builder-owner-row').scrollIntoView({ block: 'start' })");
+  await h.eval("document.querySelector('.ds-builder-name-row').scrollIntoView({ block: 'start' })");
   const col = () => h.eval("(() => { const a = document.querySelector('.ds-autocomplete-item-api'); return a ? a.textContent + ' ' + getComputedStyle(a).color + ' on ' + getComputedStyle(document.querySelector('.ds-autocomplete-list')).backgroundColor : 'no suggestion'; })()");
+  h.log('card heights:', JSON.stringify(await h.eval("[...document.querySelectorAll('.ds-builder-org-col')].map(c => Math.round(c.getBoundingClientRect().height))")));
+  h.log('hover Email:', await h.eval("document.querySelector('[data-owner-help=Email]').title"));
+  h.log('hover lowercase emails:', await h.eval("document.querySelector('[data-owner-help=emailLower]').title"));
   for (const dark of [false, true]) {
     await h.eval(`document.documentElement.classList.toggle('ds-dark', ${dark})`); await h.sleep(500);
     h.log(dark ? 'dark' : 'light', 'suggestion:', await col());

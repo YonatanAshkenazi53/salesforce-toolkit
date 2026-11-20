@@ -118,6 +118,7 @@ function renderBuilder() {
           <select id="dsProfileSrcOrg" class="ds-select" aria-label="Source org — where records come from">
             <option value="">— Select source org —</option>${orgOpts(p.sourceOrg)}${gone(p.sourceOrg)}
           </select>
+          <div class="ds-bld-tgt-hint">The object list and the records you pick are read from this org</div>
         </div>
         <div class="ds-builder-orgs-flow">
           <button class="ds-builder-orgs-swap" id="dsProfileSwapOrgs" aria-label="Swap source and target orgs"
@@ -125,10 +126,10 @@ function renderBuilder() {
         </div>
         <div class="ds-builder-org-col ds-bld-col-tgt">
           <div class="ds-lbl ds-bld-col-hd">${dsIcon('box')}Default target <span class="ds-builder-org-hint">where records are written</span></div>
-          <div class="ds-bld-tgt-hint">The Deploy page lets you pick any open org at run time · field mapping previews use this org's schema</div>
           <select id="dsProfileTgtOrg" class="ds-select" aria-label="Default target org — where records are written">
             <option value="">— Select target org —</option>${orgOpts(p.targetOrg, p.sourceOrg)}${gone(p.targetOrg)}
           </select>
+          <div class="ds-bld-tgt-hint">Field mapping previews use this org · the Deploy page lets you pick any open org at run time</div>
         </div>
       </div>`;
       })()}
@@ -147,12 +148,6 @@ function renderBuilder() {
                attribute is the state channel, not decoration — switching to
                [hidden] here would leave them hidden when the handler cleared
                the inline value. -->
-          <label id="dsProfileOwnerFallbackWrap" class="ds-builder-owner-fb" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
-            <span class="ds-builder-owner-fb-lbl">When the target has no such owner, give the record to</span>
-            <select id="dsProfileOwnerFallback" class="ds-select" aria-label="Who gets a record whose owner is not in the target">
-              <option value="">${p.ownerMapping?.fallbackUserId ? esc(p.ownerMapping.fallbackUserName || 'the saved fallback') : 'You — the user who runs the deployment'}</option>
-            </select>
-          </label>
         </div>
         ${(() => {
           // "Match owners by" — visible only in 'match' mode. Renders from
@@ -160,17 +155,27 @@ function renderBuilder() {
           // matching config shows the Name-only path the engine will really
           // run; nothing is written back until a control here is touched.
           const m = bldOwnerMatchingDisplay(p.ownerMapping);
-          const fld = (name, label, title) => `<label class="ds-bld-chk"${title ? ` title="${title}"` : ''}><input type="checkbox" data-owner-match-field="${name}" ${m.fields.includes(name) ? 'checked' : ''}> ${label}</label>`;
-          const tgl = (key, label, title) => `<label class="ds-bld-chk" title="${title}"><input type="checkbox" data-owner-match-norm="${key}" ${m.normalize[key] ? 'checked' : ''}> ${label}</label>`;
+          // the hover text of each option: what it does and a worked example (bldOwnerMatchHelp); the example is
+          // re-written with a real user of the target once its users are loaded (loadOwnerFallbackUsers)
+          const help = k => esc(bldOwnerMatchHelp(k, null));
+          const fld = (name, label) => `<label class="ds-bld-chk" data-owner-help="${name}" data-help="${help(name)}" title="${help(name)}"><input type="checkbox" data-owner-match-field="${name}" ${m.fields.includes(name) ? 'checked' : ''}> ${label}</label>`;
+          const tgl = (key, label) => `<label class="ds-bld-chk" data-owner-help="${key}" data-help="${help(key)}" title="${help(key)}"><input type="checkbox" data-owner-match-norm="${key}" ${m.normalize[key] ? 'checked' : ''}> ${label}</label>`;
           return `
         <div id="dsOwnerMatchBlock" class="ds-bld-owner-match" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
           <div class="ds-bld-owner-row">
             <span>Match owners by</span>
-            ${fld('Email', 'Email')}${fld('Name', 'Name')}${fld('Username', 'Username')}${fld('Alias', 'Alias')}${fld('FederationIdentifier', 'Federation ID', 'Not usable on queue-enabled objects (Case, Lead, …) — Salesforce can’t read Federation ID through their Owner field, so the source query would fail. Prefer Email there.')}
+            ${fld('Email', 'Email')}${fld('Name', 'Name')}${fld('Username', 'Username')}${fld('Alias', 'Alias')}${fld('FederationIdentifier', 'Federation ID')}
             <span class="ds-bld-owner-sep" aria-hidden="true">·</span>
-            ${tgl('caseFold', 'case-insensitive', 'Compare keys lowercase — "ADA" matches "ada"')}${tgl('trim', 'trim spaces', 'Strip leading/trailing spaces before comparing')}${tgl('emailLower', 'lowercase emails', 'Lowercase email-shaped values only — safe on non-email fields')}
+            ${tgl('caseFold', 'case-insensitive')}${tgl('trim', 'trim spaces')}${tgl('emailLower', 'lowercase emails')}
           </div>
-          <div class="ds-bld-owner-note">Usernames are org-suffixed, so Email usually survives sandbox refreshes best. Two target users sharing the same key = no guess: those records go to the fallback user.</div>
+          <div class="ds-bld-owner-note">1. A user is looked up in the target by these fields, a queue by its API name. Usernames are org-suffixed, so Email usually survives sandbox refreshes best.</div>
+          <label id="dsProfileOwnerFallbackWrap" class="ds-builder-owner-fb">
+            <span class="ds-builder-owner-fb-lbl">2. Only when that finds no one, give the record to</span>
+            <select id="dsProfileOwnerFallback" class="ds-select" aria-label="Who gets a record whose owner is not in the target">
+              <option value="">${p.ownerMapping?.fallbackUserId ? esc(p.ownerMapping.fallbackUserName || 'the saved fallback') : 'You — the user who runs the deployment'}</option>
+            </select>
+          </label>
+          <div class="ds-bld-owner-note">Two target users sharing the same key = no guess: those records go to the owner picked here.</div>
         </div>`;
         })()}
         <div id="dsProfileOwnerHint" class="ds-builder-owner-hint"></div>
@@ -307,7 +312,7 @@ function renderBuilder() {
     // echoes the cap), so the cap below is stated with a measured number.
     // Still one round-trip — an org under the cap sees exactly what it saw.
     const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
-      query: `SELECT Id, Name, Username FROM User WHERE IsActive = true AND UserType = 'Standard' ORDER BY Name` });
+      query: `SELECT Id, Name, Username, Email, Alias FROM User WHERE IsActive = true AND UserType = 'Standard' ORDER BY Name` });
     if (q?.error || !Array.isArray(q?.records)) {
       if (hint) hint.textContent = `Couldn't load users: ${q?.error || 'no response'}`;
       return;
@@ -346,6 +351,10 @@ function renderBuilder() {
       `<optgroup label="Users">` + (pinned ? opt(pinned) : '') + list.shown.map(opt).join('') + `</optgroup>` +
       (queues.length ? `<optgroup label="Queues — used on the objects each queue takes">${queues.map(qOpt).join('')}</optgroup>` : '');
     if (hint) hint.textContent = bldOwnerFallbackHint(list, orgLabel(_editingProfile.targetOrg), saved);
+    // the hover examples now speak of a real user of this target
+    const ex = list.shown.find(u => u.Email && u.Name && !/noreply|@example\.|integration|automated|platform/i.test(u.Email + ' ' + u.Name))   // a person, not a system user
+      || list.shown.find(u => u.Email && u.Name) || null;
+    if (ex) document.querySelectorAll('[data-owner-help]').forEach(l => { l.dataset.help = bldOwnerMatchHelp(l.dataset.ownerHelp, ex, orgLabel(_editingProfile.targetOrg)); const b = l.querySelector('input'); if (!(b && b.disabled)) l.title = l.dataset.help; });
   }
   // Match-owners-by controls. Selection is capped at 4 fields (matches the
   // sftk-matching key-builder cap); at the cap, unchecked boxes disable
@@ -356,7 +365,7 @@ function renderBuilder() {
     boxes.forEach(b => {
       b.disabled = atCap && !b.checked;
       const lbl = b.closest('label');
-      if (lbl) lbl.title = b.disabled ? 'Up to 4 match fields — untick one to add this' : '';
+      if (lbl) lbl.title = b.disabled ? 'Up to 4 match fields — untick one to add this' : (lbl.dataset.help || '');
     });
   };
   const _ownerMatchStore = () => {
@@ -563,6 +572,30 @@ const OWNER_FALLBACK_OPTION_LIMIT = 500;
 //   capped       — true when rows exist that the dropdown does NOT show
 //   pageComplete — true when `records` is every matching row, so an id that
 //                  is absent from it really is absent (no lookup needed)
+// PURE. The hover text of one "Match owners by" option: what it does, then a worked example. u = a real user of
+// the target ({ Name, Email, Username, Alias }) once its users are loaded; before that an invented one, said as such.
+function bldOwnerMatchHelp(key, u, tgtLabel) {
+  const real = !!(u && u.Name);
+  const x = real ? u : { Name: 'Dana Levi', Email: 'dana.levi@acme.com', Username: 'dana.levi@acme.com.uat', Alias: 'dlevi' };
+  const tl = real ? (tgtLabel || 'the target') : 'the target';
+  const who = real ? `${x.Name}, a user of ${tl}` : `${x.Name}, an invented user`;
+  const email = String(x.Email || 'dana.levi@acme.com');
+  const up = s => String(s || '').toUpperCase();
+  const cap = s => String(s || '').replace(/^./, c => c.toUpperCase());
+  const one = (label, val) => `Compares the owner’s ${label} in the source with the ${label} of the users in ${tl}. Example with ${who}: a record owned in the source by the user whose ${label} is "${val}" is given to ${x.Name}.`;
+  switch (key) {
+    case 'Email': return one('Email', email) + ' With more than one field ticked, all of them must be the same.';
+    case 'Name': return one('Name', x.Name) + ' Two users with the same name in the target are never guessed: tick Email as well.';
+    case 'Username': return one('Username', x.Username || email) + ' A username is unique across all of Salesforce, so the same person usually has a different one in each org (a sandbox adds a suffix): it rarely matches.';
+    case 'Alias': return one('Alias', x.Alias || 'dlevi') + ' An alias is short and not unique: use it together with another field.';
+    case 'FederationIdentifier': return 'Compares the owner’s Federation ID (the single sign-on id) in the source with the users’ in ' + tl + '. Example: the owner with Federation ID "E12345" is given to the target user with "E12345". Not usable on objects a queue can own (Case, Lead, …): Salesforce cannot read Federation ID through their Owner field. Prefer Email there.';
+    case 'caseFold': return `Capital letters are ignored when comparing. Example with ${who}: "${up(x.Name)}" in the source matches "${x.Name}". Unticked, they are two different owners.`;
+    case 'trim': return `Spaces before and after a value are ignored. Example with ${who}: " ${x.Name} " in the source matches "${x.Name}".`;
+    case 'emailLower': return `E-mail addresses are compared in lower case; other values are left as they are. Example with ${who}: "${cap(email)}" in the source matches "${email.toLowerCase()}".`;
+    default: return '';
+  }
+}
+
 function bldOwnerFallbackList(records, totalSize, limit, pageDone) {
   const all = Array.isArray(records) ? records : [];
   const cap = Number.isFinite(limit) && limit > 0 ? limit : all.length;
