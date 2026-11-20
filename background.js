@@ -81,6 +81,34 @@ function sftkMatchKey(record, matching) {
 // match must fall back, never guess an owner. Blank keys (every component
 // empty) are unmatchable and never indexed. byKey is null-prototype so a
 // user named "constructor" can't collide with Object.prototype.
+// QUEUE OWNERS BETWEEN ORGS (owner 2026-11-20: "use the owner from the source if possible, if not ... a fallback user
+// or queue"). A queue keeps its API name (DeveloperName) between orgs, and it can own a record only of an object it
+// was set up to take (QueueSobject). PURE.
+//   srcGroups: the source's queues that own records of this object — [{ Id, DeveloperName }]
+//   tgtRows:   the target's QueueSobject rows OF THIS OBJECT — [{ QueueId, Queue: { DeveloperName } }]
+// → { bySrc: { source queue id (15) → target queue id }, takes: { target queue id (15) → true } }
+function sftkQueueOwnerMap(srcGroups, tgtRows) {
+  const id15 = v => String(v || '').slice(0, 15);
+  const byDev = {}, takes = {}, bySrc = {};
+  for (const r of (Array.isArray(tgtRows) ? tgtRows : [])) {
+    if (!r || !r.QueueId) continue;
+    takes[id15(r.QueueId)] = true;
+    const dn = String((r.Queue && r.Queue.DeveloperName) || '').toLowerCase();
+    if (dn && !byDev[dn]) byDev[dn] = r.QueueId;
+  }
+  for (const g of (Array.isArray(srcGroups) ? srcGroups : [])) {
+    const dn = String((g && g.DeveloperName) || '').toLowerCase();
+    if (g && g.Id && dn && byDev[dn]) bySrc[id15(g.Id)] = byDev[dn];
+  }
+  return { bySrc, takes };
+}
+// The fallback this OBJECT can really take: a user always; a queue only when it takes the object. PURE.
+function sftkOwnerFallbackFor(fallbackId, qMap) {
+  const id = String(fallbackId || '');
+  if (!id) return null;
+  if (!/^00G/.test(id)) return id;
+  return qMap && qMap.takes && qMap.takes[id.slice(0, 15)] ? id : null;
+}
 function sftkBuildOwnerIndex(users, matching) {
   const byKey = Object.create(null);
   const dup = new Set();
@@ -1660,6 +1688,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         for (const f of (ownerMatching ? ownerMatching.fields : [])) {
           if (!fields.includes('Owner.' + f)) fields.push('Owner.' + f);
         }
+        if (!fields.includes('OwnerId')) fields.push('OwnerId');   // read only: tells a queue from a user (never copied as is)
       }
 
       // The object's name field — fetched purely for human-readable History
@@ -1953,6 +1982,29 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         }
       }
 
+      // Queues: a queue-owned record keeps its queue when the target has a queue of the same API name that takes
+      // this object; a fallback QUEUE is used only on an object it takes (owner 2026-11-20).
+      let qMap = null;
+      const fbIsQueue = /^00G/.test(String(ownerFallback || ''));
+      if (wantOwners && recs.length) {
+        const srcQ = [...new Set(recs.map(r => String(r.OwnerId || '')).filter(id => /^00G/.test(id)))];
+        if (srcQ.length || fbIsQueue) {
+          try {
+            const tq = await sfQueryAll(tgtOrgUrl, tgtSid, `SELECT QueueId, Queue.DeveloperName FROM QueueSobject WHERE SobjectType = '${String(objType).replace(/[^A-Za-z0-9_]/g, '')}'`, false);
+            const sg = [];
+            for (let ci = 0; ci < srcQ.length; ci += 200) {
+              const q = await sfQueryAll(srcOrgUrl, srcSid, `SELECT Id, DeveloperName FROM Group WHERE Type = 'Queue' AND Id IN (${srcQ.slice(ci, ci + 200).map(id => `'${id.replace(/[^A-Za-z0-9]/g, '')}'`).join(',')})`, false);
+              sg.push(...((q && q.records) || []));
+            }
+            qMap = sftkQueueOwnerMap(sg, (tq && tq.records) || []);
+          } catch (e) {
+            qMap = sftkQueueOwnerMap([], []);
+            diagnostics.push(`${objType}: the queues could not be read (${(e && e.message) || e}) — queue-owned records go to the fallback.`);
+          }
+        }
+      }
+      const nodeFallback = sftkOwnerFallbackFor(ownerFallback, qMap);
+
       // ── Resolve RecordTypes ──────────────────────────────────────────────
       // Match source → target RecordType by DeveloperName (API name) — the only
       // stable cross-org key (the 18-char Id differs per org). A matched RT is
@@ -2232,7 +2284,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // Owner-mapping outcome counters for this node's summary line.
       // O1 adds: ownerKeyMatched (index hit), ownerKeyDup (ambiguous key —
       // excluded from the index, fell back rather than guessed).
-      let ownerFellBack = 0, ownerDefaulted = 0, ownerKeyMatched = 0, ownerKeyDup = 0;
+      let ownerFellBack = 0, ownerDefaulted = 0, ownerKeyMatched = 0, ownerKeyDup = 0, ownerQueueMatched = 0;
 
       // Person Accounts (user 2026-09-15, trailheads2 → trailheads4: every
       // insert failed with "Unable to create/update fields: Name"): on a person
@@ -2336,23 +2388,30 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         // is part of the key). Blank key (queue-owned, no owner data) and
         // dup key (ambiguous in the target) both fall back — never guess.
         if (wantOwners) {
-          if (ownerMatching) {
+          const srcOid = String(r.OwnerId || '');
+          if (/^00G/.test(srcOid)) {
+            // a queue: the target's queue of the same API name when it takes this object, else the fallback
+            const mq = qMap ? qMap.bySrc[srcOid.slice(0, 15)] : null;
+            const oid = mq || nodeFallback;
+            if (oid && (!tgtCreatable.size || tgtCreatable.has('OwnerId'))) p.OwnerId = oid;
+            if (mq) ownerQueueMatched++; else if (nodeFallback) ownerFellBack++; else ownerDefaulted++;
+          } else if (ownerMatching) {
             const shim = {};
             for (const f of ownerMatching.fields) shim[f] = r.Owner ? r.Owner[f] : null;
             const key = sftkMatchKey(shim, ownerMatching);
             const matched = key && ownerIndex ? ownerIndex.byKey[key] : undefined;
-            const oid = matched || ownerFallback;
+            const oid = matched || nodeFallback;
             if (oid && (!tgtCreatable.size || tgtCreatable.has('OwnerId'))) p.OwnerId = oid;
             if (matched) ownerKeyMatched++;
             else if (key && ownerDupKeys && ownerDupKeys.has(key)) ownerKeyDup++;
-            else if (ownerFallback) ownerFellBack++; else ownerDefaulted++;
+            else if (nodeFallback) ownerFellBack++; else ownerDefaulted++;
           } else {
             const oname = r.Owner ? r.Owner.Name : null;
             if (oname) {
               const matched = ownerByName.get(oname);
-              const oid = matched || ownerFallback;
+              const oid = matched || nodeFallback;
               if (oid && (!tgtCreatable.size || tgtCreatable.has('OwnerId'))) p.OwnerId = oid;
-              if (!matched) { if (ownerFallback) ownerFellBack++; else ownerDefaulted++; }
+              if (!matched) { if (nodeFallback) ownerFellBack++; else ownerDefaulted++; }
             }
           }
         }
@@ -2865,9 +2924,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // O1 field-based matching gets ONE line with the full accounting; the
       // legacy Name-only notes below are untouched (shipped deployments read
       // them).
+      if (fbIsQueue && !nodeFallback && ownerDefaulted) errors.push(`⚠ ${objType}: the fallback queue does not take ${objType} records in the target, so ${ownerDefaulted} record(s) with no matching owner belong to the user who ran the deployment.`);
       if (ownerMatching) {
         if (ownerKeyMatched || ownerKeyDup || ownerFellBack || ownerDefaulted) {
-          errors.push(`⚠ ${objType}: owners: ${ownerKeyMatched} matched by ${ownerMatching.fields.join('+')}, ${ownerKeyDup} dup-key → fallback, ${ownerFellBack + ownerDefaulted} unmatched → fallback${ownerFallback ? '' : ' (no fallback user set — the target org assigned its default owner)'}.`);
+          errors.push(`⚠ ${objType}: owners: ${ownerKeyMatched} matched by ${ownerMatching.fields.join('+')}, ${ownerKeyDup} dup-key → fallback, ${ownerFellBack + ownerDefaulted} unmatched → fallback${nodeFallback ? '' : ' (no fallback user set — the target org assigned its default owner)'}${ownerQueueMatched ? `, ${ownerQueueMatched} kept their queue` : ''}.`);
         }
       } else {
         if (ownerFellBack)  errors.push(`⚠ ${objType}: ${ownerFellBack} record(s) had owners with no name match in the target — assigned the fallback user.`);

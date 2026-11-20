@@ -392,6 +392,8 @@ describe('Reconcile hands that choice to its own overwrite of drifted records', 
       ${sliceFrom(read('studio-scan.js'), 'sftkEngineCompareSet')}
       ${sliceFrom(RC, 'sftkReconcileChunkedWrite')}
       ${sliceFrom(RC, 'sftkRecOwnerThenTyped')}
+      ${sliceFrom(RC, 'sftkQueueOwnerMap')}
+      ${sliceFrom(RC, 'sftkOwnerFallbackFor')}
       ${sliceFrom(RC, 'reconcileOverwrite')}
       return reconcileOverwrite;
     `)(sendBg);
@@ -428,7 +430,7 @@ describe('Reconcile hands that choice to its own overwrite of drifted records', 
 const eng = extractFunctions('background.js', [
   'executeProfileTransfer', 'sftkUnconfirmedRows', 'sftkIsUnconfirmed', 'sftkFailureMeansInTarget', 'sftkFileKeyPairs',
   '_runDupBypassFor', 'sftkRunStopLine', '_runStopReason', '_runNoteStop', 'sftkVanillaPayloadRules', 'sftkEffectiveLookupResolutions', 'sftkLookupDefaultStrategy', 'buildCopyFields', 'sftkFieldsFromError', 'sftkOrgKey',
-  'sftkTruncValue', 'sftkBuildOwnerIndex', 'sftkMatchKey', 'sftkPathValue',
+  'sftkTruncValue', 'sftkBuildOwnerIndex', 'sftkQueueOwnerMap', 'sftkOwnerFallbackFor', 'sftkMatchKey', 'sftkPathValue',
   'sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiMaskValue',
   'sftkPiiRulesForObject', 'sftkPiiMaskRows', 'sftkPiiMaskAnchorMap', 'sftkRtaImageCount',
 ]);

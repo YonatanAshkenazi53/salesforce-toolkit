@@ -247,7 +247,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #333;
+  color: var(--text);   /* was #333: unreadable on the dark list (owner 2026-11-20) */
 }
 .ds-autocomplete-item:hover, .ds-autocomplete-item.active { background: #f0f4ff; }
 .ds-autocomplete-item-api  { font-family: monospace; flex: 1; }
@@ -6957,3 +6957,8 @@ details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
 
 /* the record editor's Owner row says who the record will belong to (owner 2026-11-19) */
 .ds-ve-own-will { display: block; margin-top: 4px; font-size: 12px; color: var(--text); line-height: 1.45; }
+
+/* Record owners: the fallback picker carries its own sentence (owner 2026-11-20) */
+.ds-builder-owner-ctls .ds-builder-owner-fb { flex: 1 1 100%; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--text); }
+.ds-builder-owner-fb-lbl { flex: 0 0 auto; }
+.ds-builder-owner-ctls .ds-builder-owner-fb .ds-select { flex: 1 1 280px; min-width: 240px; }

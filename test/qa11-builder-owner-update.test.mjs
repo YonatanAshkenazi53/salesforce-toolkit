@@ -11,7 +11,7 @@ const U = { ...T, upd: true, tgtName: 'Rina Gold' };
 describe('a new record (insert): the sentence is what it was', () => {
   it('"Will belong to …", the running user when owners are not copied', () => {
     expect(line({ mapOn: false, ...T })).toBe('Will belong to Dana Levi (you — the user who runs the deployment). This deployment does not copy owners — pick a user or a queue here to give the record to someone else.');
-    expect(line({ mapOn: true, src: { name: 'Omer Paz' }, fallbackName: 'Admin User', ...T })).toBe('Will belong to the user in npc2 that matches Omer Paz — and when there is no such user, the fallback user Admin User.');
+    expect(line({ mapOn: true, src: { name: 'Omer Paz' }, fallbackName: 'Admin User', ...T })).toBe('Will belong to the user in npc2 that matches Omer Paz — and when there is no such user, the fallback owner Admin User.');
   });
 });
 
@@ -41,13 +41,13 @@ describe('a Changed record (update): the running user is never named as the owne
   });
   it('owners matched: the active user of the same name; with none, the fallback user — or, with none set, the owner stays', () => {
     expect(line({ mapOn: true, src: { name: 'Omer Paz' }, ...U })).toBe('Will be given to the active user in npc2 named Omer Paz — and when there is no such user, it stays with Rina Gold.');
-    expect(line({ mapOn: true, src: { name: 'Omer Paz' }, fallbackName: 'Admin User', ...U })).toBe('Will be given to the active user in npc2 named Omer Paz — and when there is no such user, the fallback user Admin User.');
+    expect(line({ mapOn: true, src: { name: 'Omer Paz' }, fallbackName: 'Admin User', ...U })).toBe('Will be given to the active user in npc2 named Omer Paz — and when there is no such user, the fallback owner Admin User.');
     expect(line({ mapOn: true, many: true, ...U })).toBe('Each record is given the active user in npc2 with the same name as its owner — and where there is no such user, the record keeps its current owner.');
-    expect(line({ mapOn: true, many: true, fallbackName: 'Admin User', ...U })).toBe('Each record is given the active user in npc2 with the same name as its owner — and where there is no such user, the fallback user Admin User.');
+    expect(line({ mapOn: true, many: true, fallbackName: 'Admin User', ...U })).toBe('Each record is given the active user in npc2 with the same name as its owner — and where there is no such user, the fallback owner Admin User.');
   });
   it('a queue is not matched; an owner that could not be read changes nothing', () => {
-    expect(line({ mapOn: true, src: { name: 'Support', queue: true }, ...U })).toBe('Stays with Rina Gold in npc2 — a queue is not matched between orgs and no fallback user is set.');
-    expect(line({ mapOn: true, src: { name: 'Support', queue: true }, fallbackName: 'Admin User', ...U })).toBe('Will be given to the fallback user Admin User — a queue is not matched between orgs.');
+    expect(line({ mapOn: true, src: { name: 'Support', queue: true }, ...U })).toBe('Will be given to the queue in npc2 with the same API name as Support, when it takes this object — and when there is none, it stays with Rina Gold.');
+    expect(line({ mapOn: true, src: { name: 'Support', queue: true }, fallbackName: 'Admin User', ...U })).toBe('Will be given to the queue in npc2 with the same API name as Support, when it takes this object — and when there is none, the fallback owner Admin User.');
     expect(line({ mapOn: true, src: null, fallbackName: 'Admin User', ...U })).toBe('Stays with Rina Gold in npc2 — the source record’s owner could not be read, so the update does not change the owner.');
   });
 });

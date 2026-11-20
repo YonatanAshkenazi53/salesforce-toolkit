@@ -4700,7 +4700,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const selFields = [...new Set([
     'Id', ...srcFields,
     ...refPairs.map(rp => `${rp.relName}.${rp.matchField}`),
-    ...(wantOwners ? ['Owner.Name'] : []),
+    ...(wantOwners ? ['Owner.Name', 'OwnerId'] : []),   // OwnerId: read only, tells a queue from a user
     ...(srcNameFld ? [srcNameFld] : []),   // labels for History links only
     // A person account's Name cannot be written (derived from its parts) —
     // the flag lets the loop below leave it out (user 2026-09-15).
@@ -4773,6 +4773,26 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       for (const u of (q.records || [])) if (!ownerByName.has(u.Name)) ownerByName.set(u.Name, u.Id);
     }
   }
+
+  // Queues (owner 2026-11-20): a queue-owned record keeps its queue when the target has one of the same API name
+  // that takes this object; a fallback QUEUE is used only on an object it takes.
+  let qMap = null;
+  if (wantOwners) {
+    const srcQ = [...new Set(srcRecs.map(r => String(r.OwnerId || '')).filter(id => /^00G/.test(id)))];
+    if (srcQ.length || /^00G/.test(String(ownerFallback || ''))) {
+      const tq = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+        query: `SELECT QueueId, Queue.DeveloperName FROM QueueSobject WHERE SobjectType = '${String(objType).replace(/[^A-Za-z0-9_]/g, '')}'` });
+      const sg = [];
+      for (let i = 0; i < srcQ.length; i += 200) {
+        const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid, _suppressError: true,
+          query: `SELECT Id, DeveloperName FROM Group WHERE Type = 'Queue' AND Id IN (${srcQ.slice(i, i + 200).map(id => `'${id.replace(/[^A-Za-z0-9]/g, '')}'`).join(',')})` });
+        sg.push(...((q && !q.error && q.records) || []));
+      }
+      if (tq && tq.error) warnings.push(`⚠ owners: the target's queues could not be read (${tq.error}) — queue-owned records go to the fallback`);
+      qMap = sftkQueueOwnerMap(sg, (tq && !tq.error && tq.records) || []);
+    }
+  }
+  const nodeFallback = sftkOwnerFallbackFor(ownerFallback, qMap);
 
   // Match RecordTypes by DeveloperName when RecordTypeId is being written.
   // The raw source RecordTypeId is invalid in the target org, so we resolve
@@ -4874,7 +4894,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     // untouched. THEN the ✏ typed values: written in place of the source's, under the mapped name; a PII-covered
     // field keeps its masked value. In that order, so an owner picked in the record editor is the one written.
     const valForRec = valOv && valOv[sr.Id] && typeof valOv[sr.Id] === 'object' ? valOv[sr.Id] : null;
-    const ot = sftkRecOwnerThenTyped(p, { wantOwners, ownerName: sr.Owner ? sr.Owner.Name : null, ownerByName, ownerFallback },
+    const ot = sftkRecOwnerThenTyped(p, { wantOwners, ownerName: sr.Owner ? sr.Owner.Name : null, ownerByName, ownerFallback: nodeFallback, srcOwnerId: sr.OwnerId, queueBySrc: qMap ? qMap.bySrc : null },
       valForRec ? pl => sftkValOvApply(pl, valForRec, fm, tgtUpdOk, sf => piiActive && !!piiRules[String(sf).toLowerCase()]) : null);
     valOvUsed += ot.used; valOvMasked += ot.masked;
     ownerFellBack += ot.fellBack; ownerKept += ot.kept;
@@ -5468,6 +5488,34 @@ function sftkRefusalSource(code, why, rules) {
   }
   return { what: 'Salesforce', by: '' };
 }
+// QUEUE OWNERS BETWEEN ORGS (owner 2026-11-20: "use the owner from the source if possible, if not ... a fallback user
+// or queue"). A queue keeps its API name (DeveloperName) between orgs, and it can own a record only of an object it
+// was set up to take (QueueSobject). PURE.
+//   srcGroups: the source's queues that own records of this object — [{ Id, DeveloperName }]
+//   tgtRows:   the target's QueueSobject rows OF THIS OBJECT — [{ QueueId, Queue: { DeveloperName } }]
+// → { bySrc: { source queue id (15) → target queue id }, takes: { target queue id (15) → true } }
+function sftkQueueOwnerMap(srcGroups, tgtRows) {
+  const id15 = v => String(v || '').slice(0, 15);
+  const byDev = {}, takes = {}, bySrc = {};
+  for (const r of (Array.isArray(tgtRows) ? tgtRows : [])) {
+    if (!r || !r.QueueId) continue;
+    takes[id15(r.QueueId)] = true;
+    const dn = String((r.Queue && r.Queue.DeveloperName) || '').toLowerCase();
+    if (dn && !byDev[dn]) byDev[dn] = r.QueueId;
+  }
+  for (const g of (Array.isArray(srcGroups) ? srcGroups : [])) {
+    const dn = String((g && g.DeveloperName) || '').toLowerCase();
+    if (g && g.Id && dn && byDev[dn]) bySrc[id15(g.Id)] = byDev[dn];
+  }
+  return { bySrc, takes };
+}
+// The fallback this OBJECT can really take: a user always; a queue only when it takes the object. PURE.
+function sftkOwnerFallbackFor(fallbackId, qMap) {
+  const id = String(fallbackId || '');
+  if (!id) return null;
+  if (!/^00G/.test(id)) return id;
+  return qMap && qMap.takes && qMap.takes[id.slice(0, 15)] ? id : null;
+}
 // PURE. One update payload: the owner mapping first, the values typed in the record editor after it — the insert
 // engine's order (background.js). The other way round, an owner PICKED in the editor was replaced by the name match
 // or the fallback user on a Changed record while the log still counted it as written (QA 1.1, finding 46).
@@ -5477,7 +5525,9 @@ function sftkRecOwnerThenTyped(p, o, applyTyped) {
   const out = { used: 0, masked: 0, fellBack: 0, kept: 0 };
   let how = '';
   if (o && o.wantOwners && o.ownerName) {
-    const matched = o.ownerByName && o.ownerByName.get(o.ownerName);
+    // a queue is matched by its API name (queueBySrc), a user by name
+    const isQ = /^00G/.test(String(o.srcOwnerId || ''));
+    const matched = isQ ? (o.queueBySrc && o.queueBySrc[String(o.srcOwnerId).slice(0, 15)]) : (o.ownerByName && o.ownerByName.get(o.ownerName));
     if (matched) p.OwnerId = matched;
     else if (o.ownerFallback) { p.OwnerId = o.ownerFallback; how = 'fellBack'; }
     else how = 'kept';

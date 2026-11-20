@@ -20,11 +20,12 @@
 function sftkVeOwnerWill(o) {
   const x = o || {}, tl = x.tgtL || 'the target';
   const me = x.me ? `${x.me} (you — the user who runs the deployment)` : 'you — the user who runs the deployment';
-  const last = x.fallbackName ? `the fallback user ${x.fallbackName}` : me;
+  const last = x.fallbackName ? `the fallback owner ${x.fallbackName}` : me;
   if (!x.mapOn) return x.many ? `${me}. This deployment does not copy owners.` : `${me}. This deployment does not copy owners — pick a user or a queue here to give the record to someone else.`;
   if (x.many) return `each record’s owner, matched in ${tl} — and where there is no such user, ${last}.`;
   if (x.src && !x.src.queue) return `the user in ${tl} that matches ${x.src.name} — and when there is no such user, ${last}.`;
-  return `${last}${x.src ? ' — a queue is not matched between orgs' : ''}.`;
+  if (x.src) return `the queue in ${tl} with the same API name as ${x.src.name}, when it takes this object — and when there is none, ${last}.`;
+  return `${last}.`;
 }
 // The whole sentence of the Owner row. A NEW record (mode 'ins') "will belong to" someone — sftkVeOwnerWill. A
 // CHANGED record (mode 'chg', o.upd) already has an owner in the target, and the update (studio-reconcile.js,
@@ -40,10 +41,10 @@ function sftkVeOwnerLine(o) {
   if (!x.mapOn) return x.many
     ? `Each record keeps its current owner in ${tl} — the update does not change owners. This deployment does not copy owners.`
     : `Stays with ${cur} in ${tl} — the update does not change the owner. This deployment does not copy owners — pick a user or a queue here to give the record to someone else.`;
-  const fb = x.fallbackName ? `the fallback user ${x.fallbackName}` : '';
+  const fb = x.fallbackName ? `the fallback owner ${x.fallbackName}` : '';
   if (x.many) return `Each record is given the active user in ${tl} with the same name as its owner — and where there is no such user, ${fb || 'the record keeps its current owner'}.`;
   if (!x.src) return `Stays with ${cur} in ${tl} — the source record’s owner could not be read, so the update does not change the owner.`;
-  if (x.src.queue) return fb ? `Will be given to ${fb} — a queue is not matched between orgs.` : `Stays with ${cur} in ${tl} — a queue is not matched between orgs and no fallback user is set.`;
+  if (x.src.queue) return `Will be given to the queue in ${tl} with the same API name as ${x.src.name}, when it takes this object — and when there is none, ${fb || `it stays with ${cur}`}.`;
   return `Will be given to the active user in ${tl} named ${x.src.name} — and when there is no such user, ${fb || `it stays with ${cur}`}.`;
 }
 // The name of the user who runs the deployment, in that org ('' when it cannot be read). One read per org AND

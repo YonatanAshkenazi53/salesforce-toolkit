@@ -18,11 +18,11 @@ describe('who the record will belong to', () => {
   });
   it('owners matched: the same user in the target; when there is none, the fallback user — or, with none set, the running user', () => {
     expect(w({ mapOn: true, src: { name: 'Omer Paz' }, me: 'Dana Levi', ...T })).toBe('the user in npc2 that matches Omer Paz — and when there is no such user, Dana Levi (you — the user who runs the deployment).');
-    expect(w({ mapOn: true, src: { name: 'Omer Paz' }, me: 'Dana Levi', fallbackName: 'Admin User', ...T })).toBe('the user in npc2 that matches Omer Paz — and when there is no such user, the fallback user Admin User.');
+    expect(w({ mapOn: true, src: { name: 'Omer Paz' }, me: 'Dana Levi', fallbackName: 'Admin User', ...T })).toBe('the user in npc2 that matches Omer Paz — and when there is no such user, the fallback owner Admin User.');
     expect(w({ mapOn: true, many: true, me: 'Dana Levi', ...T })).toBe('each record’s owner, matched in npc2 — and where there is no such user, Dana Levi (you — the user who runs the deployment).');
   });
   it('a queue is not matched between orgs, and that is said', () => {
-    expect(w({ mapOn: true, src: { name: 'Support', queue: true }, me: 'Dana Levi', ...T })).toBe('Dana Levi (you — the user who runs the deployment) — a queue is not matched between orgs.');
+    expect(w({ mapOn: true, src: { name: 'Support', queue: true }, me: 'Dana Levi', ...T })).toBe('the queue in npc2 with the same API name as Support, when it takes this object — and when there is none, Dana Levi (you — the user who runs the deployment).');
   });
   it('the running user’s name is read from the target with the record, once per org', () => {
     expect(VE).toContain("path: 'services/oauth2/userinfo'");
@@ -33,9 +33,9 @@ describe('who the record will belong to', () => {
 
 describe('the deployment’s Record owners setting', () => {
   it('says the rule in plain words, the matching way first; no fallback means the running user', () => {
-    expect(BL).toContain('>Keep the same owner — the matching user in the target; when there is none, the fallback user, else you</option>');
+    expect(BL).toContain('>Keep the source’s owner — the same user or queue in the target</option>');
     expect(BL).toContain(">Don't copy owners — every record belongs to you (the user who runs the deployment)</option>");
-    expect(BL).toContain("'— no fallback: you (the user who runs the deployment) —'");
+    expect(BL).toContain("'You — the user who runs the deployment'");
     expect(BL.indexOf('<option value="match"')).toBeLessThan(BL.indexOf('<option value="skip"'));
   });
   it('a new deployment keeps the same owner; a saved one is opened as it was saved', () => {

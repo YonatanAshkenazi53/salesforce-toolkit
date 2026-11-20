@@ -139,7 +139,7 @@ function renderBuilder() {
         </label>
         <div class="ds-builder-owner-ctls">
           <select id="dsProfileOwnerMode" class="ds-select" aria-label="How record owners transfer">
-            <option value="match" ${p.ownerMapping?.mode === 'match' ? 'selected' : ''}>Keep the same owner — the matching user in the target; when there is none, the fallback user, else you</option>
+            <option value="match" ${p.ownerMapping?.mode === 'match' ? 'selected' : ''}>Keep the source’s owner — the same user or queue in the target</option>
             <option value="skip"  ${p.ownerMapping?.mode !== 'match' ? 'selected' : ''}>Don't copy owners — every record belongs to you (the user who runs the deployment)</option>
           </select>
           <!-- display: is still an inline style on these two. The owner-mode
@@ -147,9 +147,12 @@ function renderBuilder() {
                attribute is the state channel, not decoration — switching to
                [hidden] here would leave them hidden when the handler cleared
                the inline value. -->
-          <select id="dsProfileOwnerFallback" class="ds-select" aria-label="Fallback user for unmatched owners" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
-            <option value="">${p.ownerMapping?.fallbackUserId ? esc(p.ownerMapping.fallbackUserName || 'saved fallback user') : '— no fallback: you (the user who runs the deployment) —'}</option>
-          </select>
+          <label id="dsProfileOwnerFallbackWrap" class="ds-builder-owner-fb" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
+            <span class="ds-builder-owner-fb-lbl">When the target has no such owner, give the record to</span>
+            <select id="dsProfileOwnerFallback" class="ds-select" aria-label="Who gets a record whose owner is not in the target">
+              <option value="">${p.ownerMapping?.fallbackUserId ? esc(p.ownerMapping.fallbackUserName || 'the saved fallback') : 'You — the user who runs the deployment'}</option>
+            </select>
+          </label>
         </div>
         ${(() => {
           // "Match owners by" — visible only in 'match' mode. Renders from
@@ -280,14 +283,14 @@ function renderBuilder() {
   // the select as the OLD target's user list when the new target cannot load.
   function _ownerFallbackSelectReset() {
     const sel = eid('dsProfileOwnerFallback');
-    if (sel) sel.innerHTML = `<option value="">— fallback user (used when the owner has no name match) —</option>`;
+    if (sel) sel.innerHTML = `<option value="">You — the user who runs the deployment</option>`;
   }
   async function loadOwnerFallbackUsers() {
     const sel  = eid('dsProfileOwnerFallback');
     const hint = eid('dsProfileOwnerHint');
     if (!sel) return;
     if (!_editingProfile.targetOrg) {
-      if (hint) hint.textContent = 'Pick a target org first — the fallback user comes from there.';
+      if (hint) hint.textContent = 'Pick a target org to choose another user or a queue.';
       return;
     }
     const sess = _resolveSession(_editingProfile.targetOrg, _buildAllSessions());
@@ -310,7 +313,13 @@ function renderBuilder() {
       return;
     }
     const list = bldOwnerFallbackList(q.records, q.totalSize, OWNER_FALLBACK_OPTION_LIMIT, q.done);
-    const cur  = _editingProfile.ownerMapping?.fallbackUserId || '';
+    // the target's queues (owner 2026-11-20: "a fallback user or queue"); a queue is used only on objects it takes
+    const gq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
+      query: `SELECT Id, Name, DeveloperName FROM Group WHERE Type = 'Queue' ORDER BY Name` });
+    const queues = (gq && !gq.error && Array.isArray(gq.records)) ? gq.records : [];
+    const curAny = _editingProfile.ownerMapping?.fallbackUserId || '';
+    const curIsQueue = /^00G/.test(curAny);
+    const cur  = curIsQueue ? '' : curAny;   // the saved-USER checks below are about users only
 
     // Is the SAVED fallback user really gone, or just past the cap? Never
     // conclude "missing" from a truncated list — that false negative silently
@@ -330,9 +339,12 @@ function renderBuilder() {
     const pinned = saved.action === 'restore' && saved.user ? saved.user : null;
     const opt = u => `<option value="${esc(u.Id)}" data-name="${esc(u.Name)}"${u.Id === cur ? ' selected' : ''}>` +
       `${esc(u.Name)}${u.Username ? ` (${esc(u.Username)})` : ''}${pinned && u.Id === pinned.Id ? ' — not in the list below' : ''}</option>`;
-    sel.innerHTML = `<option value="">— fallback user (used when the owner has no name match) —</option>` +
-      (pinned ? opt(pinned) : '') +
-      list.shown.map(opt).join('');
+    const qOpt = g => `<option value="${esc(g.Id)}" data-name="${esc(g.Name)} (queue)"${g.Id === curAny ? ' selected' : ''}>👥 ${esc(g.Name)}${g.DeveloperName && g.DeveloperName !== g.Name ? ` (${esc(g.DeveloperName)})` : ''}</option>`;
+    const lostQueue = curIsQueue && !queues.some(g => g.Id === curAny);
+    sel.innerHTML = `<option value="">You — the user who runs the deployment</option>` +
+      (lostQueue ? `<option value="${esc(curAny)}" data-name="${esc(_editingProfile.ownerMapping.fallbackUserName || 'saved queue')}" selected>${esc(_editingProfile.ownerMapping.fallbackUserName || 'saved queue')} — not found in this org</option>` : '') +
+      `<optgroup label="Users">` + (pinned ? opt(pinned) : '') + list.shown.map(opt).join('') + `</optgroup>` +
+      (queues.length ? `<optgroup label="Queues — used on the objects each queue takes">${queues.map(qOpt).join('')}</optgroup>` : '');
     if (hint) hint.textContent = bldOwnerFallbackHint(list, orgLabel(_editingProfile.targetOrg), saved);
   }
   // Match-owners-by controls. Selection is capped at 4 fields (matches the
@@ -375,7 +387,7 @@ function renderBuilder() {
 
   eid('dsProfileOwnerMode')?.addEventListener('change', e => {
     const mode = e.target.value;
-    const sel  = eid('dsProfileOwnerFallback');
+    const sel  = eid('dsProfileOwnerFallbackWrap');
     const blk  = eid('dsOwnerMatchBlock');
     if (mode === 'match') {
       _editingProfile.ownerMapping = { mode: 'match',
