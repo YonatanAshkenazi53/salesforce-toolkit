@@ -816,6 +816,9 @@ async function openRecordPickerModal(pathStr) {
   };
   // W1 — per-node upsert rides the external-Id key. Session state mirrors
   // node.upsert; persisted on Apply alongside the matching config.
+// A key that was never set starts forgiving: capitals, spaces, e-mail capitals and phone punctuation are not what
+  // makes two records different (owner 2026-11-20). A saved key keeps exactly what it was saved with.
+  if (!node.matching) matchNormalize = { caseFold: true, trim: true, collapseWs: true, emailLower: true, phoneDigits: true };
   let upsertOn = !!(node.upsert && node.upsert.field);
   // Most specific first (user 2026-10-23): a composite key that falls back to the fields a record
   // has (sftkTieredPairs). A NEW composite key starts with it on; a saved one keeps its own choice.
@@ -836,6 +839,9 @@ async function openRecordPickerModal(pathStr) {
   // "when selecting one of the options in the radio buttons it will minimize the section").
   let matchFoldOpen    = null;
   let matchSuggestOpen = false;
+  // the live result of the rule on screen ({ sig, html }), and the folds as the user left them
+  let matchLive = null, matchLiveSeq = 0, matchLiveTimer = null;
+  let matchMoreOpen = false, matchFineOpen = false;
   const gradeCache     = new Map();   // suggestion sig → rendered mini-grade
   // 💡 Suggestions of a chosen depth (user 2026-10-23): 1 field = how many records hold it in
   // both orgs; 2–4 = the name plus the best other fields, most specific first.
@@ -1087,134 +1093,90 @@ async function openRecordPickerModal(pathStr) {
 
   // ── M3a — Matching section (strategy + fields + normalization) ────────
   function matchCfgHtml() {
-    const stratRadio = (val, lbl, disabled, title) => `
-      <label class="ds-match-strat" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;${disabled ? 'opacity:.55;cursor:not-allowed' : 'cursor:pointer'}" title="${esc(title || '')}">
-        <input type="radio" name="dsMatchStrat" value="${val}" ${matchStrategy === val ? 'checked' : ''} ${disabled ? 'disabled' : ''}> ${lbl}
-      </label>`;
-    let body = '';
-    if (matchStrategy === 'field') {
-      body = `
-        <div class="ds-rec-display-row">
-          <div class="ds-rec-mf-col">
-            <span class="ds-rec-display-lbl">Match on source:</span>
-            ${candidateFields.length
-              ? `<select id="dsRecDisplayField" class="ds-select ds-select-sm">
-                  <option value="Id">Id (always unique)</option>
-                  ${fieldOptions()}
-                 </select>`
-              : `<span class="ds-subtext">No string fields found — showing Id only</span>`}
-          </div>
-          <span class="ds-rec-mf-arrow">↔</span>
-          <div class="ds-rec-mf-col">
-            <span class="ds-rec-display-lbl">Match on target:</span>
+    const extNames = new Set(extIdCandidates.map(f => f.name));
+    const all = [...candidateFields];
+    for (const x of extIdCandidates) if (!all.some(f => f.name === x.name)) all.push({ name: x.name, label: x.label });
+    const cur = (matchFields.filter(Boolean).length ? matchFields.filter(Boolean) : [displayField || 'Name']).slice(0, 4);
+    const optsFor = (val, i) => {
+      const used = new Set(cur.filter((f, j) => j !== i));
+      return all.filter(f => !used.has(f.name)).map(f => `<option value="${esc(f.name)}" ${val === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})${extNames.has(f.name) ? ' — unique ID' : ''}</option>`).join('')
+        + (val && val !== 'Id' && !all.some(f => f.name === val) ? `<option value="${esc(val)}" selected>${esc(val)} — a related record's field</option>` : '');
+    };
+    const sel = (f, i) => `<select class="ds-select ds-select-sm ds-mq-sel" data-mq-field="${i}" aria-label="Field ${i + 1} of the rule">
+        ${i > 0 ? '<option value="">— remove this field —</option>' : `<option value="Id" ${f === 'Id' ? 'selected' : ''}>Id (never the same in two orgs)</option>`}
+        ${optsFor(f, i)}
+      </select>`;
+    const add = cur.length < 4 ? `<select class="ds-select ds-select-sm ds-mq-sel ds-mq-add" data-mq-field="${cur.length}" aria-label="Add a field to the rule">
+        <option value="">+ and the same…</option>${optsFor('', cur.length)}
+      </select>` : '';
+    const normCount = NORM_OPTS.filter(([k]) => matchNormalize[k]).length;
+    const emptyQ = cur.length > 1 ? `
+        <div class="ds-mq-empty" role="radiogroup" aria-label="A record that leaves a later field empty">
+          <span>A record with no <strong>${esc(cur.slice(1).map(matchLabelOf).join(' or '))}</strong>: match it by <strong>${esc(matchLabelOf(cur[0]))}</strong> alone?</span>
+          <label><input type="radio" name="dsMqTiered" value="1" ${matchTiered ? 'checked' : ''}> Yes</label>
+          <label><input type="radio" name="dsMqTiered" value="0" ${matchTiered ? '' : 'checked'}> No — every field must be filled</label>
+        </div>` : '';
+    // what only some rules need
+    const more = [];
+    if (matchStrategy === 'field') more.push(`
+          <div class="ds-mq-more-row"><span>In the target this field is called</span>
             ${tgtCandidates && tgtCandidates.length
-              ? `<select id="dsRecTgtMatchField" class="ds-select ds-select-sm" title="The field on the TARGET org whose value identifies the same logical record as the source-side field. Leave matching source if names are the same on both orgs.">
-                  <option value="Id" ${tgtMatchField === 'Id' ? 'selected' : ''}>Id (always unique)</option>
+              ? `<select id="dsRecTgtMatchField" class="ds-select ds-select-sm" title="Only when the field has another API name in the target org">
+                  <option value="Id" ${tgtMatchField === 'Id' ? 'selected' : ''}>Id</option>
                   ${tgtCandidates.map(f => `<option value="${esc(f.name)}" ${tgtMatchField === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`).join('')}
                  </select>`
-              : `<input id="dsRecTgtMatchField" class="ds-input ds-input-sm" value="${esc(tgtMatchField)}" placeholder="${esc(displayField)}" title="Target session unavailable — type the target-side field API name manually. Open the target org in a Chrome tab to get a dropdown.">`}
-          </div>
-        </div>`;
-    } else if (matchStrategy === 'composite') {
-      const slots = Math.min(4, matchFields.length + 1);
-      const sels = [];
-      for (let i = 0; i < slots; i++) {
-        const val = matchFields[i] || '';
-        sels.push(`<select class="ds-select ds-select-sm" data-match-comp="${i}" title="Key component ${i + 1}${i === 0 ? ' — also drives the record list below' : ''}">
-          <option value="">${val ? '— remove —' : '+ add field'}</option>
-          ${candidateFields.map(f => `<option value="${esc(f.name)}" ${val === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`).join('')}
-          ${val && !candidateFields.some(f => f.name === val) ? `<option value="${esc(val)}" selected>${esc(val)} — a related record's field</option>` : ''}
-        </select>`);
-      }
-      const ra = matchReadsAs(matchFields, matchTiered);
-      body = `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        ${sels.join('<span style="color:var(--subtext)">+</span>')}
-        <span class="ds-subtext" style="font-size:11px">ordered, up to 4 — target-side names follow the Field Mapping</span>
-      </div>
-      <div class="ds-match-readsas ds-subtext" id="dsMatchReadsAs" style="font-size:11.5px;line-height:1.5;margin-top:4px">Reads as <strong>${esc(ra.key)}</strong>. ${esc(ra.how)}</div>`;
-    } else {
-      body = extIdCandidates.length
-        ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <select id="dsMatchExtId" class="ds-select ds-select-sm">
-              ${extIdCandidates.map(f => `<option value="${esc(f.name)}" ${matchFields[0] === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})${f.ext ? ' — external ID' : ' — unique'}</option>`).join('')}
-            </select>
-            <span class="ds-subtext" style="font-size:11px">target-side name follows the Field Mapping</span>
-          </div>`
-        : `<select class="ds-select ds-select-sm" disabled title="External ID fields are created in Setup → Object Manager → Fields & Relationships — tick 'External ID' on a text field and deploy it to every org; it then becomes the ideal cross-org match key.">
-            <option>No external ID fields in this org — add one in Setup to enable</option>
-          </select>`;
-    }
-    // the headline: the key in one sentence, whatever the strategy
-    const head = (() => {
-      if (matchStrategy === 'composite') { const r = matchReadsAs(matchFields, matchTiered); return { key: r.key || '— pick the fields —', how: r.how }; }
-      if (matchStrategy === 'externalId') { const f = matchFields[0]; return f ? { key: matchLabelOf(f), how: 'The strongest key — a re-run can upsert on it instead of duplicating.' } : { key: 'no external ID field yet', how: 'Add one in Setup, or choose another strategy.' }; }
-      const src = matchLabelOf(displayField), tgtF = tgtMatchField && tgtMatchField !== displayField ? ` ↔ ${matchLabelOf(tgtMatchField)}` : '';
-      return { key: `${src}${tgtF}`, how: 'Two records are the same when this field is equal on both sides.' };
-    })();
-    const normOn = Object.keys(matchNormalize || {}).some(k => matchNormalize[k]);
-    const tieredHtml = matchStrategy === 'composite' ? `
-      <label class="ds-match-tiered" style="display:inline-flex;align-items:flex-start;gap:6px;cursor:pointer;font-size:12px;margin-top:6px" title="The first field must be present and equal on both sides. A later field counts when both records hold a value: equal adds to the match, different rules the pair out, empty says nothing. The best unique match wins; a tie is listed under ⚠ Needs a decision.">
-        <input type="checkbox" id="dsMatchTiered" ${matchTiered ? 'checked' : ''}>
-        <span><strong>Still match a record when one of its key fields is empty</strong> — it is matched by the key fields it does have (for example by the first field alone). When both records hold a value in a field, the values must be equal.</span>
-      </label>` : '';
-    return `
-      <div class="ds-match-cfg" style="border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:8px 10px;margin-bottom:10px">
-        <div class="ds-match-head">
-          <span class="ds-match-head-lbl">Key</span>
-          <strong class="ds-match-head-key" id="dsMatchHeadKey">${esc(head.key)}</strong>
-          <span class="ds-match-head-how ds-subtext">${esc(head.how)}</span>
-          <span style="flex:1"></span>
-          <button class="ds-btn ds-btn-xs" id="dsMatchTestBtn" title="Grade this key against BOTH live orgs: populated% + unique% per org and a cross-org match preview">🧪 Test this key</button>
-          <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Ranked match-key suggestions — the top 3 are graded against LIVE data in the source and EVERY target automatically (populated% + unique% per org, worst org scores, ★ best key); the rest grade on demand">💡 Suggestions</button>
-        </div>
-        <div class="ds-match-strat-row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px">
-          <span class="ds-rec-display-lbl" title="How records are recognized as 'the same' across orgs. Normalization is part of the key — the diff scan and every writer build keys identically from this config.">Matching:</span>
-          ${stratRadio('field', 'Single field', false, 'One field is the identity — classic: Name. Two records with the same value are the same record. Example: Account Name.')}
-          ${stratRadio('composite', 'Composite', false, 'Several fields in a sequence, up to 4 — for objects where no single field is unique. Example: Name + ID number + Email; a junction object: its two parent lookups. With "Most specific first" a record that leaves a later field empty is matched by the fields it has.')}
-          ${stratRadio('externalId', 'External ID', !extIdCandidates.length, extIdCandidates.length
-            ? 'A dedicated unique field, the strongest key: it survives renames and lets a re-run upsert instead of duplicating. Example: an External_Id__c that carries the same value in every org'
-            : 'No external ID fields in this org — add one in Setup to enable')}
-          <span class="ds-subtext ds-match-help" style="font-size:11px" title="The key decides what a scan calls missing, changed or in sync, and what a re-run updates. Hover a choice for what it means; 🧪 grades the key against live data, 💡 suggests keys.">how two records are recognised as <strong>the same record</strong> across orgs</span>
-        </div>
-        <div class="ds-match-fields-row" style="margin-top:6px">${body}</div>
-        <details class="ds-match-adv"${normOn || (matchStrategy === 'composite' && matchTiered) ? ' open' : ''}>
-          <summary class="ds-subtext">Advanced — normalize${matchStrategy === 'composite' ? ' · most specific first' : ''}${normOn ? ` <span class="ds-match-adv-on">${NORM_OPTS.filter(([k]) => matchNormalize[k]).map(([, lbl]) => lbl).join(', ')}</span>` : ''}</summary>
-        <div class="ds-match-norm-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:12px;align-items:center">
-          <span class="ds-subtext" title="Applied to every key component on BOTH sides before comparing — normalization is part of the key itself.">Normalize:</span>
-          ${NORM_OPTS.map(([k, lbl, ex]) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer" title="${esc(ex)}"><input type="checkbox" data-match-norm="${esc(k)}" ${matchNormalize[k] ? 'checked' : ''}> ${lbl}</label>`).join('')}
-        </div>
-          ${tieredHtml}
-        </details>
-        ${matchStrategy === 'externalId' ? `
-        <div style="margin-top:7px">
-          <label style="display:inline-flex;align-items:flex-start;gap:6px;cursor:pointer;font-size:12px" title="Runs use the Salesforce upsert API on this External ID: a record whose key already exists in the target is UPDATED in place; only genuinely new keys insert. Without this, every run INSERTS — re-running a deployment duplicates records. The Run page's write-mode toggle overrides this for the root object only.">
+              : `<input id="dsRecTgtMatchField" class="ds-input ds-input-sm" value="${esc(tgtMatchField)}" placeholder="${esc(displayField)}" title="Open the target org in a Chrome tab to pick from a list">`}
+          </div>`);
+    if (matchStrategy === 'externalId') more.push(`
+          <label class="ds-mq-more-row" title="A record whose ID already exists in the target is updated in place; only new IDs are created. Without this, running the deployment twice creates the records twice.">
             <input type="checkbox" id="dsMatchUpsert" ${upsertOn ? 'checked' : ''}>
-            <span><strong>⬆ Upsert on this key</strong> — existing records update instead of duplicate on re-runs</span>
-          </label>
-        </div>` : ''}
-        ${(() => {
-          // Per-target key resolution (user 2026-07-26: "what will happen if
-          // the target field is different on two orgs?") — show EXACTLY which
-          // field names the key resolves to in EVERY target. Same key logic
-          // everywhere; only the names differ, via ⚙ per-target exceptions in
-          // Field Mapping. 🧪 grades each target's DATA separately.
-          const tgts = (typeof profileTargets === 'function') ? profileTargets(_editingProfile) : [];
-          if (tgts.length < 2) return '';
-          const m2 = sftkMatchingFromNode(node);
-          return `<div style="margin-top:7px;padding:6px 9px;border:1px dashed var(--border,#d8dde6);border-radius:6px;font-size:11.5px">
-            <strong style="font-size:11px">Key per target</strong>
-            <span style="color:var(--subtext)" title="Matching runs per target with THAT org's field names. If a name doesn't exist in some target, records there can't be matched on it — set a ⚙ per-target exception in Field Mapping for renamed fields, and use 🧪 to grade each target's data.">ⓘ</span><br>
+            <span><strong>Update instead of duplicate</strong> — a second run updates the records the first run created (Salesforce upsert on this ID)</span>
+          </label>`);
+    {
+      // the field names the rule resolves to in every target (user 2026-07-26: "what will happen if the target
+      // field is different on two orgs?")
+      const tgts = (typeof profileTargets === 'function') ? profileTargets(_editingProfile) : [];
+      if (tgts.length >= 2) {
+        const m2 = sftkMatchingFromNode(node);
+        more.push(`<div class="ds-mq-more-row ds-mq-pertgt"><strong>The rule in each target</strong>
             ${tgts.map(u => {
               const k = _orgKey(u);
               const hasOv = !!(node.fieldMappingOverrides && node.fieldMappingOverrides[k]);
               const nodeT = (hasOv && typeof sftkResolveMappings === 'function')
                 ? { ...node, fieldMappings: sftkResolveMappings(node.fieldMappings, node.fieldMappingOverrides, k) }
                 : node;
-              const names = sftkMatchingTgtFields(nodeT, m2).join(' + ');
-              return `<span style="display:inline-block;margin:2px 12px 0 0;white-space:nowrap">${esc(orgLabel(u))}: <strong>${esc(names)}</strong>${hasOv ? ` <span title="This org has ⚙ per-target field-mapping exceptions — its names differ from the base mapping.">🎯</span>` : ''}</span>`;
+              return `<span>${esc(orgLabel(u))}: <strong>${esc(sftkMatchingTgtFields(nodeT, m2).join(' + '))}</strong>${hasOv ? ' <span title="This org has its own field-mapping exceptions">🎯</span>' : ''}</span>`;
             }).join('')}
-          </div>`;
-        })()}
+          </div>`);
+      }
+    }
+    return `
+      <div class="ds-match-cfg ds-mq">
+        <div class="ds-mq-q">How do we know a record is already in the target?</div>
+        <div class="ds-mq-sentence">
+          <span class="ds-mq-w">It has the same</span>
+          ${cur.map((f, i) => (i ? '<span class="ds-mq-w">and the same</span>' : '') + sel(f, i)).join('')}
+          ${add}
+        </div>
+        <div id="dsMatchLive" class="ds-mq-live" aria-live="polite">${matchLive ? matchLive.html : ''}</div>
+        ${emptyQ}
+        <div class="ds-mq-opts">
+          <label class="ds-mq-switch" title="Applied to both sides before comparing. Example: “ACME Ltd ” and “acme ltd” are the same value.">
+            <input type="checkbox" id="dsMqForgive" ${normCount ? 'checked' : ''}>
+            <span><strong>Ignore small differences</strong> — capitals, extra spaces, phone punctuation</span>
+          </label>
+          <details class="ds-mq-fine" ${matchFineOpen ? 'open' : ''}>
+            <summary>fine-tune${normCount && normCount < NORM_OPTS.length ? ` · ${normCount} of ${NORM_OPTS.length} on` : ''}</summary>
+            <div class="ds-match-norm-row">
+              ${NORM_OPTS.map(([k, lbl, ex]) => `<label title="${esc(ex)}"><input type="checkbox" data-match-norm="${esc(k)}" ${matchNormalize[k] ? 'checked' : ''}> ${lbl}</label>`).join('')}
+            </div>
+          </details>
+        </div>
+        ${more.length ? `<details class="ds-mq-more" ${matchMoreOpen ? 'open' : ''}><summary>More options</summary>${more.join('')}</details>` : ''}
+        <div class="ds-mq-foot">
+          <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Other rules for this object, each checked against the live data of both orgs">💡 Try another rule</button>
+          <button class="ds-btn ds-btn-xs" id="dsMatchTestBtn" title="The numbers behind the result above, for the source and every target: how many records hold a value, how many are unique">📊 Full report</button>
+        </div>
         <div id="dsMatchTestResults">${matchTestHtml}</div>
         <div id="dsMatchSuggestBox" style="display:${matchSuggestOpen ? 'block' : 'none'};margin-top:6px">${matchSuggestOpen ? suggestListHtml() : ''}</div>
       </div>`;
@@ -1318,12 +1280,12 @@ async function openRecordPickerModal(pathStr) {
           // nodes keep it open: choosing the key is step one there.
           const cfgd = !!(node.matching && node.matching.fields && node.matching.fields.length);
           const summary = cfgd
-            ? `${node.matching.strategy === 'externalId' ? '⚡ External ID' : node.matching.strategy === 'composite' ? 'Composite' : 'Single field'}: <strong>${esc(matchReadsAs(node.matching.fields, false).key)}</strong>${node.matching.tiered ? ' <span class="ds-subtext">— most specific first</span>' : ''}${node.upsert || upsertOn ? ' · ⬆ upsert' : ''}`
-            : 'not configured — matching by Name';
+            ? `the same <strong>${esc(node.matching.fields.map(matchLabelOf).join(' and '))}</strong>${node.upsert || upsertOn ? ' · a second run updates' : ''}`
+            : 'the same <strong>Name</strong> — not checked yet';
           return `<details class="ds-match-fold" ${matchFoldOpen === null ? (cfgd ? '' : 'open') : (matchFoldOpen ? 'open' : '')}>
             <summary style="cursor:pointer;font-size:12.5px;padding:4px 0">
-              <strong>Matching:</strong> <span>${summary}</span>
-              <span style="opacity:.6;font-size:11px"> — click to ${cfgd ? 'review or change' : 'configure'}</span>
+              <strong>Already in the target when it has</strong> <span>${summary}</span>
+              <span style="opacity:.6;font-size:11px"> — click to ${cfgd ? 'review or change' : 'check'}</span>
             </summary>
             ${matchCfgHtml()}
           </details>`;
@@ -1479,21 +1441,6 @@ async function openRecordPickerModal(pathStr) {
       if (box) { box.innerHTML = renderModal(filterVal); wireModal(filterVal); }
     }
 
-    eid('dsRecDisplayField')?.addEventListener('change', async e => {
-      displayField = e.target.value;
-      matchFields  = [displayField];
-      persistMatching();   // keeps node.matchField (legacy) + node.matching in sync
-      matchTestHtml = ''; gradeReset();
-      // If the user hasn't explicitly picked a target match field, follow the source choice
-      if (!node.matchFieldTgt || node.matchFieldTgt === '') {
-        tgtMatchField = deriveTgtMatchDefault(displayField);
-      }
-      const box = eid('dsModalBox');
-      if (box) box.innerHTML = `<div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">Loading…</div>`;
-      await fetchRecords();
-      if (box) { box.innerHTML = renderModal(''); wireModal(''); }
-    });
-
     // Target-side match field change → persist as node.matchFieldTgt.
     // Both dropdown (with session) and free-text input (without) share this handler.
     const tgtMfEl = eid('dsRecTgtMatchField');
@@ -1502,66 +1449,37 @@ async function openRecordPickerModal(pathStr) {
       tgtMatchField        = v || displayField;       // empty → mirror source
       node.matchFieldTgt   = v || null;               // null = "use source-side name on target too"
       matchTestHtml = ''; gradeReset();
+      runMatchLive();
     });
 
-    // ── M3a — matching strategy / composite fields / normalization ───────
-    document.querySelectorAll('input[name="dsMatchStrat"]').forEach(rb => rb.addEventListener('change', () => {
-      matchStrategy = rb.value;
-      if (matchStrategy === 'composite' && !(node.matching && node.matching.strategy === 'composite')) matchTiered = true;
-      // Honest defaults (user bug 2026-08-04: an invisible whitespace
-      // difference in an external-Id value made one child "missing"): a
-      // Salesforce upsert on a TEXT external Id matches case-insensitively
-      // and data entry adds stray whitespace, so exact matching here said
-      // "missing" for records an upsert would UPDATE. Applied only when NO
-      // normalization is configured yet — a deliberate choice is never
-      // overridden, and the toggles show checked so it's visible and
-      // revertable.
-      if (matchStrategy === 'externalId' && !Object.values(matchNormalize).some(Boolean)) {
-        matchNormalize.trim = true;
-        matchNormalize.caseFold = true;
-      }
-      if (matchStrategy === 'externalId') {
-        if (!extIdCandidates.some(f => f.name === matchFields[0])) {
-          matchFields = extIdCandidates.length ? [extIdCandidates[0].name] : matchFields.slice(0, 1);
-        } else {
-          matchFields = [matchFields[0]];
-        }
-      } else if (matchStrategy === 'field') {
-        matchFields = [matchFields[0] || displayField || 'Name'];
-      }
+    // ── the rule's sentence: its fields decide the strategy (bldMatchStrategyOf) ──
+    document.querySelectorAll('[data-mq-field]').forEach(selEl => selEl.addEventListener('change', () => {
+      const vals = [...document.querySelectorAll('[data-mq-field]')]
+        .sort((a, b) => Number(a.dataset.mqField) - Number(b.dataset.mqField))
+        .map(x => x.value).filter(Boolean);
+      let next = [...new Set(vals)].slice(0, 4);
+      if (!next.length) next = [displayField || 'Name'];
+      const was = matchStrategy;
+      if (next[0] !== matchFields[0]) node.matchFieldTgt = null;   // another first field: its target name follows the field mapping again
+      matchFields   = next;
+      matchStrategy = bldMatchStrategyOf(next, extIdCandidates.map(f => f.name));
+      // a rule of several fields starts by matching a record by the fields it has
+      if (matchStrategy === 'composite' && was !== 'composite' && !(node.matching && node.matching.strategy === 'composite')) matchTiered = true;
+      // a Salesforce upsert on a text ID ignores capitals, and data entry adds stray spaces (user bug 2026-08-04)
+      if (matchStrategy === 'externalId' && was !== 'externalId' && !Object.values(matchNormalize).some(Boolean)) { matchNormalize.trim = true; matchNormalize.caseFold = true; }
       matchCfgChanged(true);
     }));
-
-    // Long namespaced names ellipsize in the narrow selects — the hover title
-    // always carries the FULL selected option text (or the slot hint when
-    // empty), so "which field is this box?" is never a guess.
-    const syncKeyTitles = () => {
-      document.querySelectorAll('.ds-match-fields-row select.ds-select-sm, .ds-rec-mf-col .ds-select-sm').forEach(s => {
-        const opt = s.selectedOptions && s.selectedOptions[0];
-        if (opt && opt.value) s.title = opt.textContent.trim();
-      });
-    };
-    syncKeyTitles();
-
-    document.querySelectorAll('[data-match-comp]').forEach(sel => sel.addEventListener('change', () => {
-      const vals = [...document.querySelectorAll('[data-match-comp]')]
-        .sort((a, b) => Number(a.dataset.matchComp) - Number(b.dataset.matchComp))
-        .map(s => s.value).filter(Boolean);
-      matchFields = [...new Set(vals)].slice(0, 4);
-      if (!matchFields.length) matchFields = [displayField || 'Name'];
-      syncKeyTitles();
-      matchCfgChanged(true);
-    }));
-
-    eid('dsMatchTiered')?.addEventListener('change', e => {
-      matchTiered = e.target.checked;
+    eid('dsMqForgive')?.addEventListener('change', e => {
+      for (const [k] of NORM_OPTS) matchNormalize[k] = e.target.checked;
       matchCfgChanged(false);
     });
-
-    eid('dsMatchExtId')?.addEventListener('change', e => {
-      matchFields = [e.target.value];
-      matchCfgChanged(true);
-    });
+    document.querySelectorAll('input[name="dsMqTiered"]').forEach(rb => rb.addEventListener('change', () => {
+      if (!rb.checked) return;
+      matchTiered = rb.value === '1';
+      matchCfgChanged(false);
+    }));
+    eid('dsModalBox')?.querySelector('.ds-mq-fine')?.addEventListener('toggle', e => { matchFineOpen = e.target.open; });
+    eid('dsModalBox')?.querySelector('.ds-mq-more')?.addEventListener('toggle', e => { matchMoreOpen = e.target.open; });
 
     document.querySelectorAll('[data-match-norm]').forEach(cb => cb.addEventListener('change', () => {
       matchNormalize[cb.dataset.matchNorm] = cb.checked;
@@ -1571,6 +1489,8 @@ async function openRecordPickerModal(pathStr) {
       const out = eid('dsMatchTestResults');
       if (out) out.innerHTML = '';
       document.querySelectorAll('[data-match-grade-out]').forEach(el => { el.innerHTML = ''; });
+      const fg = eid('dsMqForgive'); if (fg) fg.checked = NORM_OPTS.some(([k]) => matchNormalize[k]);
+      runMatchLive();
     }));
 
     // W1 — the per-node upsert toggle persists with the matching config.
@@ -1585,7 +1505,7 @@ async function openRecordPickerModal(pathStr) {
       const out = eid('dsMatchTestResults');
       if (!out) return;
       persistMatching();
-      if (btn) { btn.disabled = true; btn.textContent = '⏳ testing…'; }
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ reading both orgs…'; }
       // Multi-target (user 2026-07-26: "I need to be able to compare with
       // both orgs"): grade the key against EVERY effective target, not just
       // the schema reference. Per-target field-mapping overrides apply to
@@ -1616,7 +1536,7 @@ async function openRecordPickerModal(pathStr) {
         matchTestHtml = `<div class="ds-drift-compare-err" style="margin-top:6px">⚠ Key test failed: ${esc(fe.message)}</div>`;
       }
       out.innerHTML = matchTestHtml;
-      if (btn) { btn.disabled = false; btn.textContent = '🧪 Test this key'; }
+      if (btn) { btn.disabled = false; btn.textContent = '📊 Full report'; }
     });
 
     // ── M3b — ranked suggestions (adopt on click, grade lazily) ──────────
@@ -1772,8 +1692,70 @@ async function openRecordPickerModal(pathStr) {
       }
     }
 
+    // THE LIVE RESULT (owner 2026-11-20): what the rule on screen does to the records of both orgs, in words, with a
+    // real example of each outcome — and, when the rule cannot tell records apart, a better rule checked the same way.
+    // One read per rule (cached by its signature); a newer rule drops an older answer.
+    async function runMatchLive() {
+      const el0 = eid('dsMatchLive');
+      if (!el0) return;
+      const fields = (matchFields.filter(Boolean).length ? matchFields.filter(Boolean) : [displayField || 'Name']).slice(0, 4);
+      const tmp = { ...node, matching: { strategy: matchStrategy, fields, normalize: { ...matchNormalize }, ...(matchStrategy === 'composite' && matchTiered ? { tiered: true } : {}) } };
+      const m = sftkMatchingFromNode(tmp);
+      const tgtUrl = _editingProfile && _editingProfile.targetOrg;
+      if (!tgtUrl) { el0.innerHTML = '<div class="ds-mq-res ds-mq-idle">Pick a target org in the deployment to see what this rule finds.</div>'; return; }
+      const nodeT = (typeof sftkResolveMappings === 'function') ? { ...tmp, fieldMappings: sftkResolveMappings(node.fieldMappings, node.fieldMappingOverrides, _orgKey(tgtUrl)) } : tmp;
+      const tgtF = sftkMatchingTgtFields(nodeT, m);
+      const sig = JSON.stringify([objType, m.fields, tgtF, m.normalize, m.strategy, m.tiered === true, tgtUrl]);
+      if (matchLive && matchLive.sig === sig) { el0.innerHTML = matchLive.html; wireLive(); return; }
+      const seq = ++matchLiveSeq;
+      el0.innerHTML = '<div class="ds-mq-res ds-mq-idle"><span class="ds-mq-spin" aria-hidden="true"></span> Checking this rule against the records of both orgs…</div>';
+      clearTimeout(matchLiveTimer);
+      await new Promise(r => { matchLiveTimer = setTimeout(r, 350); });
+      if (seq !== matchLiveSeq) return;
+      let res;
+      try { res = await sftkAnalyzeMatchKey(objType, _editingProfile, m.fields, tgtF, m.normalize, m.strategy, m.tiered === true); }
+      catch (e) { res = { srcErr: (e && e.message) || String(e) }; }
+      if (seq !== matchLiveSeq) return;
+      const keyWords = fields.map(matchLabelOf).join(' and ');
+      const live = bldMatchLive({
+        cross: res.cross, srcErr: res.srcErr, tgtErr: res.tgtErr, sampled: !!(res.src && res.src.sampled),
+        srcStats: res.src ? sftkKeyStats(res.src) : null,
+        ex: bldMatchExamples(res.src, res.tgt, k => String(k == null ? '' : k).split(String.fromCharCode(1)).map((p, i) => p === '' ? `no ${matchLabelOf(fields[i] || '') || 'value'}` : p).join(' · ')),
+      }, { tgt: orgLabel(tgtUrl), src: orgLabel(_editingProfile.sourceOrg || ''), key: keyWords });
+      const html = bldMatchLiveHtml(live, esc);
+      matchLive = { sig, html, score: (typeof sftkMatchKeyScore === 'function') ? sftkMatchKeyScore(res, []) : null, reco: '' };
+      const paint = () => { const el = eid('dsMatchLive'); if (el && matchLive && matchLive.sig === sig) { el.innerHTML = matchLive.html + (matchLive.reco || ''); wireLive(); } };
+      paint();
+      // a rule that leaves records it cannot tell apart: look for a better one, by the same live check
+      if (live.tone !== 'bad' && live.tone !== 'warn') return;
+      const curSig = JSON.stringify(fields);
+      const cands = [..._suggestionsAt(1).slice(0, 3), ...(fields.length < 4 ? _suggestionsAt(fields.length + 1).slice(0, 2) : [])]
+        .filter(c => JSON.stringify(c.fields) !== curSig);
+      for (const c of cands) { if (seq !== matchLiveSeq) return; await _gradeSuggestion(c); }
+      if (seq !== matchLiveSeq) return;
+      const best = bldMatchBetter(matchLive.score, cands);
+      if (!best) return;
+      matchLive.best = best;
+      matchLive.reco = `<div class="ds-mq-reco">💡 <span><strong>${esc(best.fields.map(matchLabelOf).join(' and '))}</strong> tells the records apart better: ${best.score} of 100 against ${matchLive.score == null ? 'no score' : matchLive.score} for this rule, on the live data of both orgs.</span> <button class="ds-btn ds-btn-xs ds-btn-primary" data-mq-use>Use it</button></div>`;
+      paint();
+    }
+    function wireLive() {
+      eid('dsMatchLive')?.querySelector('[data-mq-use]')?.addEventListener('click', () => {
+        const b = matchLive && matchLive.best;
+        if (!b) return;
+        matchStrategy  = b.strategy;
+        matchFields    = [...b.fields];
+        matchTiered    = b.tiered === true;
+        if (b.normalize && Object.keys(b.normalize).some(k => b.normalize[k])) matchNormalize = { caseFold: false, trim: false, collapseWs: false, emailLower: false, phoneDigits: false, ...b.normalize };
+        node.matchFieldTgt = null;
+        matchCfgChanged(true);
+      });
+    }
+
     wireSuggestRows();
     if (matchSuggestOpen) _autoGradeTop();
+    if (eid('dsModalBox')?.querySelector('.ds-match-fold')?.open) runMatchLive();
+    eid('dsModalBox')?.querySelector('.ds-match-fold')?.addEventListener('toggle', e => { if (e.target.open) runMatchLive(); });
 
     eid('dsMatchSuggestBtn')?.addEventListener('click', () => {
       matchSuggestOpen = !matchSuggestOpen;
@@ -2223,6 +2205,81 @@ async function openTransferRecordFilterModal(pathKey, objType) {
 // Ranked suggestions from a describe: external-ID fields → unique fields →
 // the name field → 2-3 discovered composites (name + email / phone / city,
 // only when those fields exist on the object).
+// THE MATCHING RULE IN WORDS (owner 2026-11-20). The user fills a sentence — "It has the same A and the same B" —
+// and the engine's strategy follows from it. PURE.
+function bldMatchStrategyOf(fields, extNames) {
+  const f = (Array.isArray(fields) ? fields : []).filter(Boolean);
+  if (f.length > 1) return 'composite';
+  return f.length === 1 && (extNames || []).includes(f[0]) ? 'externalId' : 'field';
+}
+// One real key of each outcome, read from the two orgs' key counts ({ keyCounts: Map key → records }). PURE.
+// → { both, onlySrc, clash: { label, src, tgt } | null }  (labels in words; '' when there is no such key)
+function bldMatchExamples(src, tgt, labelOf) {
+  const out = { both: '', onlySrc: '', clash: null };
+  const sk = src && src.keyCounts, tk = tgt && tgt.keyCounts;
+  if (!sk || typeof sk.entries !== 'function') return out;
+  const lab = k => String(typeof labelOf === 'function' ? labelOf(k) : k);
+  for (const [k, sc] of sk.entries()) {
+    const tc = tk && typeof tk.get === 'function' ? (tk.get(k) || 0) : 0;
+    if (!tc) { if (!out.onlySrc) out.onlySrc = lab(k); }
+    else if (sc === 1 && tc === 1) { if (!out.both) out.both = lab(k); }
+    else if (!out.clash) out.clash = { label: lab(k), src: sc, tgt: tc };
+    if (out.both && out.onlySrc && out.clash) break;
+  }
+  return out;
+}
+// What a rule does to the records, in words. PURE.
+//   r: { cross: { sourceTotal, matchedUnique, ambiguous, unmatched } | null, srcErr, tgtErr, sampled,
+//        srcStats: { blank, dupRecords } | null, ex: bldMatchExamples' }
+//   w: { src, tgt, key } — the two orgs' names and the rule's fields in words
+// → { tone: 'ok' | 'warn' | 'bad' | 'idle', head, rows: [{ n, what, ex }], notes: [text] }
+function bldMatchLive(r, w) {
+  const x = r || {}, k = x.cross, tl = (w && w.tgt) || 'the target', key = (w && w.key) || 'value';
+  const N = v => Number(v || 0).toLocaleString('en-US');
+  if (x.srcErr || x.tgtErr || !k) {
+    return { tone: 'idle', head: `This rule could not be checked: ${x.srcErr || x.tgtErr || 'both orgs must be open in Chrome tabs'}.`, rows: [], notes: [] };
+  }
+  const ex = x.ex || {};
+  const rows = [
+    { cls: 'in', n: k.matchedUnique, what: 'are already in the target — a run updates them', ex: ex.both ? `for example “${ex.both}”` : '' },
+    { cls: 'new', n: k.unmatched, what: 'are not in the target yet — a run creates them', ex: ex.onlySrc ? `for example “${ex.onlySrc}”` : '' },
+  ];
+  if (k.ambiguous) rows.push({ cls: 'clash', n: k.ambiguous, what: 'cannot be told apart — you will be asked about each',
+    ex: ex.clash ? `for example “${ex.clash.label}”: ${N(ex.clash.src)} in the source, ${N(ex.clash.tgt)} in the target` : '' });
+  const notes = [];
+  const blank = x.srcStats ? Number(x.srcStats.blank || 0) : 0;
+  if (blank) notes.push(`${N(blank)} source record${blank === 1 ? ' has' : 's have'} no ${key} and can never be matched: each run creates ${blank === 1 ? 'it' : 'them'} again.`);
+  if (x.sampled) notes.push('More than 2,000 records: the first 2,000 were read.');
+  const tone = k.ambiguous ? 'bad' : blank ? 'warn' : 'ok';
+  const head = !k.sourceTotal ? 'The source has no records of this object yet.'
+    : tone === 'ok' ? `This rule tells all ${N(k.sourceTotal)} source record${k.sourceTotal === 1 ? '' : 's'} apart.`
+    : tone === 'bad' ? `This rule cannot tell ${N(k.ambiguous)} of ${N(k.sourceTotal)} source records apart.`
+    : `This rule works for ${N(k.sourceTotal - blank)} of ${N(k.sourceTotal)} source records.`;
+  const sub = k.sourceTotal ? `Checked on the records of ${(w && w.src) || 'the source'} against ${tl}, just now.` : '';
+  return { tone, head, sub, rows: k.sourceTotal ? rows : [], notes };
+}
+// bldMatchLive as HTML; esc is the page's escaper. PURE.
+function bldMatchLiveHtml(live, esc) {
+  const e = typeof esc === 'function' ? esc : (v => String(v));
+  const N = v => Number(v || 0).toLocaleString('en-US');
+  const ico = { ok: '✓', warn: '⚠', bad: '⚠', idle: 'ⓘ' }[live.tone] || '';
+  return `<div class="ds-mq-res ds-mq-${e(live.tone)}">
+      <div class="ds-mq-res-head"><span class="ds-mq-res-ico" aria-hidden="true">${ico}</span> ${e(live.head)}</div>
+      ${live.sub ? `<div class="ds-mq-res-sub">${e(live.sub)}</div>` : ''}
+      ${live.rows.length ? `<ul class="ds-mq-res-rows">${live.rows.map(r => `<li class="ds-mq-row-${e(r.cls)}"><strong>${N(r.n)}</strong><span>${e(r.what)}${r.ex && r.n ? `<em>${e(r.ex)}</em>` : ''}</span></li>`).join('')}</ul>` : ''}
+      ${live.notes.map(n => `<div class="ds-mq-res-note">${e(n)}</div>`).join('')}
+    </div>`;
+}
+// The better rule to offer, if any: checked on live data, clearly ahead of the rule on screen, and good in its own
+// right — "least bad" is no recommendation. PURE.
+function bldMatchBetter(curScore, cands) {
+  const scored = (Array.isArray(cands) ? cands : []).filter(c => c && typeof c.score === 'number');
+  if (!scored.length) return null;
+  const best = scored.reduce((a, b) => (b.score > a.score ? b : a));
+  const cur = typeof curScore === 'number' ? curScore : -1;
+  return best.score >= 60 && best.score >= cur + 10 ? best : null;
+}
+
 function _matchSuggestionsFromDescribe(desc) {
   const fields = (desc && desc.fields) || [];
   const out = [];

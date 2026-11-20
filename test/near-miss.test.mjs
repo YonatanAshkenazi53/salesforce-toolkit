@@ -96,7 +96,7 @@ describe('the scan pass and its surfacing', () => {
   });
 
   it('External-ID strategy defaults to trim + case-insensitive ONLY when nothing is configured', () => {
-    expect(MOD).toMatch(/matchStrategy === 'externalId' && !Object\.values\(matchNormalize\)\.some\(Boolean\)/);
+    expect(MOD).toMatch(/matchStrategy === 'externalId' && was !== 'externalId' && !Object\.values\(matchNormalize\)\.some\(Boolean\)/);
     expect(MOD).toMatch(/matchNormalize\.trim = true;\s+matchNormalize\.caseFold = true;/);
   });
 });
