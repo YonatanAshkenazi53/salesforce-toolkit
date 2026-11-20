@@ -787,7 +787,7 @@ async function renderDeploy() {
   // panel WOULD pause goes along by name, so the dry run can say which of its refusals a real run would not meet
   // (owner 2026-11-13: ticked "pause validation rules", and the dry run still said the rule "blocked records creation").
   eid('dsRecProbeBtn')?.addEventListener('click', () => runReconcile(p, objType,
-    { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }, { probe: true, probePaused: _depProbePaused(p) }));
+    { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }, _depProbeOpts(p)));
   _depFlowPauseWire(p);
   _depRulePauseWire(p);
   _depDupePauseWire(p);
@@ -2133,6 +2133,59 @@ function _depProbePaused(p) {
   return { rules: vp.map(r => ({ name: r.name, object: r.object })), flows: fp.map(f => ({ label: f.label || f.apiName, object: f.object })),
     rulesOn: !!_depRulePause.on, flowsOn: !!_depFlowPause.on };
 }
+// What the 🧪 dry run is started with. It carries the SAME duplicate-rule choice as the real run (QA 1.1 #44): a
+// dry run that bypassed duplicate rules on every object passed records the real run then refused on an object left
+// "Respected" in the ⏸ panel. Nothing is switched by a dry run; this only says which objects' writes take the header.
+function _depProbeOpts(p) {
+  const written = sftkDeployWrittenObjects(sftkDeployObjects(p.tree), _recSel, _recChildSel);
+  return sftkDepProbeOpts(_depProbePaused(p), _depDupePauseOpts(p, written));
+}
+// PURE. The dry run's options: probe mode, what a real run would pause (by name), and the real run's duplicate-rule choice.
+function sftkDepProbeOpts(probePaused, dupePause) {
+  return { probe: true, probePaused, dupePause: dupePause || null };
+}
+// PURE. Must the page read this automation list from the org? Yes when it was never read, when the target or the
+// objects changed, and when the last read FAILED (QA 1.1 #55: a failed read was kept for the page's life, so the
+// "press Rescan to read them again" line could never go away). A read in flight (no list, no error) is not repeated.
+function sftkDepPauseNeedsRead(st, key) {
+  return !st || !st.on || st.key !== key || !!st.error;
+}
+// PURE. The ticked rules that are STILL active in the org, as fresh copies WITHOUT a definition (QA 1.1 #7, #43).
+// picked: the rules this run was confirmed to switch off (from the list read when the page opened); fresh: the
+// active rules read again just before the switch. A rule no longer in `fresh` was switched off (or deleted) by
+// someone since — it is left as it is, never switched back on. The copies carry no metadata / xml, so every run
+// reads the definition it writes back: a definition cached by an earlier run would revert edits made since.
+function sftkDepRulesStillOn(picked, fresh) {
+  const k = id => String(id || '').slice(0, 15);
+  const on = new Set((fresh || []).map(r => k(r && r.id)));
+  const go = [], gone = [];
+  for (const r of (picked || [])) {
+    if (!on.has(k(r.id))) { gone.push(r); continue; }
+    const c = { ...r };
+    delete c.metadata; delete c.xml;
+    go.push(c);
+  }
+  return { go, gone };
+}
+// PURE. Does the definition just read say the rule is off? (switched off between the list and the read)
+function sftkDepRuleReadsOff(r) {
+  if (r && r.metadata) return r.metadata.active === false;
+  return !!(r && r.xml) && /<(?:\w+:)?active>\s*false\s*<\/(?:\w+:)?active>/i.test(String(r.xml));
+}
+// PURE. The ticked flows that are STILL active, at the version that is active NOW (QA 1.1 #43). A flow no longer
+// in `fresh` was deactivated since the page read its list — left as it is. A flow whose active version changed is
+// switched back on at the new version, never the one the page remembered. → { go, gone, moved: [{ label, from, to }] }
+function sftkDepFlowsStillOn(picked, fresh) {
+  const by = new Map((fresh || []).filter(f => f && f.apiName).map(f => [f.apiName, f]));
+  const go = [], gone = [], moved = [];
+  for (const f of (picked || [])) {
+    const now = by.get(f.apiName);
+    if (!now || !now.version) { gone.push(f); continue; }
+    if (now.version !== f.version) moved.push({ label: f.label || f.apiName, from: f.version, to: now.version });
+    go.push({ ...f, version: now.version, defId: now.defId || f.defId });
+  }
+  return { go, gone, moved };
+}
 // the tab the panel shows — one per kind, only the kinds whose option is on (user 2026-11-08: "להראות פלואים רק אם
 // המשתמש בחר לעצור אוטומציות… ולעשות 3 טאבים עם פירוט מובן")
 let _depPauseTab = '';
@@ -2252,7 +2305,7 @@ function _depPausePaint(p) {
 async function _depDupePauseWire(p) {
   const objects = sftkDeployObjects(p.tree).map(o => o.obj);
   const key = `${p.targetOrg}|${objects.join(',')}`;
-  if (_depDupePause.on && _depDupePause.key === key) { _depPausePaint(p); return; }   // listed whatever the choice is (2026-11-13); _depDupePauseOpts acts only on Bypass
+  if (!sftkDepPauseNeedsRead(_depDupePause, key)) { _depPausePaint(p); return; }   // a failed read is tried again on the next render; listed whatever the choice is (2026-11-13); _depDupePauseOpts acts only on Bypass
   _depDupePause = { on: true, key, list: null, error: '' };
   _depPausePaint(p);
   try {
@@ -2307,7 +2360,7 @@ async function _depFlowPauseWire(p) {
     for (const f of ((_depFlowPause.list && _depFlowPause.list.flows) || [])) { const k = sftkPauseKey('flow', f); if (box.checked && !f.scheduled) _depPauseSkip.delete(k); else _depPauseSkip.add(k); }
     paint();
   });
-  if (!_depFlowPause.on || _depFlowPause.key !== key) load(); else paint();
+  if (sftkDepPauseNeedsRead(_depFlowPause, key)) load(); else paint();   // also after a failed read — 🔄 Rescan re-renders the page
   _depFlowLeftovers(p);
 }
 
@@ -2369,7 +2422,7 @@ async function _depRulePauseWire(p) {
     for (const r of ((_depRulePause.list && _depRulePause.list.rules) || [])) { const k = sftkPauseKey('rule', r); if (box.checked) _depPauseSkip.delete(k); else _depPauseSkip.add(k); }
     paint();
   });
-  if (!_depRulePause.on || _depRulePause.key !== key) load(); else paint();
+  if (sftkDepPauseNeedsRead(_depRulePause, key)) load(); else paint();   // also after a failed read — 🔄 Rescan re-renders the page
   _depRuleLeftovers(p);
 }
 
@@ -2425,14 +2478,29 @@ async function _depReconcile(p, objType, buckets, opts) {
       beforeWrites: async (sess, log) => {
         tgtSessR = sess;
         if (opts && typeof opts.beforeWrites === 'function') { const ok = await opts.beforeWrites(sess, log); if (!ok) return false; }
-        log('⏸', `Switching off ${vp.rules.length} validation rule(s) in ${orgLabel(sess.orgUrl)}…`);
-        try { await sftkVrPauseHydrate(sess, vp.rules); }
-        catch (e) {
-          log('❌', `The run did not start: ${(e && e.message) || e}. Nothing was switched off and nothing was written.`, 'ds-prog-err');
+        // The list on the page was read when it opened. Read again NOW which of the ticked rules are still active,
+        // and read each definition fresh (QA 1.1 #7, #43): a rule switched off since stays off — it is not switched
+        // back on at the end — and a rule edited since is written back as it is now, with only `active` changed.
+        let rules = [], goneR = [];
+        try {
+          const fresh = await sftkVrPauseList(sess, [...new Set(vp.rules.map(r => r.object))], undefined, { light: true });
+          const still = sftkDepRulesStillOn(vp.rules, fresh.rules);
+          const read = await sftkVrPauseHydrate(sess, still.go);
+          rules = read.filter(r => !sftkDepRuleReadsOff(r));
+          goneR = [...still.gone, ...read.filter(sftkDepRuleReadsOff)];
+        } catch (e) {
+          log('❌', `The run did not start: ${(e && e.message) || e}. No validation rule was switched off and nothing was written.`, 'ds-prog-err');
           if (opts && typeof opts.afterWrites === 'function') { try { await opts.afterWrites(log); } catch (_) { /* its own finally tries again */ } }
           return false;
         }
-        pausedR = await sftkVrPauseOff(sess, vp.rules);
+        if (goneR.length) {
+          log('⏸', `${goneR.length} validation rule(s) are no longer active in ${orgLabel(sess.orgUrl)} — switched off or deleted since this page read them: ${goneR.map(r => `${r.name} (${r.object})`).join(', ')}. They are left as they are; the run does not switch them back on.`);
+          const goneIds = new Set(goneR.map(r => String(r.id).slice(0, 15)));
+          vpAll.rules = vpAll.rules.filter(r => !goneIds.has(String(r.id).slice(0, 15)));   // the panel stops offering them
+        }
+        if (!rules.length) { log('⏸', 'No ticked validation rule is active any more — none is switched off; the run goes on.'); return true; }
+        log('⏸', `Switching off ${rules.length} validation rule(s) in ${orgLabel(sess.orgUrl)}…`);
+        pausedR = await sftkVrPauseOff(sess, rules);
         if (!pausedR.ok) {
           log('❌', `Not every validation rule could be switched off, so the run did not start: ${pausedR.failed.join(' · ')}${pausedR.restored.length ? ` — ${pausedR.restored.length} already off switched back on` : ''}${pausedR.restoreFailed.length ? ` — NOT back on: ${pausedR.restoreFailed.join(' · ')}` : ''}`, 'ds-prog-err');
           // whatever the flow option switched off goes back on too — the run is not starting
@@ -2488,8 +2556,24 @@ async function _depRun(p, objType, buckets) {
     await _depReconcile(p, objType, buckets, { flowPause: fp, dupePause,
       beforeWrites: async (sess, log) => {
         tgtSess = sess;
-        log('⏸', `Switching off ${fp.flows.length} record-triggered flow(s) in ${orgLabel(sess.orgUrl)}…`);
-        paused = await sftkFlowPauseOff(sess, fp.flows);
+        // Read again NOW which of the ticked flows are still active, and at which version (QA 1.1 #43): the list on
+        // the page was read when it opened. A flow deactivated since stays off; a flow re-versioned since goes
+        // back on at the version that is active now.
+        let still;
+        try { still = sftkDepFlowsStillOn(fp.flows, (await sftkFlowPauseList(sess, [...new Set(fp.flows.map(f => f.object))])).flows); }
+        catch (e) {
+          log('❌', `The run did not start: ${(e && e.message) || e}. No flow was switched off and nothing was written.`, 'ds-prog-err');
+          return false;
+        }
+        if (still.gone.length) {
+          log('⏸', `${still.gone.length} record-triggered flow(s) are no longer active in ${orgLabel(sess.orgUrl)} — deactivated or deleted since this page read them: ${still.gone.map(f => `${f.label || f.apiName} (${f.object})`).join(', ')}. They are left as they are; the run does not switch them back on.`);
+          fpAll.flows = fpAll.flows.filter(f => !still.gone.includes(f));   // the panel stops offering them
+        }
+        if (still.moved.length) log('⏸', `The active version changed since this page read the flows: ${still.moved.map(m => `${m.label} v${m.from} → v${m.to}`).join(', ')}. Each goes back on at the version that is active now.`);
+        for (const g of still.go) { const c = fp.flows.find(f => f.apiName === g.apiName); if (c) c.version = g.version; }   // the page shows the version it will restore
+        if (!still.go.length) { log('⏸', 'No ticked flow is active any more — none is switched off; the run goes on.'); return true; }
+        log('⏸', `Switching off ${still.go.length} record-triggered flow(s) in ${orgLabel(sess.orgUrl)}…`);
+        paused = await sftkFlowPauseOff(sess, still.go);
         if (!paused.ok) {
           log('❌', `Not every flow could be switched off, so the run did not start: ${paused.failed.join(' · ')}${paused.restored.length ? ` — ${paused.restored.length} already off switched back on` : ''}${paused.restoreFailed.length ? ` — STILL OFF: ${paused.restoreFailed.join(' · ')}` : ''}`, 'ds-prog-err');
           return false;
@@ -2559,6 +2643,6 @@ function _depSummary(p, objTypeOrNull, objByPathOrNull) {
   const ph = (last && s.total && typeof sftkProbeSelKey === 'function' && last.key === sftkProbeSelKey(p.id, _recSel, _recChildSel)) ? sftkProbeHint(last) : null;
   const probeHint = ph ? `<span class="ds-rec-tag ${ph.cls} ds-dep-probe-hint" title="${esc(ph.title)}">${esc(ph.text)}</span>` : '';
   if (el) el.innerHTML = s.total ? s.parts.map(x => `<span class="ds-diff-chip">${esc(x)}</span>`).join(' ') + probeHint : '<span class="ds-dep-muted">Nothing selected — tick records above. ▶ Deploy writes only what you select.</span>';
-  if (run) { run.disabled = !s.total; run.textContent = s.total ? `▶ Deploy ${s.total.toLocaleString('en-US')} selected into ${orgLabel(p.targetOrg)}` : '▶ Deploy'; }
-  const probe = eid('dsRecProbeBtn'); if (probe) probe.disabled = !s.total;
+  if (run) { run.disabled = !s.total || !!window._sftkRunActive; run.textContent = s.total ? `▶ Deploy ${s.total.toLocaleString('en-US')} selected into ${orgLabel(p.targetOrg)}` : '▶ Deploy'; }
+  const probe = eid('dsRecProbeBtn'); if (probe) probe.disabled = !s.total || !!window._sftkRunActive;
 }

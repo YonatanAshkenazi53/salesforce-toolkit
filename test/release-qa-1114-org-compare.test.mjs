@@ -12,7 +12,7 @@ const slice = name => {
   return SRC.slice(start, SRC.indexOf('\n}\n', start) + 3);
 };
 const build = sendBg => new Function('sendBg', '_orgCompareState',
-  slice('sftkOcMatchPct') + slice('sftkOcCountByKey') + slice('_ocCompareOneObject') +
+  slice('sftkOcMatchPct') + slice('sftkOcIncompleteMsg') + slice('sftkOcCountByKey') + slice('_ocCompareOneObject') +
   ' return { count: sftkOcCountByKey, one: _ocCompareOneObject };'
 )(sendBg, { matchStrategy: 'auto', customMatchField: '' });
 

@@ -93,7 +93,7 @@ describe('the engine and the overwrite write them', () => {
   it('overwrite: the bucket, the target\'s updateable set, the PII rule, the counts in the warnings', () => {
     expect(RC).toContain("const valOv = (typeof sftkValOvBucket === 'function') ? sftkValOvBucket(node, profile.targetOrg) : null;");
     expect(RC).toContain('const tgtUpdOk = tgtUpdMap ? new Set([...tgtUpdMap].filter(([, u]) => u === true).map(([k]) => k)) : null;');
-    expect(RC).toContain('const vr = sftkValOvApply(p, valForRec, fm, tgtUpdOk, sf => piiActive && !!piiRules[String(sf).toLowerCase()]);');
+    expect(RC).toContain('valForRec ? pl => sftkValOvApply(pl, valForRec, fm, tgtUpdOk, sf => piiActive && !!piiRules[String(sf).toLowerCase()]) : null);');   // QA 1.1 finding 46: applied after the owner mapping (sftkRecOwnerThenTyped)
     expect(RC).toContain("if (!srcFields.length && !refPairs.length && !wantOwners && !(valOv && Object.keys(valOv).length)) {");
     expect(RC).toContain('value(s) typed on the Deploy page written in place of the source\'s`');
   });
@@ -198,6 +198,6 @@ describe('the Record Type row and the columns the org refuses', () => {
     const BG = read('background.js'), RC = read('studio-reconcile.js');
     expect(BG).toContain("if (f.name === 'RecordTypeId') { if (rtMap[v]) p.RecordTypeId = rtMap[v]; continue; }");
     expect(BG).toContain('p[tf] = tv;\n            valOverridesUsed++;');
-    expect(RC.indexOf("if (sf === 'RecordTypeId' && rtRemap) {")).toBeLessThan(RC.indexOf('const vr = sftkValOvApply(p, valForRec, fm, tgtUpdOk'));
+    expect(RC.indexOf("if (sf === 'RecordTypeId' && rtRemap) {")).toBeLessThan(RC.indexOf('valForRec ? pl => sftkValOvApply(pl, valForRec, fm, tgtUpdOk'));
   });
 });

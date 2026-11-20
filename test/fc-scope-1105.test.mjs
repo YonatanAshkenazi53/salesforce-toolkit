@@ -47,11 +47,13 @@ describe('the scope', () => {
   it('the cost follows the scope: 24 fixed calls for everything, 16 for the blockers (both with the check-only delete: 2), 11 for the mentions; the fan-outs stay a "more if" until known', () => {
     const FAN = ['Lightning page in the org', 'list view on this object', 'create/update quick action on this object', '10 custom report types in the org', 'workflow rule, alert or outbound message on this object', '10 approval processes on this object', '10 duplicate rules on this object', '10 custom metadata records in the org (read up to 300)'];
     const CSF = 'custom setting in the org (the first 30)';   // 2026-11-11: custom-setting records are read for the field's name (👀)
-    expect(F.fcEstimateScanCalls(null)).toEqual({ now: 30, known: false, moreIf: [...FAN, CSF, 'page layout of a parent object'] });   // +1 on 2026-11-10: every email template's text is read; +1: the object's search layouts
-    expect(F.fcEstimateScanCalls(null, 'blockers')).toEqual({ now: 17, known: false, moreIf: FAN.filter(w => !/list view|quick action|report types/.test(w)) });
-    expect(F.fcEstimateScanCalls(null, 'mentions')).toEqual({ now: 17, known: false, moreIf: [...FAN.slice(0, 4), CSF, 'page layout of a parent object'] });
-    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, customSettings: 0, parentLayouts: 0 }, 'mentions')).toEqual({ now: 68, known: true, moreIf: [] });
-    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 2, approvals: 1, duplicateRules: 1, customMetadata: 0 }, 'blockers')).toEqual({ now: 61, known: true, moreIf: [] });   // 13 + 40 pages + 2 + 1 + 1
+    // QA 1.1 findings 24 and 22: the legs that open one call per item (or per ten) and were counted as one call each
+    const CH = '10 child objects of this object', VR = 'inactive validation rule on this object', PA = 'Path on this object', PT = '10 prompt templates in the org', CL = '10 compact layouts on this object', FU = 'workflow field update on this object';
+    expect(F.fcEstimateScanCalls(null)).toEqual({ now: 30, known: false, moreIf: [...FAN, CSF, 'page layout of a parent object', CH, VR, PA, PT, CL, FU] });   // +1 on 2026-11-10: every email template's text is read; +1: the object's search layouts
+    expect(F.fcEstimateScanCalls(null, 'blockers')).toEqual({ now: 17, known: false, moreIf: [...FAN.filter(w => !/list view|quick action|report types/.test(w)), PT, FU] });
+    expect(F.fcEstimateScanCalls(null, 'mentions')).toEqual({ now: 17, known: false, moreIf: [...FAN.slice(0, 4), CSF, 'page layout of a parent object', CH, VR, PA, CL] });
+    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, customSettings: 0, parentLayouts: 0, childObjects: 0, validationRulesOff: 0, paths: 0, compactLayoutBatches: 0 }, 'mentions')).toEqual({ now: 68, known: true, moreIf: [] });
+    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 2, approvals: 1, duplicateRules: 1, customMetadata: 0, promptTemplateBatches: 0, fieldUpdates: 0 }, 'blockers')).toEqual({ now: 61, known: true, moreIf: [] });   // 13 + 40 pages + 2 + 1 + 1
     // the lead mapping and the Lead/Case rules are read only for those objects: +1 and +3 fixed calls
     expect(F.fcEstimateScanCalls(null, 'blockers', 'Account').now).toBe(18);
     expect(F.fcEstimateScanCalls(null, 'blockers', 'Lead').now).toBe(21);

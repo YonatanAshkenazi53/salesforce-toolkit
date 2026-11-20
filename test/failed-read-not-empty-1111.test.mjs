@@ -45,7 +45,9 @@ describe('Field Cleaner — a scan leg that fails is said', () => {
   });
   it('an unread kind locks Delete Field until Salesforce itself accepts', () => {
     expect(FC).toContain('const delDisabled = autoCount > 0 || blockerTotal > 0 || unread.length > 0;');
-    expect(FC).toContain("if (view.kind === 'ok' && open === 0) { if (d) d.disabled = false;");
+    // QA 1.1 C2: the rule is fcPartialAskLock now (behaviour in qa11-fc-empty-unread.test.mjs); both buttons follow it
+    expect(FC).toContain("if (kind === 'ok' && !open) return { disabled: false,");
+    expect(FC).toContain('if (lock) { if (d) d.disabled = lock.disabled; if (note && lock.note) note.textContent = lock.note; }');
     expect(FC).toContain('could not be read in this scan');
   });
 });

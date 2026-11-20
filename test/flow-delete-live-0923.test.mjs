@@ -74,7 +74,7 @@ describe('friendly error — DEPENDENCY_EXISTS from a subflow element', () => {
 describe('performDeletion — the result toast survives the list re-render', () => {
   it('renders the list first, then the toast (the toast lives inside #flowList)', () => {
     const fn = between('async function performDeletion(', 'function showProgressPanel(');
-    const i = fn.indexOf('renderFlowList();'), j = fn.indexOf('showResultToast(successes.length, errors);');
+    const i = fn.indexOf('renderFlowList();'), j = fn.indexOf('showResultToast(successes.length, errors, track.unverified || []);');
     expect(i).toBeGreaterThan(0); expect(j).toBeGreaterThan(i);
     expect(fn.slice(j)).not.toMatch(/renderFlowList\(\)/);
   });

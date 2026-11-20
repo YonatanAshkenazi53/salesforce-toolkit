@@ -615,6 +615,7 @@ function _sftkMdDeleteTable() {
   // missed them?") — read, replaced, edited and deleted exactly as the kind above
   LwcText:                 { bundle: 'lwc',  what: 'Lightning web component', tooling: 'LightningComponentBundle', mdType: 'LightningComponentBundle' },
   AuraDefinitionBundle:    { bundle: 'aura', what: 'Aura component',           tooling: 'AuraDefinitionBundle' },
+  AuraText:                { bundle: 'aura', what: 'Aura component',           tooling: 'AuraDefinitionBundle', mdType: 'AuraDefinitionBundle' },   // the same bundle as a mention (QA 1.1 #18)
   // the three the user asked for by name ("צריך את כולם", 2026-11-07): a duplicate rule is deleted — and since
   // 2026-11-08 ("צריך להיות בכולם") edited — only from its own explicit buttons, the diff confirmed, a restore point
   // kept (the standing rule stays: nothing switches one off or edits one behind a run); the lead field mapping is
@@ -735,7 +736,10 @@ function sftkMdBundleFiles(type, name, resources, meta) {
     + (tc ? `<targetConfigs>${tc}</targetConfigs>` : '')
     + (targets.length ? `<targets>${targets.map(t => `<target>${sftkMdEscape(t)}</target>`).join('')}</targets>` : '');
   const tag = lwc ? 'LightningComponentBundle' : 'AuraDefinitionBundle';
-  const metaFile = lwc ? `${s.bundle}/${name}/${name}.js-meta.xml` : `${s.bundle}/${name}/${name}.cmp-meta.xml`;
+  // An Aura bundle's meta file is named after its main resource: MyApp.app → MyApp.app-meta.xml (likewise .evt,
+  // .intf, .tokens). A .cmp-meta.xml beside an application is not that bundle's meta file (QA 1.1).
+  const auraExt = ['cmp', 'app', 'evt', 'intf', 'tokens'].find(e => files.some(f => f.name === `${s.bundle}/${name}/${name}.${e}`)) || 'cmp';
+  const metaFile = lwc ? `${s.bundle}/${name}/${name}.js-meta.xml` : `${s.bundle}/${name}/${name}.${auraExt}-meta.xml`;
   files.push({ name: metaFile, text: '<?xml version="1.0" encoding="UTF-8"?>\n'
     + `<${tag} xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>${sftkMdEscape(_sftkApiVer(m.apiVersion))}</apiVersion>`
     + (lwc ? lwcMeta() : (m.description ? `<description>${sftkMdEscape(m.description)}</description>` : ''))
@@ -932,6 +936,18 @@ function _sftkMdSwapToken(text, objApi, fieldApi, newField, ctxObj) {
     n++;
     return newField ? path + newField : m;
   });
+  // A custom lookup is also read THROUGH: Partner__c is named by Partner__r.Name, and Salesforce counts that as a
+  // reference to Partner__c. Such a traversal is never rewritten here; when the path in front of it ends on this
+  // object it is counted in rel (kind 'ownrel'), and when that path cannot be told it is counted like any other
+  // such path — so a caller refuses instead of renaming the bare Partner__c, leaving Partner__r.Name and reporting
+  // the formula done (QA 1.1). A custom relationship name is always the field's API name with __r for __c.
+  if (/__c$/i.test(String(fieldApi))) {
+    const reRel = new RegExp(`(?<![$A-Za-z0-9_.:])((?:[$A-Za-z0-9_]+[.:])*)${rx(String(fieldApi).replace(/__c$/i, '__r'))}(?=\\s*\\.)`, 'gi');
+    for (const m of src.matchAll(reRel)) {
+      const w = whose(m[1]);
+      if (w === 'this') { rel++; if (!kind) kind = 'ownrel'; } else if (w === 'unknown') rel++;
+    }
+  }
   return kind ? { text: out, n, rel, kind } : { text: out, n, rel };
 }
 // ✂ on a formula, as a SUGGESTION (user 2026-11-10, on a validation rule's confirm: "why can't we just remove the
@@ -1066,7 +1082,19 @@ function sftkSearchLayoutEdit(objectInnerXml, objApi, fieldApi, tag, newField) {
   const before = src.slice(box.start, box.end);
   const after = src.slice(box.start, box.bodyStart) + w.xml + src.slice(box.bodyEnd, box.end);
   let rest = src.slice(0, box.start) + after + src.slice(box.end);
-  for (const t of CHILDREN) rest = _sftkMdWalk(rest, t, () => 'drop').xml;
+  // Only the object's OWN children go. A <fields> inside another element is that element's content — the columns of
+  // a <profileSearchLayouts> — and stays: dropping it would deploy a profile's search layout with no columns (QA 1.1).
+  const topRe = /<((?:[A-Za-z0-9_.-]+:)?([A-Za-z0-9_.-]+))(?:\s[^>]*?)?\/?>/g;
+  let top = '';
+  for (let c = 0; ;) {
+    topRe.lastIndex = c;
+    const m = topRe.exec(rest);
+    const el = m ? sftkMdFindElement(rest, m[2], m.index) : null;
+    if (!el || el.start !== m.index) { top += rest.slice(c); break; }   // no more elements, or an unbalanced one: the remainder is kept as it is
+    top += rest.slice(c, el.start) + (CHILDREN.includes(m[2]) ? '' : rest.slice(el.start, el.end));
+    c = el.end;
+  }
+  rest = top;
   const custom = /__c$/i.test(String(objApi || ''));
   const file = '<?xml version="1.0" encoding="UTF-8"?>\n<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">' + (custom ? rest : after) + '</CustomObject>';
   return { n, before, after, file, swapped: !!(nf && !hasNew), newAlreadyThere: hasNew };
@@ -1196,7 +1224,9 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     }
     return true;
   };
-  const relWhy = kind => kind === 'host'
+  const relWhy = kind => kind === 'ownrel'
+    ? `the formula also reads other fields through this lookup (${String(fieldApi || '').replace(/__c$/i, '__r')}.Field), and that path is not rewritten here — the formula would still depend on the field; edit it in Setup`
+    : kind === 'host'
     ? 'the formula also names a field of this name through Parent / MasterRecord, and the object the formula runs on is not known here, so whose field that is cannot be told — edit it in Setup'
     : kind === 'poly'
       ? 'the formula also names a field of this name through a lookup that can reach any object (What / Who, or Parent on this kind of record), so whose field that is cannot be told from the formula — edit it in Setup'
@@ -1275,11 +1305,16 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       let hits = 0;
       const w = _sftkMdWalk(body, 'filterItems', it => {
         let out = it, hit = false;
-        for (const [child, test] of [['field', v => _sftkMdFieldIs(v, ownApi, fieldApi)], ['valueField', isSrc]]) {
+        // either side of a condition can name the field in either spelling: <field>$Source.Field__c</field> compared
+        // with <valueField>Account.Field__c</valueField> is as valid as the other way round. Each side was tested for
+        // one spelling only, so a condition holding the field on the other side was left behind and the filter was
+        // reported done (QA 1.1). $Source is never an own-object prefix and isSrc needs the lookup's own object to be
+        // the picked one, so neither test matches the other's spelling.
+        for (const child of ['field', 'valueField']) {
           const el = sftkMdFindElement(out, child, 0);
           if (!el) continue;
           const v = sftkMdUnescape(out.slice(el.bodyStart, el.bodyEnd));
-          if (!test(v)) continue;
+          if (!_sftkMdFieldIs(v, ownApi, fieldApi) && !isSrc(v)) continue;
           hit = true;
           if (nf) out = out.slice(0, el.bodyStart) + sftkMdEscape(_sftkMdRenameVal(v, nf)) + out.slice(el.bodyEnd);
         }
@@ -1336,6 +1371,9 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       const tgtNames = !!fe && _sftkMdFieldIs(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), ownApi, fieldApi);
       const target = tgtNames && sftkMdIsOwnObj(writes, ownApi);   // a Task update writes Activity.X (review 5)
       const f = formulas(xml, 'formula');
+      // a path whose object cannot be told is never swapped: refused as unsure before any plain refusal, as a
+      // validation rule is — the formula was deployed half-renamed and reported done (QA 1.1)
+      if (f.rel) { cannotTell(relWhy(f.kind)); break; }
       if (!nf && target) { refuse('the field update WRITES to this field — ⇄ Replace points it at another field, or 🗑 delete the field update'); break; }
       if (!nf && f.n) { refuse('its formula cannot lose a reference — ⇄ Replace it, or 🗑 delete the field update'); break; }
       if (tgtNames && !writes) { cannotTell(`the update writes a field of this name on a record whose object cannot be told here (${whyNot}) — edit it in Setup`); break; }
@@ -1352,6 +1390,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     case 'WorkflowRule':
     case 'SharingCriteriaRule': {
       const f = formulas(xml, 'formula');
+      if (f.rel) { cannotTell(relWhy(f.kind)); break; }   // as a validation rule: never half-renamed (QA 1.1)
       if (!nf && f.n) { refuse('its formula cannot lose a reference — ⇄ Replace it, or 🗑 delete it'); break; }
       const r = items(f.xml, 'criteriaItems', 'field');
       // a time-dependent rule counts its trigger FROM a date field (<workflowTimeTriggers><offsetFromField>): ⇄ moves
@@ -1421,9 +1460,14 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     case 'AssignmentRule':
     case 'AutoResponseRule':
     case 'EscalationRule': {
-      let hits = 0, dropped = 0, logic = false, formulaCut = false;
+      // relKind: an entry's formula names the field through a path whose object cannot be told (these rules are read
+      // through their container, so the object they run on is not known here and Parent. is such a path). The whole
+      // edit is refused as unsure, before any plain refusal — the bare references were renamed, the path left, and
+      // the rule reported done while it still named the field (QA 1.1).
+      let hits = 0, dropped = 0, logic = false, formulaCut = false, relKind = null;
       const r = _sftkMdWalk(xml, 'ruleEntry', body => {
         const f = formulas(body, 'formula');
+        if (f.rel) { relKind = relKind || f.kind || 'custom'; return 'keep'; }
         if (f.n && !nf) { formulaCut = true; return 'keep'; }
         const c = items(f.xml, 'criteriaItems', 'field');
         hits += c.n + f.n;
@@ -1432,6 +1476,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
         if (!nf && c.left === 0 && !sftkMdFindElement(body, 'formula', 0)) { dropped++; return 'drop'; }
         return { body: c.xml };
       });
+      if (relKind) { cannotTell(relWhy(relKind)); break; }
       if (formulaCut) { refuse('a rule entry’s formula names the field — a formula cannot lose a reference; ⇄ Replace it, or edit the entry in Setup'); break; }
       if (logic) { refuse('a rule entry’s filter logic numbers its criteria — ⇄ Replace, or edit it in Setup'); break; }
       if (!hits) { refuse('no rule entry names the field — edit it in Setup'); break; }
@@ -1441,9 +1486,10 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       break;
     }
     case 'ApprovalProcess': {
-      let hits = 0, emptied = false, logic = false, formulaCut = false;
+      let hits = 0, emptied = false, logic = false, formulaCut = false, relKind = null;
       const r = _sftkMdWalk(xml, 'entryCriteria', body => {
         const f = formulas(body, 'formula');
+        if (f.rel) { relKind = relKind || f.kind || 'custom'; return 'keep'; }   // never half-renamed (QA 1.1)
         if (f.n && !nf) { formulaCut = true; return 'keep'; }
         const c = items(f.xml, 'criteriaItems', 'field');
         hits += c.n + f.n;
@@ -1468,6 +1514,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
         if (!nf) { apCut = true; return 'keep'; }
         return { body: t.xml };
       });
+      if (relKind) { cannotTell(relWhy(relKind)); break; }
       if (apCut) { refuse('a step’s approver is this field — a step cannot lose its approver; ⇄ Replace it with another user field, or 🗑 delete the process'); break; }
       if (formulaCut) { refuse('the entry criteria are a formula that names the field — ⇄ Replace it, or edit the process in Setup'); break; }
       if (logic) { refuse('the criteria’s filter logic numbers them — ⇄ Replace, or edit the process in Setup'); break; }
@@ -1616,19 +1663,39 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     case 'GenAiPromptTemplate': {
       // a merge field reads an INPUT's field: {!$Input:Name.Field}; the input's object is its <definition>
       // (SOBJECT://Object). Only inputs of this object count — another input's same-named field is that object's.
-      const names = [];
+      // A merge field can also reach the field along a path: {!$Input:Con.Account.Field} is Account's field read from
+      // a Contact input. Only the direct form was rewritten, so a template holding both was reported done with the
+      // path form still in it (QA 1.1). Every merge field that ends in the field is now judged: its root is an input
+      // (the input's object) or a global that names one object ($User…), the hops after it are walked by the shared
+      // resolver (sftk-relmap.js). Ends on this object = rewritten; on another = left; cannot be told (a custom
+      // lookup, a root that is no record input) = the whole edit is refused as unsure, never half done.
+      const inObj = new Map();
       _sftkMdWalk(xml, 'inputs', body => {
-        const def = String(sftkMdChildText(body, 'definition') || '').trim().toLowerCase();
-        if (def === `sobject://${String(objApi || '').toLowerCase()}`) { const ref = String(sftkMdChildText(body, 'referenceName') || '').trim(); if (ref) names.push(ref); }
+        const def = /^sobject:\/\/(.+)$/.exec(String(sftkMdChildText(body, 'definition') || '').trim().toLowerCase());
+        const ref = String(sftkMdChildText(body, 'referenceName') || '').trim().toLowerCase();
+        if (ref) inObj.set(ref, def ? def[1] : null);
         return 'keep';
       });
       if (!nf) { refuse('a prompt cannot lose a merge field and keep its meaning — ⇄ Replace it with another field, ✎ edit the prompt, or 🗑 delete the template'); break; }
-      let n = 0;
-      for (const ref of [...new Set(names)]) {
-        const rx = new RegExp(`(\\{!\\$${ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.)${String(fieldApi).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\})`, 'gi');
-        xml = xml.replace(rx, (m, a, b) => { n++; return a + nf + b; });
-      }
-      if (!n) { refuse('no merge field of the prompt reads the field directly from an input of this object — ✎ edit the prompt, or change it in Prompt Builder'); break; }
+      let n = 0, cannot = false;
+      const mf = new RegExp(`\\{!\\$([^{}]*?)\\.${reEsc(fieldApi)}\\}`, 'gi');
+      const px = xml.replace(mf, (m, path) => {
+        const segs = path.toLowerCase().split('.');
+        const isIn = inObj.has(segs[0]);
+        // an input that is no record (text, a number), and a direct {!$Input:X.Field} of an input the template does
+        // not declare, hold no field of this object: left as they always were
+        if ((isIn && !inObj.get(segs[0])) || (!isIn && segs.length === 1 && /^input:/.test(segs[0]))) return m;
+        const gl = isIn ? null : sftkRelGlobal([`$${segs[0]}`, ...segs.slice(1)]);
+        const start = isIn ? inObj.get(segs[0]) : (gl && gl.obj) || null;
+        const r = start ? sftkRelWalk(start, segs.slice(gl ? gl.from : 1)) : { obj: null, kind: 'root' };
+        if (r.kind) { cannot = true; return m; }
+        if (!sftkMdIsOwnObj(r.obj, ownApi)) return m;
+        n++;
+        return `{!$${path}.${nf}}`;
+      });
+      if (cannot) { cannotTell('a merge field of the prompt names a field of this name through a lookup or an input whose object cannot be told from the template — ✎ edit the prompt, or change it in Prompt Builder'); break; }
+      if (!n) { refuse('no merge field of the prompt reads the field from an input of this object — ✎ edit the prompt, or change it in Prompt Builder'); break; }
+      xml = px;
       how.push(`prompt: ${plural(n, 'merge field')} ${verb}`);
       break;
     }
@@ -1671,13 +1738,20 @@ function sftkMdCodeReplace(sources, fieldApi, newField) {
     if (k) { n += k; files++; }
     return { ...s, source: text, n: k };
   });
-  return { sources: out, n, files };
+  // rel: the places that read THROUGH a custom lookup (Partner__c → Partner__r.Name). They are not renamed — the
+  // code still depends on the field after the replace, and the caller must not call it done (QA 1.1).
+  const reRel = /__c$/i.test(f) ? new RegExp(`(?<![A-Za-z0-9_])${escRx(f.replace(/__c$/i, '__r'))}(?![A-Za-z0-9_])`, 'gi') : null;
+  const rel = reRel ? out.reduce((a, s) => a + (s.source.match(reRel) || []).length, 0) : 0;
+  return { sources: out, n, files, rel };
 }
 // The lines of one source that name the field (whole word): [{ line (1-based), text }].
 function sftkMdCodeHits(source, fieldApi) {
   const f = String(fieldApi || '').trim();
   if (!f) return [];
-  const re = new RegExp(`(?<![A-Za-z0-9_])${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i');
+  // a custom lookup is named by its relationship too (Partner__c → Partner__r.Name): such a line depends on the
+  // field, so it counts — the "does the code still name it?" check after a replace read it as clean (QA 1.1)
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(?<![A-Za-z0-9_])(?:${esc(f)}${/__c$/i.test(f) ? `|${esc(f.replace(/__c$/i, '__r'))}` : ''})(?![A-Za-z0-9_])`, 'i');
   const out = [];
   String(source == null ? '' : source).split(/\r\n?|\n/).forEach((text, i) => { if (re.test(text)) out.push({ line: i + 1, text }); });
   return out;

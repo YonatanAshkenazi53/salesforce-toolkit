@@ -33,7 +33,8 @@ describe('field delete — Metadata API after a Tooling refusal', () => {
   });
   it('is tried for ANY Tooling error, with the object.field full name, and the Tooling error kept', () => {
     expect(dd).toMatch(/if \(res\?\.error\) \{/);
-    expect(dd).toMatch(/_deleteFieldViaMetadata\(`\$\{_selObj\?\.api\}\.\$\{_selField\?\.api\}`\)/);
+    // QA 1.1 C1: the confirmed field (fcDeleteTarget), never the live selection
+    expect(dd).toMatch(/await _deleteFieldViaMetadata\(`\$\{objApi\}\.\$\{fldApi\}`\)/);
     expect(dd).toMatch(/res = \{ error: md\.error, toolingError: res\.error \}/);
     expect(dd).toMatch(/via = 'metadata'/);
     expect(dd).toMatch(/_delLogEntry\.via = via/);
@@ -47,7 +48,8 @@ describe('field delete — Metadata API after a Tooling refusal', () => {
     // live 2026-09-22: resetFieldAndBelow() ran after the card and erased it — a blank page
     const ok = between("const _graceEnd = new Date(", '// ── XML Inspector');
     expect(ok.indexOf('resetFieldAndBelow();')).toBeGreaterThan(0);
-    expect(ok.indexOf('resetFieldAndBelow();')).toBeLessThan(ok.indexOf("eid('fcResults').innerHTML = `"));
+    expect(ok.indexOf('resetFieldAndBelow();')).toBeLessThan(ok.indexOf("eid('fcResults').innerHTML = card;"));
+    expect(ok.indexOf("eid('fcResults').innerHTML = card;")).toBeGreaterThan(0);
     expect(ok).toMatch(/class="fc-success"/);
     expect(ok).toMatch(/Field deleted\$\{via === 'metadata' \? ' \(through the Metadata API — the Tooling API refused\)' : ''\}/);
     expect(ok).toMatch(/\$\{esc\(objApi\)\}\.\$\{esc\(fldApi\)\} is deleted/);
@@ -56,7 +58,7 @@ describe('field delete — Metadata API after a Tooling refusal', () => {
   it('the post-delete re-read treats a row renamed X_del as deleted (Salesforce keeps it for 15 days)', () => {
     // live 2026-09-27: the delete had worked; the re-read by Id still found the row and called it refused
     const dd = between('async function doDelete(', "if (res.error) {");
-    expect(dd).toContain("const wantName = String(_selField?.api || '').replace(/__c$/, '');");
+    expect(dd).toContain("const wantName = fldApi.replace(/__c$/, '');");
     expect(dd).toContain("const stillThere = !!(chk && !chk.error) && devName === wantName;");
   });
   it('the INSUFFICIENT_ACCESS explanation quotes Salesforce', () => {

@@ -359,13 +359,14 @@ describe('7a. _flowNamesThisField: the chain owner decides, and what cannot be t
 });
 
 describe('7b. scanSupplemental: a matching-rule or field-update read that fails lands in unread', () => {
-  const FE = extractFunctions('field-cleaner.js', ['fcAbsentFeatureError']);
-  const run = (bg, legs) => new Function('bg', 'fcAbsentFeatureError', `
+  // fcDepKey / fcReadError / fcAuraBundlesNaming: the scan's pure helpers since the QA 1.1 review (findings 16, 18, 19)
+  const FE = extractFunctions('field-cleaner.js', ['fcAbsentFeatureError', 'fcDepKey', 'fcReadError', 'fcAuraBundlesNaming']);
+  const run = (bg, legs) => new Function('bg', 'fcAbsentFeatureError', 'fcDepKey', 'fcReadError', 'fcAuraBundlesNaming', `
     const _orgUrl = 'u', _sid = 's', _selObj = { api: 'Account' }, _selField = { api: 'Status__c' };
     let _scanProg = null;
     const _scanMsg = () => {}, _scanProgFound = () => {}, _fieldTokenRe = () => /Status__c/i;
     ${nested('scanSupplemental')}
-    return scanSupplemental;`)(bg, FE.fcAbsentFeatureError)([], '00N000000000001AAA', legs);
+    return scanSupplemental;`)(bg, FE.fcAbsentFeatureError, FE.fcDepKey, FE.fcReadError, FE.fcAuraBundlesNaming)([], '00N000000000001AAA', legs);
   const LEGS = { matchingRules: true, workflowFieldUpdates: true };
   it('an error and an incomplete answer are both said, by leg', async () => {
     const hits = await run(async m => (/MatchingRuleItem/.test(m.query) ? { error: 'HTTP 500: boom' } : { records: [], incomplete: { got: 200, expected: 450 } }), LEGS);

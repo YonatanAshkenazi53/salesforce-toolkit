@@ -43,6 +43,7 @@ export const BATCHES = {
     { name: 'history-beforeafter', script: `${L}history-beforeafter.mjs`, timeoutMin: 25 },
     { name: 'value-edit-nowrite', script: `${L}value-edit.mjs`, env: { NOWRITE: '1' }, timeoutMin: 25 },
     { name: 'fr-copy-fill-undo', script: `${L}field-replace.mjs`, env: { STEP: 'copy', UNDO: '1' } },
+    { name: 'fc-plan-all-at-once', script: `${L}fc-plan.mjs`, timeoutMin: 30 },
   ],
   qa1025: [
     { name: 'release-smoke', script: `${L}release-smoke.mjs` },
@@ -95,8 +96,9 @@ export const BATCHES = {
     { name: 'fr-flow-keep', script: `${L}field-replace.mjs`, env: { STEP: 'flow', FLOW: 'SFTK FC Test Flow 2', WAY: 'keep' } },
     { name: 'fr-flow-off', script: `${L}field-replace.mjs`, env: { STEP: 'flow', FLOW: 'SFTK FC Test Flow', WAY: 'off' } },
     restoreFc,
-    { name: 'fr-every-replace', script: `${L}field-replace.mjs`, env: { STEP: 'every' } , timeoutMin: 30 },
-    { ...restoreFc, name: 'restore-field-cleaner-fixture-2' },
+    // ⚡ All at once (1.1): the plan screen read on the packaged fixture, no org write; it throws when a check fails.
+    // It replaces fr-every-replace, whose button (.fc-fix-every) no longer exists and which passed on "no such button".
+    { name: 'fc-plan-all-at-once', script: `${L}fc-plan.mjs`, timeoutMin: 30 },
     { name: 'copy-perms-undo', script: `${L}copy-perms.mjs`, env: { UNDO: '1' } },
     { name: 'flow-access-undo', script: `${L}flow-access.mjs`, env: { UNDO: '1' } },
   ],

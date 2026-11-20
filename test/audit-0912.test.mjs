@@ -156,7 +156,9 @@ describe('4 · a metadata deploy is never submitted twice', () => {
   });
 
   it('a session loss mid-poll is its own, non-retryable error naming the job', () => {
-    expect(fn).toMatch(/e\.message === 'SESSION_EXPIRED'\) \{\s*throw new Error\(`Session expired while waiting for deployment \$\{jobId\}/);
+    // QA 1.1 finding 65: thrown through `unread`, which also marks the error submitted (the job is in Salesforce)
+    expect(fn).toMatch(/e\.message === 'SESSION_EXPIRED'\) \{\s*throw unread\(`Session expired while waiting for deployment \$\{jobId\}/);
+    expect(fn).toContain('const unread = text => checkOnly === true ? new Error(text) : sftkDeploySubmittedError(text, jobId);');
   });
 
   it('a 401 on the SUBMIT (nothing deployed yet) still retries normally', () => {

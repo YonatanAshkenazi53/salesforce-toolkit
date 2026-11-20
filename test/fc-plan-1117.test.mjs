@@ -88,7 +88,7 @@ describe('✂ on a Lightning page that names the field only in its description',
 
 describe('the scan and a Lightning page that names the field only in free text', () => {
   it('does not list it (owner 2026-11-17: "So why it showed when i rescaned")', () => {
-    expect(FC).toContain('if (flexiPageReferencesField(r.value.Metadata, _selObj.api, _selField.api) && _flexiNamesBeyondText(r.value.Metadata, _selObj.api, _selField.api)) {');
+    expect(FC).toContain('if (flexiPageReferencesField(r.value.Metadata, _selObj.api, _selField.api) && _flexiNamesBeyondText(r.value.Metadata, _selObj.api, _selField.api)\n');   // QA 1.1 finding 17 adds a third condition on the next line
   });
 });
 

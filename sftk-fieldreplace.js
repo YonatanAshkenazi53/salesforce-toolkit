@@ -156,14 +156,15 @@ function sftkFlowReplaceField(metadata, objApi, oldApi, newApi, opts) {
   (function walk(v, path, parent, key) {
     if (v == null) return;
     if (typeof v === 'string') {
-      if (!_sftkFrLow(v).includes(oldL)) return;
+      const relL = /__c$/.test(oldL) ? oldL.replace(/__c$/, '__r') : '';   // QA 1.1 #27: the lookup's own relationship name
+      if (!_sftkFrLow(v).includes(oldL) && !(relL && _sftkFrLow(v).includes(relL))) return;
       let n = 0; const left = [];
       const after = v.replace(TOKEN, (tok) => {
         const segs = tok.split('.');
         const last = segs[segs.length - 1];
         if (_sftkFrLow(last) !== oldL) {
           // the field in the MIDDLE of a path cannot be judged — name it, leave it
-          if (segs.slice(0, -1).some(s => _sftkFrLow(s) === oldL)) left.push({ why: 'unknown' });
+          if (segs.slice(0, -1).some(s => _sftkFrLow(s) === oldL || (relL && _sftkFrLow(s) === relL))) left.push({ why: 'unknown' });
           return tok;
         }
         const verdict = segs.length === 1 ? (tok === v ? ownerOfBare(path) : { unknown: true }) : ownerOfPath(segs.slice(0, -1));

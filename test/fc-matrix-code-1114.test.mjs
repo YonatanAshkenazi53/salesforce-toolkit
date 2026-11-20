@@ -354,7 +354,7 @@ describe('LightningComponentBundle (LWC)', () => {
     expect(S.sftkSweepKind('unpackaged/lwc/sftkMx/sftkMx.js', LWC_JS_ONE, { offset: 0, text: '' }, forms)).toMatchObject({ type: 'LightningComponentBundle', sev: 'blocker', component: 'sftkMx', path: 'lwc/sftkMx/' });
     expect(S.sftkSweepKind('unpackaged/lwc/sftkMx/sftkMx.html', LWC_HTML_MANY, { offset: 0, text: '' }, forms)).toMatchObject({ type: 'LwcMarkup', sev: 'mention', component: 'sftkMx' });
     expect(S.sftkSweepJoinKind('LwcMarkup')).toBe('LightningComponentBundle');
-    expect(S.sftkSweepIdQuery('LightningComponentBundle', 'sftkMx')).toBe("SELECT Id FROM LightningComponentBundle WHERE DeveloperName = 'sftkMx'");
+    expect(S.sftkSweepIdQuery('LightningComponentBundle', 'sftkMx')).toBe("SELECT Id FROM LightningComponentBundle WHERE DeveloperName = 'sftkMx' AND NamespacePrefix = null");
   });
   it('✂ is not offered', () => { noRemove('LightningComponentBundle', LWC_JS_ONE); noRemove('LightningComponentBundle', LWC_JS_MANY); });
   it('one mention (the schema import): ⇄ renames it in the js; the html and the css come back byte for byte', () => {
@@ -895,12 +895,17 @@ describe('Profiles and permission sets (field permissions)', () => {
     expect(r.filesWithHits).toBe(1);
     expect(M.sftkMdMentionsField(PS_ONE, OBJ, F)).toBe(true);
   });
-  it('several mentions (a profile, two field permission lines): both lines under ONE item', () => {
+  // QA 1.1 (finding 31): the second line is Contact.SFTK_Mx__c — Contact's own field of the same name, not
+  // Account's. It was listed under Account's field as a second mention; now it is said as what it is.
+  it('several mentions (a profile, two field permission lines): this object\'s line is the profile\'s item, Contact\'s line is Contact\'s own field', () => {
     const r = S.sftkSweepRun(new Map([['unpackaged/profiles/SFTK Mx Profile.profile', PROFILE_MANY]]), forms);
-    expect(Object.keys(r.byType)).toEqual(['Profile']);
+    expect(Object.keys(r.byType)).toEqual(['Profile', 'SameNameOtherObject']);
     expect(r.byType.Profile.items).toHaveLength(1);
     expect(r.byType.Profile.items[0].component).toBe('SFTK Mx Profile');
-    expect(r.byType.Profile.items[0].lines.map(l => l.line)).toEqual([6, 11]);
+    expect(r.byType.Profile.items[0].lines.map(l => l.line)).toEqual([6]);
+    expect(r.byType.SameNameOtherObject.items).toHaveLength(1);
+    expect(r.byType.SameNameOtherObject.items[0]).toMatchObject({ component: 'SFTK Mx Profile', section: 'Contact’s own field of this name' });
+    expect(r.byType.SameNameOtherObject.items[0].lines.map(l => l.line)).toEqual([11]);
     expect(r.hits.every(h => h.sev === 'mention')).toBe(true);
   });
   it('⇄ the access follows the field: whoever saw the old field gets the new one — created, raised, never lowered', () => {

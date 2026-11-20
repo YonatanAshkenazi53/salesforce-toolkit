@@ -13,7 +13,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = f => readFileSync(join(root, f), 'utf8');
 const select = extractFunction('sftk-vrpause.js', 'sftkVrPauseSelect');
 const VP = extractFunctions('sftk-vrpause.js',
-  ['_sftkVpLit', 'sftkVrPauseSelect', 'sftkVrPauseList', '_sftkVpReadPkg', 'sftkVrPausePkgInner', 'sftkVrPausePkgFiles', '_sftkVpWriteMsg', '_sftkVpMemory', 'sftkVrPausedLeftovers', '_sftkVpBody', '_sftkVpSwitch', 'sftkVrPauseOff', 'sftkVrPauseOn'],
+  ['_sftkVpLit', 'sftkVrPauseSelect', 'sftkVrPauseList', '_sftkVpReadPkg', 'sftkVrPausePkgInner', 'sftkVrPausePkgFiles', '_sftkVpWriteMsg', '_sftkVpMemory', 'sftkVrPausedLeftovers', '_sftkVpBody', 'sftkVrPauseMaybeOff', '_sftkVpSwitch', 'sftkVrPauseOff', 'sftkVrPauseOn'],
   { 'sftk-write.js': ['sftkWriteVerified', '_sftkWriteVerifiedCore', 'sftkWriteVerifiedAll'] });
 
 const ORG = 'https://t.my.salesforce.com';
@@ -127,7 +127,8 @@ describe('wired into the Deploy page and the run', () => {
   it('rules go off AFTER the flows and come back on BEFORE them; a rule that will not go off puts the flows back too; a finally is the safety net', () => {
     const i = DV.indexOf('async function _depReconcile(');
     const fn = DV.slice(i, DV.indexOf('\n}\n', i));
-    expect(fn.indexOf('const ok = await opts.beforeWrites(sess, log); if (!ok) return false;')).toBeLessThan(fn.indexOf('pausedR = await sftkVrPauseOff(sess, vp.rules);'));
+    expect(fn.indexOf('const ok = await opts.beforeWrites(sess, log); if (!ok) return false;')).toBeLessThan(fn.indexOf('pausedR = await sftkVrPauseOff(sess, rules);'));
+    expect(fn).toContain('pausedR = await sftkVrPauseOff(sess, rules);');   // QA 1.1 #7, #43: the rules read again just before the switch
     expect(fn).toContain("if (opts && typeof opts.afterWrites === 'function') { try { await opts.afterWrites(log); } catch (_) { /* its own finally tries again */ } }");
     expect(fn.indexOf('const r = await resumeR();')).toBeLessThan(fn.indexOf("if (opts && typeof opts.afterWrites === 'function') await opts.afterWrites(log);"));
     expect(fn).toMatch(/\} finally \{\s+\/\/ the safety net: a run that failed or stopped before its last write\s+if \(pausedR && pausedR\.ok && pausedR\.off\.length\) \{\s+const r = await resumeR\(\);/);

@@ -444,6 +444,7 @@ function reconcileHarness(env) {
     ${sliceFrom(REC, 'sftkReconcileVerifyGone')}
     ${sliceFrom(REC, 'sftkReconcileChunkedWrite')}
     ${sliceLine(REC, 'const sftkMergeArr =')}
+    ${sliceFrom(REC, 'sftkRecOwnerThenTyped')}
     ${sliceFrom(REC, 'reconcileOverwrite')}
     return { reconcileOverwrite, sftkReconcileChunkedWrite, sftkWriteVerified, sftkReconcileVerifyGone, sftkMergeArr };
   `)(env);

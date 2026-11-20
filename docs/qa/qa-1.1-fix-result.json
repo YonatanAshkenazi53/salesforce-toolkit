@@ -1,0 +1,1070 @@
+{
+ "lanes": [
+  {
+   "lane": "fc",
+   "files": [
+    "field-cleaner.js"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "C1",
+      "C2"
+     ],
+     "results": [
+      {
+       "finding": "C1",
+       "status": "fixed",
+       "summary": "The field of a delete is now frozen when Delete Field is pressed (new pure fcDeleteTarget, taken in confirmDelete before its first await and passed to doDelete). doDelete reads only that target for the Tooling calls, the Metadata API retry, the re-read, History, the deletion log, the picker list and the card; the live selection is read only to decide where the outcome is shown. If the page moved to another field/object/org, that view is not reset: the success card or the error is added to it naming the deleted field and its org, the picker list is trimmed only when it is still the same object's list, and the Metadata API retry is refused with the reason after an org switch (it deploys to the current org).",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-delete-target.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/fc-field-delete-0922.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/field-delete-history-1002.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-delete-target.test.mjs",
+       "note": "The failure line now reads 'Delete of Object.Field failed: ...' (was 'Delete failed: ...'). The picker is deliberately not locked during a delete; the target capture makes the pick harmless. Not live-tested against an org (forbidden in this step). _deleteFieldViaMetadata still reads the live _orgUrl/_sid; doDelete guards that with an org-generation check immediately before the call."
+      },
+      {
+       "finding": "C2",
+       "status": "fixed",
+       "summary": "An empty scan with unread kinds no longer says 'No dependencies found' with an open button: it shows 'Nothing found, but the scan is incomplete', lists the unread kinds (same block as the non-empty list, now shared via _unreadBlockHtml, plus a line that list views, quick actions and layouts do not make Salesforce refuse and need a hand check), and draws Delete Field disabled with a lock note. _paintAsk's partial-scan lock now applies to fcDelFreeBtn too (rule extracted to pure fcPartialAskLock): unlocked only when Salesforce's check accepts, kept locked when it cannot be asked. In a mentions-only scope (no ask) the note says to re-scan.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-empty-unread.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/failed-read-not-empty-1111.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/sweep-static-resources-1117.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-empty-unread.test.mjs",
+       "note": "As in the non-empty list (existing design, matches the CHANGELOG promise), a Salesforce 'would accept' answer still unlocks the button when a non-blocking kind (list view, quick action, layout) was unread; the unread block stays on screen and now says to check those by hand. Making that a hard lock would be a product decision. Reuses existing classes fc-delete-note / fc-unread-note; no CSS change. Not rendered in the harness (forbidden in this step)."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-fc-delete-target.test.mjs test/qa11-fc-empty-unread.test.mjs test/fc-field-delete-0922.test.mjs test/field-delete-history-1002.test.mjs test/sweep-static-resources-1117.test.mjs -> 5 files, 38/38 passed. npx eslint field-cleaner.js + the six touched test files -> clean. Full suite (npx vitest run): 295 files passed, 9 failed; 5711 tests passed, 15 failed, 5 skipped. The one failure my edit caused (test/failed-read-not-empty-1111.test.mjs, pinned the old _paintAsk line) was updated and passes. The 15 left are outside my lane and untouched by me: audit-0912 (sfMetadataDeploy session-loss text, background), flow-filter-1105 (Versions search), pii-list-example-1115 (2), regress-1115-engine (2), regress-1115-reconcile-compare-undo (4), regress-1115-refix (1), release-qa-1114-org-compare (1), value-edit-1027 (2), value-edit-owner-1108 (1) - none of the failing assertions pins field-cleaner.js text I changed."
+    },
+    {
+     "ids": [
+      "15",
+      "16",
+      "17",
+      "18",
+      "19"
+     ],
+     "results": [
+      {
+       "finding": "15",
+       "status": "fixed",
+       "summary": "The run report no longer says nothing was changed. Rows whose text shows a partial or unconfirmed change (\"Not finished: ...\", \"accepted, but ...\", \"unverified\") go under their own heading and count chip, which says they have no Undo button and that a recorded undo is in History. The \"Not done\" heading and the footer no longer claim what the code cannot know. New pure function fcPlanPartial decides the split.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-plan-partial.test.mjs",
+       "note": "The split is by the row's own text (a regex over the existing error wordings), not by a flag from the fixers. A new partial-change message worded differently would fall under plain \"Not done\", which now makes no claim either way. The one-line note above the list still counts partial rows as \"not done — the reason is on each row\"."
+      },
+      {
+       "finding": "16",
+       "status": "fixed",
+       "summary": "New pure function fcDepKey cuts only a real 15- or 18-character Salesforce Id to 15 characters and compares a name whole. scanSupplemental uses it for the seed from the index, for add(), and for the Apex-text leg's \"already listed\" check, so two approval processes, compact layouts, sharing rules, search layouts, dependent picklists or custom metadata records with a shared prefix are both listed.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/regress-1115-field-cleaner.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-dep-key.test.mjs",
+       "note": "test/regress-1115-field-cleaner.test.mjs (7b) runs scanSupplemental in a sandbox; it now injects fcDepKey, fcReadError and fcAuraBundlesNaming."
+      },
+      {
+       "finding": "17",
+       "status": "fixed",
+       "summary": "scanFlexiPages no longer lists a record page of another object whose only mentions are of its own record's field. New _flexiOnlyOtherPagesRecord requires that the page says its object (sobjectType or EntityDefinitionId), that the object is not the scanned one (Task/Event count as Activity's, PersonAccount as Account's), and that the page no longer names the field once the page-record mentions in field slots are blanked on a clone. A hop, the object named outright, a related-list column or a filter keeps the page listed, as does a page that does not say its object.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/fc-plan-1117.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-flexi-other-page.test.mjs",
+       "note": "I did not dry-run removeFieldFromFlexiPage as proposed; the new function applies the same own-record rule directly and re-tests with _flexiNamesBeyondText, which covers the proposal's caveat. An unresolved 01I id on a page is not taken for another object when the scanned custom object's own id is unknown; that page stays listed. test/fc-plan-1117.test.mjs pinned the old one-line condition and now pins its first line."
+      },
+      {
+       "finding": "18",
+       "status": "needs-other-file",
+       "summary": "The Aura leg now reads each bundle as a whole through new pure function fcAuraBundlesNaming. A bundle that names the field and the object in any of its sources stays an AuraDefinitionBundle blocker. A bundle that names the field without the object is listed under a new kind AuraText (sev 'silent', with a Setup link and a note), which does not lock Delete Field. If Salesforce's check-only delete then names such a bundle, _askJoin moves the row to the blockers.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/fc-ask-salesforce-1110.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-aura-object.test.mjs",
+       "note": "The part in field-cleaner.js is done and works alone: an AuraText row is a mention with a Setup link. To give it the replace / edit code / delete buttons that LwcText has, sftk-mdapi.js needs one line. File: sftk-mdapi.js. Anchor: `  AuraDefinitionBundle:    { bundle: 'aura', what: 'Aura component',           tooling: 'AuraDefinitionBundle' },`. Add after it: `  AuraText:                { bundle: 'aura', what: 'Aura component',           tooling: 'AuraDefinitionBundle', mdType: 'AuraDefinitionBundle' },`. Whoever adds it should confirm the package.xml and delete path use mdType for aura the way they do for LwcText (around lines 715-737), so the deploy never names 'AuraText'. Two things I chose not to change: the aura leg still runs only in scopes that look for blockers (no new scope leg, since fcScopeLegs and the cost estimate are pinned by other tests), so a mentions-only scan lists no AuraText rows; and for a custom field on Task/Event/Activity any of the three object names counts as naming the object. test/fc-ask-salesforce-1110.test.mjs pinned the old add() line and now pins the new one."
+      },
+      {
+       "finding": "19",
+       "status": "fixed",
+       "summary": "The four legs now report a failed read through miss() instead of taking it as empty; new pure function fcReadError turns the background's { error } or missing answer into the reason. List views: a failed list throws, and each view whose describe failed is reported. Quick actions: a failed or non-array list throws; the per-action describe stays silent because standard actions answer 404 there by design. Search layouts and dependent picklists: a failed object read throws. Related lists: each parent layout that could not be opened is reported.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-failed-read-legs.test.mjs",
+       "note": "The search-layout leg's unread label changed from 'search layouts' to 'search layouts and dependent picklists', since one read feeds both. Errors that only say the object has no such feature (404 NOT_FOUND and the like) are still filtered by fcAbsentFeatureError, so an object without list views is not reported unread. The legs live inside the scanSupplemental closure, so the test covers fcReadError and a leg built the same way by behaviour, and pins the four call sites as source text."
+      }
+     ],
+     "testsRun": "npx vitest run on the 5 new files plus the 3 updated ones (test/qa11-fc-plan-partial, qa11-fc-dep-key, qa11-fc-flexi-other-page, qa11-fc-aura-object, qa11-fc-failed-read-legs, regress-1115-field-cleaner, fc-ask-salesforce-1110, fc-plan-1117): all pass. npx eslint on field-cleaner.js and those 8 test files: clean (exit 0). Full suite, npx vitest run: 318 files passed, 2 failed; 5861 tests passed, 2 failed, 5 skipped. The 2 failures are left as they are because they pin History source outside my lane (sftk-history.js / studio-history.js, in flight with other agents): test/history-archive.test.mjs > \"the History view auto-displays the archive: bar + load-older + full export\" and test/tool-history-1005.test.mjs > \"Data Studio > History > lists only its own entries, and counts only those\". Nothing was run against a Salesforce org."
+    },
+    {
+     "ids": [
+      "20",
+      "21",
+      "22",
+      "23",
+      "24"
+     ],
+     "results": [
+      {
+       "finding": "20",
+       "status": "fixed",
+       "summary": "The list-view leg now reads every page of sobjects/<Object>/listviews through a new helper, fcListViewsAll, which follows done / nextRecordsUrl. If a later page fails, comes back without views, or Salesforce says there are more but gives no next page (or the same page again), the views read so far are still scanned and the leg is reported as 'list views (the list is not complete)', which keeps Delete locked behind the check-only delete.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-listview-pages.test.mjs",
+       "note": "Not verified live (no org allowed): the page size and the exact form of nextRecordsUrl. The helper strips the leading slash and passes the address to SF_REST_GET unchanged, the same pattern as studio-rollback.js:398."
+      },
+      {
+       "finding": "21",
+       "status": "fixed",
+       "summary": "fcRelatedListIsOf now also matches the standard lists with their own names: RelatedActivityList and RelatedHistoryList for Task, Event and Activity; RelatedLineItemList for OpportunityLineItem; RelatedContactRoleList for OpportunityContactRole; RelatedContactAccountRelationList for AccountContactRelation. fcRelatedListEdit accepts an activity column prefixed Task., Event. or Activity. Scan and fix (fixLayoutRelatedList) share the matcher, so both follow.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-related-list-names.test.mjs",
+       "note": "The list names and the spelling of a custom column inside these lists come from Metadata API knowledge, not a live read: confirm against one retrieved Account layout and one Opportunity layout before shipping. A wrong alias only fails to match; it cannot list a column that is not there. The self-lookup part of the finding (the object's own layouts are excluded from the parents) was left as is, as the reviewer suggested dropping it. The alias table is inlined in the function so the existing extractFunctions tests keep working."
+      },
+      {
+       "finding": "22",
+       "status": "fixed",
+       "summary": "The workflow-field-update leg now collects the updates that do not write the field and opens each one's Tooling Metadata through the existing eachMetadata reader; an update whose formula names the field as a whole word (new pure fcFieldUpdateReadsField) is listed as a WorkflowFieldUpdate row. An update that cannot be opened is reported as 'workflow field updates (some could not be opened)'. The cost line names the extra reads ('workflow field update on this object').",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-field-update-formula.test.mjs",
+       "note": "Costs one Tooling read per field update on the object that does not target the field. Not verified live that Salesforce refuses the delete over a formula-only reference; the row is listed either way. The row keeps the update's plain name, the same as a target match."
+      },
+      {
+       "finding": "23",
+       "status": "fixed",
+       "summary": "fcPromptNamesField now returns true for a merge that reaches the field through a related record ({!$Input:Contact.Account.Region__c}) even when the template has no input of the scanned object. In the direct case it skips a merge that is plainly another input's field ({!$Input:Person.Region__c} where Person is an input of another object), which removes the reverse false positive. Every other whole-word mention still counts when the object has an input.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-prompt-related-merge.test.mjs",
+       "note": "A related-record path does not say which object the last hop lands on, so a same-named field on another parent object is listed too (the safe direction for a blocker scan). Not verified live that Salesforce refuses the delete over a traversal merge. Not checked: whether the Replace engine in sftk-mdapi.js (sftkMdEditField for GenAiPromptTemplate, outside my lane) rewrites a traversal merge such as {!$Input:Kind.Account.Field}; if it only handles {!$Input:<input>.<field>}, Replace on such a row will change nothing or refuse, and that file needs a follow-up."
+      },
+      {
+       "finding": "24",
+       "status": "fixed",
+       "summary": "fcEstimateScanCalls now names the missing fan-outs in the cost line and adds them to the call count when known: 10 child objects of this object, inactive validation rule on this object, Path on this object, 10 prompt templates in the org, 10 compact layouts on this object (plus the field-update reads from finding 22). Each appears only in the scope whose scan runs that leg.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/ent-quota-rf.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/fc-scope-1105.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-cost-fanouts.test.mjs",
+       "note": "Updated the pinned moreIf lists and lengths in test/ent-quota-rf.test.mjs and test/fc-scope-1105.test.mjs (10 unknown legs became 16; the fully-known cases now pass the six new counts as 0). The fixed floor is unchanged. updateScanCostLine still passes no counts, so the budget warning itself only changes once a caller supplies them; the visible change today is the longer 'plus 1 for each' list."
+      }
+     ],
+     "testsRun": "npx vitest run on the 5 new files plus test/ent-quota-rf.test.mjs, test/fc-scope-1105.test.mjs, test/fc-related-lists-1119.test.mjs, test/sweep-four-kinds-1118.test.mjs: 9 files, 94 passed, 0 failed. npx eslint on field-cleaner.js and the 7 new or updated test files: clean. Whole suite (npx vitest run): 331 files passed, 5918 tests passed, 5 skipped, 0 failed."
+    },
+    {
+     "ids": [
+      "33",
+      "35",
+      "60",
+      "69"
+     ],
+     "results": [
+      {
+       "finding": "33",
+       "status": "fixed",
+       "summary": "In _sweepPlan, a folder (or the unfiled public folder) whose listMetadata call fails now pushes a note naming the kind, the folder and Salesforce's reason, and counts in a new s.listMissed. The existing 'folders could not be listed' and 'could not be listed' paths count too. _sweepRun no longer ends 'done' when listMissed > 0, and the box header reads 'INCOMPLETE' (or 'STOPPED' only when the user pressed Stop) and says how many listings failed.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-sweep-honest.test.mjs",
+       "note": "Unverified against a live org: for the unfiled$public call I treat errors matching /INVALID_TYPE|INVALID_CROSS_REFERENCE_KEY|not supported|Cannot use/ as 'this kind has no unfiled folder' (no note). If an org returns some other error text for Dashboard/Document unfiled$public, every sweep there will read INCOMPLETE with that note; check on the next live run. Header wording change: a sweep that ended short without the user pressing Stop (failed retrieve) now says INCOMPLETE where it said STOPPED."
+      },
+      {
+       "finding": "35",
+       "status": "fixed",
+       "summary": "A zip that cannot be unpacked now skips the count (continue after the note), so the sweep ends short and not green. A Succeeded retrieve's messages[] are now read: a note names the retrieve, how many members Salesforce left out and the first three with their reasons, they are subtracted from the read count and tallied in s.leftOut, which also keeps the status from being 'done'.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-sweep-honest.test.mjs",
+       "note": "Unverified live: if the Metadata API returns a warning message for standard objects it cannot retrieve (the sweep names every layoutable standard object from /sobjects in the CustomObject retrieve), sweeps on such orgs will end INCOMPLETE with those objects named. That is truthful but may be frequent; if so, the fix belongs in the stdObjects filter, not in hiding the warning."
+      },
+      {
+       "finding": "60",
+       "status": "fixed",
+       "summary": "_sweepJoin captures the scan it started with, returns 0 right after any Tooling lookup if _lastScan was replaced or nulled (so no further lookups go to a newly picked org), and appends rows only to that captured scan. The null-scan TypeError and the rows landing on another field's scan are both impossible now.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-sweep-honest.test.mjs",
+       "note": "Guard is on scan identity only, not on _orgSweep === s: resetFieldAndBelow nulls both together, and the existing test/regress-1115-live.test.mjs runs _sweepJoin without _orgSweep in scope. A 'Read again' on the same field during a join still lets the old rows join that same field's scan, which is correct for that field."
+      },
+      {
+       "finding": "69",
+       "status": "fixed",
+       "summary": "Removed the parenthetical about a walk over all items from the flow deploy refusal; the message now reads '... Nothing was deleted. Press 🗑 Delete versions · flow off on this flow, or open in Flow Builder to change/remove the field reference by hand.' Updated test/fc-flow-refusal-0922.test.mjs, which pinned the old radio wording.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/field-cleaner.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/fc-flow-refusal-0922.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-fc-sweep-honest.test.mjs",
+       "note": "Not done (outside my files): CHANGELOG.md lines ~19 and ~42 of the 1.1.0 section still describe a 'Remove all or Replace all walk' with Pause/Continue, which line 21 says was replaced. needs-other-file for whoever owns CHANGELOG.md."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-fc-sweep-honest.test.mjs -> 12 passed. npx eslint field-cleaner.js test/qa11-fc-sweep-honest.test.mjs test/fc-flow-refusal-0922.test.mjs -> clean. npx vitest run (whole suite) -> 332 files passed, 5930 tests passed, 5 skipped, 0 failed (one failure my edit caused in test/fc-flow-refusal-0922.test.mjs was updated to the new message text). Nothing was run against a Salesforce org."
+    }
+   ]
+  },
+  {
+   "lane": "mdapi",
+   "files": [
+    "sftk-mdapi.js"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "3",
+      "4"
+     ],
+     "results": [
+      {
+       "finding": "3",
+       "status": "fixed",
+       "summary": "sftkMdBundleFiles now names an Aura bundle's meta file after its main resource: MyApp.app gives aura/MyApp/MyApp.app-meta.xml, and likewise for .evt, .intf and .tokens. A component bundle, or one whose main resource is not among the files, still gets .cmp-meta.xml. LWC is unchanged. Not checked against an org.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-mdapi.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-bundle-psl.test.mjs",
+       "note": "No existing test needed updating: the .cmp-meta.xml pins in test/fc-delete-1107.test.mjs and test/fc-matrix-code-1114.test.mjs are component bundles and still pass."
+      },
+      {
+       "finding": "4",
+       "status": "fixed",
+       "summary": "sftkSearchLayoutEdit now strips only the object's own top-level child components (fields, validationRules, listViews, fullName and the rest) instead of every matching tag at any depth. A <fields> inside <profileSearchLayouts> therefore stays byte for byte in the deployed file and in the undo file, which the same function builds. Not checked against an org.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-mdapi.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-bundle-psl.test.mjs",
+       "note": "I chose a top-level-only walk over the proposed placeholder swap, and wrote it inline so the existing extractFunctions lists for sftkSearchLayoutEdit still work. One behaviour difference: a nested <fullName> inside a kept element (for example inside <nameField>, if a read ever returned one) is now kept, where before it was dropped. An unbalanced element stops the strip and the remainder is kept as it is."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-mdapi-bundle-psl.test.mjs test/fc-search-layouts-1110.test.mjs test/fc-matrix-surfaces-1114.test.mjs test/fc-matrix-code-1114.test.mjs test/fc-delete-1107.test.mjs: 5 files passed, 177 tests passed, 4 skipped (11 of them new). npx eslint sftk-mdapi.js test/qa11-mdapi-bundle-psl.test.mjs: no output (clean). Whole suite, npx vitest run: 281 files passed, 5541 tests passed, 5 skipped, 0 failed."
+    },
+    {
+     "ids": [
+      "25",
+      "26",
+      "27",
+      "28"
+     ],
+     "results": [
+      {
+       "finding": "25",
+       "status": "fixed",
+       "summary": "In sftkMdEditField, the rule-entry kinds (AssignmentRule / AutoResponseRule / EscalationRule), ApprovalProcess entry criteria, WorkflowRule / SharingCriteriaRule and WorkflowFieldUpdate now refuse as unsure (cannotTell + relWhy) whenever a formula holds a path whose object cannot be told, before any plain refusal. The half-renamed formula is no longer returned as changed, and the post-deploy probe reads such XML as still naming the field.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-mdapi.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-half-edits.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-half-edits.test.mjs",
+       "note": "Rule entries are still read without their host object (the container child's fullName has no dot), so any Parent. path in a rule-entry formula is now an honest 'cannot tell' rather than an edit. Passing the container's object from field-cleaner.js would let those resolve; not needed for this fix."
+      },
+      {
+       "finding": "26",
+       "status": "fixed",
+       "summary": "The LookupFilter case now tests both <field> and <valueField> with both spellings (Object.Field / bare, and $Source.Field when the lookup's own object is the picked one). A field named on the other side of a condition is renamed or dropped with the rest, and <field>$Source.Field</field> is found instead of being refused as 'no filter condition names the field'. _sftkMdRenameVal keeps the $Source. / Account. prefix (pinned in the test).",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-mdapi.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-half-edits.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-half-edits.test.mjs"
+      },
+      {
+       "finding": "27",
+       "status": "needs-other-file",
+       "summary": "Formulas (fixed in sftk-mdapi.js): _sftkMdSwapToken now also looks for the custom lookup's relationship token (Old__c -> Old__r, followed by a dot). When the path in front ends on the picked object it is counted in rel with the new kind 'ownrel' (a path that cannot be told is counted as before), so every formula kind refuses as unsure with a reason that names Old__r.Field; another object's own lookup of the same name is not counted. Code (partly fixed here): sftkMdCodeReplace returns a new `rel` count of Old__r places it left, and sftkMdCodeHits counts lines holding Old__r, so field-cleaner's stillNames is true and the row is no longer cleared. Flows and the code row's label live in other files.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-mdapi.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-half-edits.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-half-edits.test.mjs",
+       "note": "The relationship name is derived (custom field API name with __r for __c), so no describe is needed. Two changes remain outside my lane.\n\n(1) field-cleaner.js, fixCodeReplace: the label still says 'Replaced ... verified' although the row now stays. Refuse before deploying. Anchor (unique):\n    const how = `${r.n} place${r.n === 1 ? '' : 's'} in ${r.files} file${r.files === 1 ? '' : 's'} now ${nf}`;\nInsert immediately BEFORE it:\n    if (r.rel) {\n      appendInlineError(componentId, `⇄ Replace was not done on \"${componentName}\": the code also reads other fields through this lookup (${field.replace(/__c$/i, '__r')}.Field) in ${r.rel} place${r.rel === 1 ? '' : 's'}, and renaming ${field} does not move those — the code would still depend on the field. Change those lines in ✎ Edit code (in 🔍). Nothing was changed.`);\n      return null;\n    }\n(The inspector's ⇄ button in _codeInspect, shown on `rp && rp.n`, could likewise be hidden when rp.rel.)\n\n(2) sftk-fieldreplace.js, sftkFlowReplaceField: Old__r in a flow path is neither swapped nor put in skipped.\n  a. Anchor: `if (!_sftkFrLow(v).includes(oldL)) return;`\n     Replace with:\n       const relL = /__c$/.test(oldL) ? oldL.replace(/__c$/, '__r') : '';\n       if (!_sftkFrLow(v).includes(oldL) && !(relL && _sftkFrLow(v).includes(relL))) return;\n  b. Anchor: `if (segs.slice(0, -1).some(s => _sftkFrLow(s) === oldL)) left.push({ why: 'unknown' });`\n     Replace with:\n       if (segs.slice(0, -1).some(s => _sftkFrLow(s) === oldL || (relL && _sftkFrLow(s) === relL))) left.push({ why: 'unknown' });\n  The caller in field-cleaner.js must then treat a non-empty `skipped` with why 'unknown' as not done (check how it reads skipped today)."
+      },
+      {
+       "finding": "28",
+       "status": "fixed",
+       "summary": "The GenAiPromptTemplate case now judges every merge field that ends in the field instead of only the direct {!$Input:Ref.Field} form. The root is an input's object (or a global such as $User) and the hops after it are walked by the shared resolver: a path that ends on the picked object is rewritten too ({!$Input:Con.Account.Region__c}), one that ends elsewhere is left, and one that cannot be told (custom lookup, undeclared input with a path, a root that is no record) refuses the whole edit as unsure so the probe reads it as still naming the field.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-mdapi.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-half-edits.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-mdapi-half-edits.test.mjs",
+       "note": "Went further than the proposed refuse-only fix: resolvable paths are renamed, which closes the mixed case without a manual step. The plain refusal text changed from '...reads the field directly from an input of this object...' to '...reads the field from an input of this object...'; no existing test pinned it. A direct merge field of an undeclared or non-record input is left alone as before (test/sweep-four-kinds-1118.test.mjs pins that). The path syntax is from the template format as the code already read it, not checked against a live org."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-mdapi-half-edits.test.mjs: 36 passed, 0 failed. npx eslint sftk-mdapi.js test/qa11-mdapi-half-edits.test.mjs: clean. npx vitest run (whole suite, last run): 309 files passed, 2 failed; 5806 tests passed, 3 failed, 5 skipped. The 3 failures are outside my lane and left as they are: test/fc-sweep-join-1108.test.mjs 'a code kind is found by name' and test/fc-matrix-code-1114.test.mjs 'LWC full delete' (both compare a SOQL string built by sftkSweepIdQuery in sftk-sweep.js, which another agent is editing), and test/fc-matrix-code-1114.test.mjs 'Profiles and permission sets ... both lines under ONE item' (got an extra 'SameNameOtherObject' item, also from the sweep side). An earlier run showed different in-flight failures (pii-list-example-1115, release-qa-1114-org-compare) that had cleared by the last run. One failure my edit caused (test/sweep-four-kinds-1118.test.mjs, undeclared input left alone) was fixed in the code, not the test."
+    }
+   ]
+  },
+  {
+   "lane": "sweep",
+   "files": [
+    "sftk-sweep.js"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "11",
+      "29",
+      "30"
+     ],
+     "results": [
+      {
+       "finding": "11",
+       "status": "fixed",
+       "summary": "sftkSweepCsv's cell() now puts a leading apostrophe on any cell that starts with = + - @ (or a tab / CR), then applies the existing quoting. It covers every column; ordinary lines and the numeric line column are written exactly as before.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-sweep.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-csv-formula.test.mjs",
+       "note": "The existing exact-row test test/fc-sweep-join-1108.test.mjs still passes unchanged (none of its cells start with a trigger character)."
+      },
+      {
+       "finding": "29",
+       "status": "fixed",
+       "summary": "sftkSweepCompare now matches a scan name that is a plain API name (identifier characters and dots only) by equality alone, so AccountServiceTest no longer hides AccountService and Check_Status_Closed no longer hides Check_Status. The start-of-the-other allowance is kept only for scan names with a suffix or a label, and there the shorter name must end at a word end of the longer one.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-sweep.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-compare-prefix.test.mjs",
+       "note": "Slightly stricter than the proposed fix: dotted API names (Account.Check_Status) are also exact-only, and loose names need a word boundary. Trade-off as stated in the finding: a single-word label that differs from its API name shows as a fresh row rather than being hidden. The existing compare test in test/sweep-1108.test.mjs passes unchanged."
+      },
+      {
+       "finding": "30",
+       "status": "needs-other-file",
+       "summary": "sftkSweepForms now searches every spelling of a custom field: Field__c, Field__r (dropped only when an optional third argument fieldType says the field is no relationship), and Field__pc when the object is Contact. It exposes forms.names and forms.pc; docOnly and the mentions regex in sftkSweepRun reuse forms.reG, and a line holding the __pc spelling keeps its kind instead of being demoted as Account's own field or as code that never names Contact. Updated the assertion in test/sweep-1108.test.mjs that pinned the miss.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-sweep.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/sweep-1108.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-rel-forms.test.mjs",
+       "note": "The search itself is fixed in sftk-sweep.js and works with the current caller (type unknown, so __r is searched for every custom field). Two follow-ups in field-cleaner.js, both optional for correctness of the hits:\n\n1) Pass the field type so a non-relationship field does not search Field__r. In _sweepRun, anchor:\n   const forms = sftkSweepForms(_selObj.api, _selField.api);\n   replace with:\n   const forms = sftkSweepForms(_selObj.api, _selField.api, _selField.type);\n   (_selField.type is FieldDefinition.DataType, e.g. \"Lookup(Account)\", \"Master-Detail(Account)\", \"Hierarchy\", which the new argument recognises.)\n\n2) The highlight in renderOrgSweep marks only the literal Field__c, so a line found by Field__r / Field__pc is listed with no <mark>. Anchor: the line starting\n   const hl = t => esc(t).replace(new RegExp(`(${_selField.api.replace(\n   replace the whole line with:\n   const hlRe = new RegExp(`(${sftkSweepForms(_selObj.api, _selField.api, _selField.type).reG.source})`, 'gi');\n   const hl = t => esc(t).replace(hlRe, '<mark>$1</mark>');\n   Note: that existing line (already so in HEAD) has a damaged replacement string - instead of '\\\\$&' it holds the text of the report-sweep section comment ('\\\\\\\\  // ── 📊 The report sweep (opt-in) ───…'). It is harmless for API names (no regex specials) but the replacement above removes it.\n\nNot changed, outside my files: the offer text in field-cleaner.js and CHANGELOG.md need no change now that the claim is closer to true. forms.qualified was left as it is, as the finding advised."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-sweep-csv-formula.test.mjs test/qa11-sweep-compare-prefix.test.mjs test/qa11-sweep-rel-forms.test.mjs test/sweep-1108.test.mjs test/fc-sweep-join-1108.test.mjs -> 5 files, 44 tests, all pass. npx eslint sftk-sweep.js test/qa11-sweep-*.test.mjs test/sweep-1108.test.mjs -> clean. Full suite (npx vitest run): 27 failing tests in 16 files, none caused by sftk-sweep.js; they pin text in files other agents are editing (field-cleaner.js, studio-reconcile.js, studio-deploy.js, sftk-mdapi.js, sftk-vrpause.js, sftk-history.js, studio-valueedit.js, background.js): test/audit-0912, dryrun-view-1104, failed-read-not-empty-1111, fc-field-delete-0922, field-delete-history-1002, flowpause-0929, history-archive, pausepanel-1108, refusal-source-1113, regress-1115-engine, regress-1115-reconcile-compare-undo, regress-1115-refix (1 test, G1 runReconcile text in studio-reconcile.js), sweep-static-resources-1117 (1 test, pins 'renderReportScan();' in field-cleaner.js), tool-history-window-1118, value-edit-1027, vrpause-1003. The two files among them that also load sftk-sweep.js were checked individually: every sweep-behaviour test in them passes; the single failure in each is a source-text pin on another file."
+    },
+    {
+     "ids": [
+      "31",
+      "32",
+      "34",
+      "36"
+     ],
+     "results": [
+      {
+       "finding": "31",
+       "status": "fixed",
+       "summary": "sftkSweepRun now has a third demotion branch for files whose path names no object. A flow is judged by its <start> object ($Record.X / $Record__Prior.X only), a Lightning page by <sobjectType> (Record.X only), a layout by the object before the first '-' of its file name (bare field items, not related-list columns), and a report, permission set or profile line by a single plain object name before the field. When that object is not the picked one, the hit becomes 'Same name, another object' with the note \"<Object>'s own field of this name\", so it is no blocker and never joins. A Get Records on the picked object inside another object's flow, relationship paths, qualified lines and pages or flows with no object keep their kind. The kind's why text gained 'or under that object's own name'.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-sweep.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-file-object.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/fc-matrix-code-1114.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-file-object.test.mjs",
+       "note": "test/fc-matrix-code-1114.test.mjs had a profile fixture that pinned the bug (a Contact.SFTK_Mx__c permission line counted as Account's mention); updated to the new truth, not deleted. Dashboards are not covered (not in the finding). Not checked against an org."
+      },
+      {
+       "finding": "32",
+       "status": "fixed",
+       "summary": "For Apex classes, Apex triggers and LWC JavaScript, sftkSweepRun now builds a comment-blanked copy of the file (same length and line breaks, strings and template literals copied whole) and tests the hit's line in it. A line that names the field only inside // or /* ... */, including a block opened lines earlier, becomes the existing 'Named only in descriptive text' kind with the note 'named only in a code comment': a mention that never joins the list and exports as 'plain text only - nothing breaks'. A line with one live mention keeps its blocker kind.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-sweep.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-code-comment.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-code-comment.test.mjs",
+       "note": "Visualforce pages and components are deliberately left out: a page evaluates {!...} merge fields even inside HTML and script comments, so a commented mention there can still block the delete. That is from platform knowledge, not checked against an org. The DocText why text gained 'or in a comment of its code'; field-cleaner.js already renders DocText as 'nothing to do', so no other file needs a change."
+      },
+      {
+       "finding": "34",
+       "status": "needs-other-file",
+       "summary": "The stale footer string lives in field-cleaner.js, outside my lane. In sftk-sweep.js I added a pure sftkSweepNotRead() beside the skip list (exported on globalThis) that returns the true sentence: binary static resources only, plus territory assignment rules, Experience audiences, CRM Analytics dataflows and recipes, and muting permission sets. The test fails if any of the named kinds stops being skipped, so the sentence cannot drift again.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-sweep.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-not-read.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-not-read.test.mjs",
+       "note": "File: field-cleaner.js (about line 3914, inside the sweep result template literal). Anchor text: `<div class=\"fc-repl-sub\">Kinds not read: static resources, documents, content and site assets (binary or bulky), settings, certificates, and anything installed from a managed package. <button class=\"fc-dd-linkbtn\" id=\"fcSweepPlan\">` Replacement: `<div class=\"fc-repl-sub\">${esc(sftkSweepNotRead())} <button class=\"fc-dd-linkbtn\" id=\"fcSweepPlan\">` (sftk-sweep.js is loaded by popup.html before use; the sentence has no HTML characters). If a literal is preferred instead: \"Kinds not read: binary static resources (images, fonts, zips, or a file over 1 MB), documents, content and site assets, settings, certificates, territory assignment rules, Experience audiences, CRM Analytics dataflows and recipes, muting permission sets, and anything installed from a managed package.\" Until that edit lands the user still sees the old footer."
+      },
+      {
+       "finding": "36",
+       "status": "fixed",
+       "summary": "sftkSweepIdQuery now appends ' AND NamespacePrefix = null' to both lookups (the four Apex / Visualforce kinds by Name, LightningComponentBundle by DeveloperName). A packaged component of the same name can no longer be the first row; if only a packaged one exists the lookup returns nothing and the hit stays in the sweep's box.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/sftk-sweep.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-id-namespace.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/fc-sweep-join-1108.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/fc-matrix-code-1114.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-sweep-id-namespace.test.mjs",
+       "note": "Not run against an org. Known limit: in an org that has its own namespace (a packaging or namespaced Developer org) the org's own code carries that prefix, so the lookup finds nothing and code hits stay in the sweep's box ('by hand') instead of joining. That is the safe direction, but it is a behaviour change for such orgs. Two existing tests pinned the old query text and were updated."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-sweep-file-object.test.mjs test/qa11-sweep-code-comment.test.mjs test/qa11-sweep-not-read.test.mjs test/qa11-sweep-id-namespace.test.mjs test/fc-sweep-join-1108.test.mjs test/fc-matrix-code-1114.test.mjs: all pass after the two pinned tests were updated. npx eslint on sftk-sweep.js and the six test files: clean (exit 0). Whole suite (npx vitest run): 315 files, 5827 passed, 5 skipped, 1 failed. The failure left in place is test/regress-1115-field-cleaner.test.mjs > '7b. scanSupplemental ... answers that came back whole: the rule and the update are listed, nothing is unread' (expected [] to equal ['MatchingRule:MR', ...]); it exercises scanSupplemental in field-cleaner.js, which is outside my lane and being edited by another agent, and does not call anything in sftk-sweep.js."
+    }
+   ]
+  },
+  {
+   "lane": "background",
+   "files": [
+    "background.js"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "10",
+      "49",
+      "50",
+      "56",
+      "65"
+     ],
+     "results": [
+      {
+       "finding": "10",
+       "status": "fixed",
+       "summary": "sftkProbeParseRound no longer puts an upsert row into `persisted` unless Salesforce says created:true; such ids go to a new `updated` list. The engine never hands them to sfCollectionsDelete: when the round did not roll back it pushes an error naming the object, the count and the ids (already in the target, updated, not deleted, overwritten values not restored, review them), and sftkProbeStatus returns 'failed'. The accepted poison and records the dry run really created are still re-read and deleted as before.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/background.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-background-dryrun.test.mjs",
+       "note": "probeResult now carries updatedExisting: [{objType,id,srcId}] to the page. No page change is needed for correctness (the error line and the failed status already reach the user)."
+      },
+      {
+       "finding": "49",
+       "status": "fixed",
+       "summary": "sftkProbeLimits().maxSubs is 5 (was 24), with the comment corrected: 5 sObject Collections subrequests per composite, the poison is a plain sObject POST and does not count. A 6-level tree is now refused before anything is sent, with a line that names the count, the limit of 5 and what to do.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/background.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-background-dryrun.test.mjs",
+       "note": "The limit of 5 is Salesforce's documented one, not verified against an org here (no org access in this task). Before release, confirm once with a 5-level and a 6-level dry run on a real org. No existing test pinned 24."
+      },
+      {
+       "finding": "50",
+       "status": "fixed",
+       "summary": "The duplicate-rule bypass is no longer sent on the outer composite call. sftkProbeCompositeBody takes an optional bypassFor(objType) and puts the Sforce-Duplicate-Rule-Header in that subrequest's httpHeaders only; the engine passes _runDupBypassFor, the same per-object rule the real writers use. Account-only ticked gives the header to Account alone, an empty choice to none, no per-object choice to every object, and the poison never carries it.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/background.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-background-dryrun.test.mjs",
+       "note": "Used _runDupBypassFor rather than _runDupHeaders in the engine call because every existing engine test harness already extracts it; behaviour is identical for a named object. That Salesforce honours this header in a composite subrequest's httpHeaders is from the documentation, not run against an org: worth one live dry run with an Alert rule on an unticked object."
+      },
+      {
+       "finding": "56",
+       "status": "fixed",
+       "summary": "New pure sftkDeployFailureText builds the thrown reason from componentFailures, then runTestResult.failures (Apex test Class.method failed: message) and codeCoverageWarnings (code coverage — Class: message), then errorMessage, then 'Deployment failed'. It reads a single object or a list, and cuts a long list at 8 with a pointer to Setup → Deployment Status. sfMetadataDeploy throws that text.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/background.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-background-deploy.test.mjs",
+       "note": "The check-only branch (SF_METADATA_VALIDATE) was left as is: its callers never pass a testLevel, so it cannot produce test failures today, as the finding's own review says."
+      },
+      {
+       "finding": "65",
+       "status": "needs-other-file",
+       "summary": "In background.js: a deploy that runs Apex tests is now polled for 4 minutes (96 polls) instead of 100 seconds, and the timeout text names the real wait. Every 'submitted but its end was not seen' error of a real deploy (timeout, repeated poll misses, unreadable status, session lost mid-poll) is thrown through sftkDeploySubmittedError, and the message handler answers { error, submitted: true, jobId }, so a caller can tell it from a refusal. A check-only deploy is not marked. The History and message part lives in field-cleaner.js and is not done.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/background.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/audit-0912.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-background-deploy.test.mjs",
+       "note": "I kept the poll at 4 minutes, not 30: Chrome ends a service-worker request that runs past 5 minutes and I could not check a longer wait live. A production test run over 4 minutes therefore still ends as 'submitted', which is why the field-cleaner.js part matters.\n\nNeeded in field-cleaner.js (two twins, delete near line 7372 and code edit near line 9406):\n\n1. Pass the mark through the write closure. Anchor (both places): `return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };` Replace with: `return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted', ...(r && r.submitted ? { submitted: true, jobId: r.jobId || null } : {}) };`\n\n2. Before each final throw, compute `const maybe = !!(wr && wr.raw && wr.raw.submitted);` (declare it where the `finally` can see it, next to `wr`).\n\n3. Delete path, anchor: ``throw new Error(`Salesforce won't ${verb.toLowerCase()} the ${spec.what} \"${componentName}\" (${_feText(String((wr.raw && wr.raw.error) || 'refused'))}). Clear it in Setup, then re-scan.`);`` Put before it: ``if (maybe) throw new Error(`The ${verb.toLowerCase()} of the ${spec.what} \"${componentName}\" was sent and Salesforce is still running it (the org's Apex tests take time). Check Setup → Deployment Status, then re-scan. Undo is in Activity.`);``\n\n4. Edit path, anchor: ``throw new Error(`Salesforce refused the ${spec.what} \"${componentName}\": ${_feText(String((wr.raw && wr.raw.error) || 'refused'))}. Nothing was changed.`);`` Put before it: ``if (maybe) throw new Error(`The change to the ${spec.what} \"${componentName}\" was sent and Salesforce is still running it (the org's Apex tests take time). Check Setup → Deployment Status, then open it again. Undo is in Activity.`);``\n\n5. Both `finally` blocks, anchor: `await sftkHistoryEnd(j, { undo: wr && wr.accepted` Replace the condition with `(wr && wr.accepted) || maybe` so the undo steps are attached instead of `{ none: 'nothing was accepted by Salesforce, so there is nothing to undo' }`.\n\nExisting test updated: test/audit-0912.test.mjs pinned `throw new Error(` for the mid-poll session loss; it now pins `throw unread(` and the definition of `unread`."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-background-dryrun.test.mjs test/qa11-background-deploy.test.mjs test/dryrun-probe-1103.test.mjs -> 44 passed, 0 failed. npx eslint on background.js, both new test files and test/audit-0912.test.mjs -> clean (exit 0). Whole suite (npx vitest run) -> 5720 passed, 6 failed, 5 skipped across 304 files. The 6 left are outside background.js and belong to other agents' files in flight: test/flow-filter-1105.test.mjs (pins popup.js text), test/pii-list-example-1115.test.mjs x2 (ReferenceError bldPiiPersonaCols, studio-builder.js), test/release-qa-1114-org-compare.test.mjs (ReferenceError sftkOcIncompleteMsg, studio-compare.js), test/sweep-four-kinds-1118.test.mjs (sweep / field-cleaner), test/value-edit-owner-1108.test.mjs (studio-valueedit.js). The one failure my edit caused (test/audit-0912.test.mjs, pinned throw text) was updated and passes. Nothing was run against a Salesforce org."
+    }
+   ]
+  },
+  {
+   "lane": "history",
+   "files": [
+    "sftk-history.js",
+    "studio-history.js"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "5",
+      "6"
+     ],
+     "results": [
+      {
+       "finding": "5",
+       "status": "fixed",
+       "summary": "sftkHistoryAll now answers the hot list plus the archived Toolkit entries (as a copy, hot copy wins), so the Undo-all bar, row Undo, the tool window and Back up all see changes that aged past the 100-entry cap. Clear and single delete now also remove the matching entries from the on-PC archive and count them. An archived change that is undone gets its done mark written back to the archive instead of being pushed into the hot list as the newest entry.",
+       "filesChanged": [
+        "sftk-history.js",
+        "test/qa11-history-archive.test.mjs",
+        "test/tool-history-window-1118.test.mjs"
+       ],
+       "testFile": "test/qa11-history-archive.test.mjs",
+       "note": "No other source file was needed: the archive delete (sftkHistoryArchDrop in sftk-history.js) uses the existing _sftkArchTx and sftkArchList from sftk-archive.js. Open points, none blocking: (1) sftkHistoryAll reads the whole archive on every call (sftkArchList(null, 1e9)); there is no index by kind, so a very large archive makes each Activity render slower. (2) If the archive delete fails, Clear returns only the count it really removed and the entries stay listed; sftk-toolhistory.js has no wording for a partial clear. (3) sftkHistoryRestoreBackup still dedupes against the hot list only, so restoring a backup that holds archived entries re-adds them to the hot list (listed once, since the hot copy wins) - that is the separate restore finding. (4) In Data Studio, storageSaveHistory archives overflow without awaiting; the done mark for a target evicted during its own undo is put afterwards and should land last, but the order is not enforced. (5) The Activity feed (sftk-feed.js) now also lists archived Toolkit entries because it reads sftkHistoryAll. Updated test/tool-history-window-1118.test.mjs: the pinned line in sftkHistoryRemove is now 'if (keep.length === list.length) return archived;'."
+      },
+      {
+       "finding": "6",
+       "status": "fixed",
+       "summary": "Data Studio > History > Clear All now deletes only what that page lists (deployments, rollbacks, Data Studio's own changes) from the list and from the archive; changes made with Toolkit tools stay in both, each with its Undo. The dialog now says what is deleted (archived runs and restore points included), that nothing in Salesforce changes, and how many Toolkit changes stay. If the helpers from sftk-history.js are missing, the clear is refused with a toast instead of wiping everything.",
+       "filesChanged": [
+        "studio-history.js",
+        "sftk-history.js",
+        "test/qa11-history-clearall.test.mjs",
+        "test/history-archive.test.mjs"
+       ],
+       "testFile": "test/qa11-history-clearall.test.mjs",
+       "note": "The handler calls the two new helpers through window.sftkHistoryStudioClearKeep / window.sftkHistoryArchDrop because eslint-globals.json (generated by scripts/gen-globals.mjs, outside my lane) does not list them yet; after the globals are regenerated the bare names would lint too. Left as is, by the finding's own advice: sftkUndoStoreClear and sftkFcSweep({all:true}) still run (deployment restore points and per-run before/after lists; the new dialog text names the restore points). Not changed: the separate 'Clear cached org data' button still empties the whole history and archive, Toolkit entries included; its dialog says 'all run history (N entries)' with N counting them, but does not name the Toolkit Undo - worth a look as a follow-up. sftk-toolhistory.js line 'Deployments and their restore points stay - they are cleared in Data Studio > History' is now consistent with the behaviour, no edit needed. Updated test/history-archive.test.mjs: 'both clear paths clear the archive' now expects one sftkArchClear() (Clear cached) plus the Toolkit-keeping archive drop in Clear All."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-history-archive.test.mjs test/qa11-history-clearall.test.mjs test/tool-history-window-1118.test.mjs test/history-archive.test.mjs test/sftk-history.test.mjs test/tool-history-backup-1116.test.mjs -> all passed (13 + 7 new tests, plus the existing ones). npx eslint on sftk-history.js, studio-history.js and the four test files -> clean. Full suite (npx vitest run): 300 files passed, 6 failed; 5743 tests passed, 7 failed, 5 skipped. All 7 failures pin files outside my lane (other agents' work in flight) and were left: test/flow-filter-1105.test.mjs (1), test/pii-list-example-1115.test.mjs (2), test/qa11-popup-delete-reread.test.mjs (1), test/release-qa-1114-org-compare.test.mjs (1), test/sweep-four-kinds-1118.test.mjs (1), test/value-edit-owner-1108.test.mjs (1). No failing test reads sftk-history.js or studio-history.js behaviour I changed."
+    },
+    {
+     "ids": [
+      "37",
+      "38",
+      "61",
+      "39",
+      "40",
+      "41"
+     ],
+     "results": [
+      {
+       "finding": "37",
+       "status": "fixed",
+       "summary": "sftkHistoryUndo now sets toolUndo.done only when Salesforce accepted at least one step; an attempt refused outright leaves the entry undoable, returns written:false and says nothing was undone and that it can be tried again. sftkHistoryUndoMany also stops when an entry wrote nothing because the org could not be reached (session expired, fetch failure, no response, API limit), so the rest are not ground through; a refusal about the component itself still does not stop the run.",
+       "filesChanged": [
+        "sftk-history.js",
+        "test/qa11-history-undo-refused.test.mjs"
+       ],
+       "testFile": "test/qa11-history-undo-refused.test.mjs",
+       "note": "New pure helpers: sftkHistoryUndoWrote(what), sftkHistoryUndoUnreachable(what). The stop reason is carried in the existing out.stopped, which field-cleaner.js already prints after 'not tried —'. The unreachable test is a text match on the step refusals (INVALID_SESSION_ID, Failed to fetch, No response, REQUEST_LIMIT_EXCEEDED, 401 and similar); an unlisted wording falls back to the old behaviour of continuing, but entries stay undoable either way."
+      },
+      {
+       "finding": "38",
+       "status": "needs-other-file",
+       "summary": "Partly changed by the finding-5 fix already in the tree: archived Toolkit entries are now listed and undoable, so 'each with its Undo' holds when the archive write succeeds. Fixed here: a second restore skips ids the archive already holds; the archive write is awaited and counted only when it succeeded (popup and Data Studio alike, Data Studio no longer reports archived: 0); when the archive cannot be written nothing already listed is dropped, only the newest entries that fit are restored, and the rest is returned as notKept.",
+       "filesChanged": [
+        "sftk-history.js",
+        "test/qa11-history-restore-overflow.test.mjs"
+       ],
+       "testFile": "test/qa11-history-restore-overflow.test.mjs",
+       "note": "sftkHistoryRestoreBackup now returns { added, skipped, archived, notKept }. The message in sftk-toolhistory.js does not say notKept yet. File: sftk-toolhistory.js, in restore(tab). Anchor: `+ (res.archived ? ` · the ${res.archived.toLocaleString('en-US')} oldest went to the archive: the list keeps ${SFTK_HISTORY_CAP}` : '') + '.');` Replace with: `+ (res.archived ? ` · the ${res.archived.toLocaleString('en-US')} oldest went to the archive: the list keeps ${SFTK_HISTORY_CAP}` : '') + (res.notKept ? ` · ${res.notKept.toLocaleString('en-US')} older change${res.notKept === 1 ? ' was' : 's were'} not restored: the list keeps ${SFTK_HISTORY_CAP} and the archive on this PC could not be written. Keep the backup file, clear entries you no longer need, then restore it again` : '') + '.', !!res.notKept);` (third argument = the warning flag say() already takes). Until then a restore with a broken archive reports only the entries really restored (or 'Nothing to restore') and is silent about the ones left out; nothing is lost."
+      },
+      {
+       "finding": "61",
+       "status": "fixed",
+       "summary": "sftk-history.js now registers its own chrome.storage.onChanged listener: on a page that holds Data Studio's in-memory list, Toolkit-tool entries that were in the stored list before a change and are gone after it are dropped from _history in place and History is redrawn, so the next storageSaveHistory cannot write them back. It does nothing on the popup.",
+       "filesChanged": [
+        "sftk-history.js",
+        "test/qa11-history-gone-elsewhere.test.mjs"
+       ],
+       "testFile": "test/qa11-history-gone-elsewhere.test.mjs",
+       "note": "Done in sftk-history.js (loaded by studio.html before studio-core.js) instead of the proposed studio-core.js edit, which is outside my files. Narrower than the proposal on purpose: only entries of Toolkit tabs (sftkHistoryToolTab) are dropped, not every kind 'tool' — those are the only ones the Toolkit pages remove, and it avoids dropping a Data Studio entry that another page's stale read-then-write merely appears to remove. Residual window: a Data Studio save already in flight when the event arrives can still write the entry back once. New helpers: sftkHistoryGoneIds, sftkHistoryDropGone."
+      },
+      {
+       "finding": "39",
+       "status": "fixed",
+       "summary": "undoTool now hands the archive view's entry (without the view's _archived mark) to sftkHistoryUndo when the hot list does not hold it, so the undo runs; the done mark is written to the archived record in place and the view's copy is refreshed so the card shows Undone. renderHistory also draws an id once when both the hot list and the archive view hold it.",
+       "filesChanged": [
+        "studio-history.js",
+        "test/qa11-history-arch-undo.test.mjs",
+        "test/tool-history-1005.test.mjs"
+       ],
+       "testFile": "test/qa11-history-arch-undo.test.mjs",
+       "note": "New pure helpers _histArchHeld and _histArchAfterUndo. test/tool-history-1005.test.mjs pinned the old mineArch line and was updated to the new text."
+      },
+      {
+       "finding": "40",
+       "status": "fixed",
+       "summary": "'Show older' pages the archive from its own bound (_archBound: the oldest startedAt read from the archive so far, null on the first click) instead of the oldest date in the hot list, so runs archived after an old entry was put back are loaded. Archive rows the hot list already holds are counted (_archDup) and taken out of the 'Show N older' count, and an empty page ends the offer with a plain toast instead of a button that loads nothing.",
+       "filesChanged": [
+        "studio-history.js",
+        "test/qa11-history-arch-paging.test.mjs",
+        "test/history-archive.test.mjs"
+       ],
+       "testFile": "test/qa11-history-arch-paging.test.mjs",
+       "note": "New pure helper _histArchTake; both places that emptied _archShown now call _histArchReset() so the bound resets with the view. test/history-archive.test.mjs pinned sftkArchList(oldest, 50) and was updated to sftkArchList(_archBound, 50)."
+      },
+      {
+       "finding": "41",
+       "status": "fixed",
+       "summary": "The full export now takes every hot entry and only the archived entries the hot list does not hold, so an entry archived and then re-written with its undo mark is exported once, from the current copy.",
+       "filesChanged": [
+        "studio-history.js",
+        "test/qa11-history-export-all.test.mjs"
+       ],
+       "testFile": "test/qa11-history-export-all.test.mjs",
+       "note": "New pure helper _histExportAllEntries(arch, hot). The headline '📦 N older runs archived' figure is still the raw archive row count; only the 'Show N older' count excludes duplicates, and only after they have been read."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-history-*.test.mjs test/sftk-history.test.mjs test/tool-history-backup-1116.test.mjs test/history-undo-many-archived-1117.test.mjs -> all passed after one fix to my own new test. npx eslint sftk-history.js studio-history.js and all new/updated test files -> exit 0, no messages. Whole suite (npx vitest run): 326 files passed, 5892 tests passed, 5 skipped, 0 failed. Two existing tests failed on text I changed and were updated to the new truth: test/history-archive.test.mjs (sftkArchList bound) and test/tool-history-1005.test.mjs (mineArch line). No failures left. Nothing was run against a browser or an org."
+    }
+   ]
+  },
+  {
+   "lane": "deploy",
+   "files": [
+    "studio-deploy.js"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "7",
+      "43",
+      "44",
+      "55"
+     ],
+     "results": [
+      {
+       "finding": "7",
+       "status": "fixed",
+       "summary": "The run no longer hydrates or switches the page's cached rule objects. Just before the switch, _depReconcile takes fresh copies of the ticked rules with no metadata/xml (new pure sftkDepRulesStillOn), reads each definition again and switches those copies, so a second run in the same page session writes back the rule as it is now, with only active changed. The cached list never carries a definition.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/studio-deploy.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/pausepanel-1108.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/vrpause-1003.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-deploy-fresh-pause.test.mjs",
+       "note": "Not run against an org. The skip `if (r.metadata || r.xml) continue;` in sftk-vrpause.js sftkVrPauseHydrate is now harmless (the copies never carry a definition) and was left alone."
+      },
+      {
+       "finding": "43",
+       "status": "fixed",
+       "summary": "Both beforeWrites hooks read the org again just before switching. Rules: the active rules are listed again, a ticked rule that is no longer active (or whose fresh definition reads active:false) is dropped, logged as left as it is, and removed from the panel's list, so it is never switched back on. Flows: the list is read again, a deactivated flow is dropped and a re-versioned flow is switched back on at the version active now (logged). If the re-read fails the run does not start and says why; if nothing ticked is still active the run goes on without switching anything.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/studio-deploy.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-deploy-fresh-pause.test.mjs",
+       "note": "Costs one extra query per run for rules and two or three for flows. The window is now the few seconds between the re-read and the switch, not the life of the page. The run's confirmation dialog still lists the names read when the page opened; the run log says what was dropped or re-versioned. Not run against an org."
+      },
+      {
+       "finding": "44",
+       "status": "needs-other-file",
+       "summary": "The dry run is now started with the real run's duplicate-rule choice: the button calls _depProbeOpts(p), which builds { probe, probePaused, dupePause } from the same _depDupePauseOpts over the same written objects, so the probe profile gets dupBypassObjects. A non-null dupePause in probe mode raises no extra dialog (the dry run has its own confirmation branch). The engine still puts the header on the whole composite, so the background.js change below is needed for the dry run to actually respect an unticked object.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/studio-deploy.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/dryrun-view-1104.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/refusal-source-1113.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-deploy-probe-dupes.test.mjs",
+       "note": "File: background.js. Four edits, keeping sftkProbeCompositeBody pure (tests extract it):\n1) Anchor `function sftkProbeCompositeBody(subs, apiVersion) {` -> `function sftkProbeCompositeBody(subs, apiVersion, headersFor) {`\n2) Inside its `const compositeRequest = subs.map(s => ({ ... }))`, right after the line `    body: { allOrNone: false, records: s.rows.map(r => ({ attributes: { type: s.objType }, ...resolve(r.payload) })) },` add the line `    ...(() => { const h = typeof headersFor === 'function' ? headersFor(s.objType) : null; return h && Object.keys(h).length ? { httpHeaders: h } : {}; })(),`\n3) Anchor (about line 3148) `sftkProbeCompositeBody(sending, API_VERSION)` -> `sftkProbeCompositeBody(sending, API_VERSION, t => _runDupHeaders(t))`\n4) In sfProbeComposite, anchor `method: 'POST', headers: { ..._runDupHeaders() }, body: JSON.stringify(body)` -> `method: 'POST', body: JSON.stringify(body)` and update the comment above it to say the bypass rides on each subrequest, per object.\nUnverified: that Salesforce honours Sforce-Duplicate-Rule-Header in a composite subrequest's httpHeaders needs one live dry run (an Alert rule on an unticked object should refuse, on a ticked object should pass). Existing tests that call sftkProbeCompositeBody with two arguments keep passing; any test pinning the sfProbeComposite headers line needs the new text."
+      },
+      {
+       "finding": "55",
+       "status": "fixed",
+       "summary": "A failed read of the flow, validation-rule or duplicate-rule list is now tried again every time the Deploy page is drawn, which is what Rescan / Refresh state does. The three guards use one new pure function, sftkDepPauseNeedsRead(state, key): read when never read, when the target or objects changed, or when the last read left an error; a read still in flight is not started twice. The error line clears as soon as a read succeeds.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/studio-deploy.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/pausepanel-1108.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-deploy-reread.test.mjs",
+       "note": "While the target stays unreachable, each redraw of the page retries the three reads (they fail fast when there is no session). The duplicate-rule error line still does not mention Rescan; its text was not changed."
+      }
+     ],
+     "testsRun": "npx vitest run on the 3 new files (qa11-deploy-fresh-pause, qa11-deploy-probe-dupes, qa11-deploy-reread) plus the 4 updated ones (pausepanel-1108, dryrun-view-1104, refusal-source-1113, vrpause-1003) and flowpause-0929: 8 files, 77 passed, 0 failed. npx eslint on studio-deploy.js and all 7 test files I touched: clean (exit 0). Whole suite once (npx vitest run), taken while other agents were mid-edit: 281 files passed, 13 failed (23 tests failed, 5608 passed, 5 skipped). None of the failures pin studio-deploy.js text I changed; they were in audit-0912, failed-read-not-empty-1111, fc-field-delete-0922, field-delete-history-1002, history-archive, regress-1115-engine, regress-1115-reconcile-compare-undo, regress-1115-refix, sweep-static-resources-1117, tool-history-window-1118, value-edit-1027 (field-cleaner.js, background.js, studio-reconcile.js, sftk-history.js, sftk-sweep.js, studio-valueedit.js lanes), plus flowpause-0929 and vrpause-1003, which failed on other agents' in-flight edits to studio-reconcile.js and sftk-vrpause.js (sftkVrPauseMaybeOff not yet in the test's extract list) and passed on the rerun a minute later. I left all of them; the full suite was not rerun after that."
+    }
+   ]
+  },
+  {
+   "lane": "reconcile",
+   "files": [
+    "studio-reconcile.js",
+    "sftk-vrpause.js"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "42",
+      "45",
+      "46",
+      "62",
+      "63"
+     ],
+     "results": [
+      {
+       "finding": "42",
+       "status": "needs-other-file",
+       "summary": "runReconcile now refuses to start while a run is on this page: the check is its first statement (before the confirmation, before beforeWrites, before the log is touched) and is repeated right before the log is taken over, with no await between that check and setting window._sftkRunActive. The refused run shows a warning toast and switches, wipes and removes nothing. Both the Deploy and Dry run buttons are now locked for the run and released by a fresh lookup (new _recRunBtnsLock) instead of a captured node that a repaint leaves stale.",
+       "filesChanged": [
+        "studio-reconcile.js",
+        "test/qa11-reconcile-onerun.test.mjs",
+        "test/flowpause-0929.test.mjs",
+        "test/regress-1115-refix.test.mjs"
+       ],
+       "testFile": "test/qa11-reconcile-onerun.test.mjs",
+       "note": "The scenario itself is closed in studio-reconcile.js (a second run or dry run can no longer reach the pause step or the live run's controls). What remains is cosmetic and lives in studio-deploy.js, function _depSummary (currently lines 2646-2647): a tick or repaint still re-enables both buttons mid-run, so the user can press them and only then get the refusal toast. Anchor 1: `if (run) { run.disabled = !s.total; run.textContent =` -> replace `run.disabled = !s.total;` with `run.disabled = !s.total || !!window._sftkRunActive;`. Anchor 2: `const probe = eid('dsRecProbeBtn'); if (probe) probe.disabled = !s.total;` -> `const probe = eid('dsRecProbeBtn'); if (probe) probe.disabled = !s.total || !!window._sftkRunActive;`. Two existing tests pinned the old `if (runBtn) runBtn.disabled = false;` text and were updated to `_recRunBtnsLock(false);`."
+      },
+      {
+       "finding": "45",
+       "status": "fixed",
+       "summary": "The dry run's rule lookup (_recRulesFor) now also reads NamespacePrefix and names a packaged rule ns__Rule through a new pure sftkRecRuleRows, the same name the pause panel (sftkVrPauseSelect) gives it, so a ticked packaged rule matches and the card says a real Deploy would not be refused by it. The stale words \", or from a package\" were removed from the not-paused message.",
+       "filesChanged": [
+        "studio-reconcile.js",
+        "test/qa11-reconcile-pkgrule.test.mjs"
+       ],
+       "testFile": "test/qa11-reconcile-pkgrule.test.mjs",
+       "note": "The test feeds the same Tooling rows to both sides and asserts identical names, then runs sftkRefusalSource -> sftkProbePauseNote end to end. Not checked against a live org (no org access in this task); NamespacePrefix on Tooling ValidationRule is already selected by sftk-vrpause.js's own query."
+      },
+      {
+       "finding": "46",
+       "status": "fixed",
+       "summary": "The overwrite (update) path now builds each payload through a new pure sftkRecOwnerThenTyped: owner mapping first, typed values after, the insert engine's order, so an owner picked in the record editor is the one written. The fallback / kept-owner warning counters only count a record when the mapping's outcome is what is actually written, so a picked owner no longer produces a false 'reassigned to the fallback user' warning.",
+       "filesChanged": [
+        "studio-reconcile.js",
+        "test/qa11-reconcile-ownerpick.test.mjs",
+        "test/value-edit-1027.test.mjs",
+        "test/regress-1115-engine.test.mjs",
+        "test/regress-1115-reconcile-compare-undo.test.mjs"
+       ],
+       "testFile": "test/qa11-reconcile-ownerpick.test.mjs",
+       "note": "test/value-edit-1027.test.mjs pinned the old `const vr = sftkValOvApply(p, ...)` line in two places and was updated to the new call text; the two regress-1115 harnesses that run reconcileOverwrite for real now also slice sftkRecOwnerThenTyped into scope."
+      },
+      {
+       "finding": "62",
+       "status": "fixed",
+       "summary": "A new pure sftkVrPauseMaybeOff names the rules that may be off without being confirmed off: accepted by Salesforce and either the re-read failed or the rule was missing from it (only a re-read showing the rule ON clears it). sftkVrPauseOff now remembers those rules in sftk_vr_run_paused, gives them History undo steps (the note names them as not confirmed), and tries to switch them back on at once; any it cannot confirm back on stay remembered, so the Deploy page shows the 'still OFF' card with its button. The run still does not start.",
+       "filesChanged": [
+        "sftk-vrpause.js",
+        "test/qa11-reconcile-maybeoff.test.mjs",
+        "test/vrpause-1003.test.mjs"
+       ],
+       "testFile": "test/qa11-reconcile-maybeoff.test.mjs",
+       "note": "The History 'none' text changed from 'no validation rule was confirmed switched off' to 'no validation rule was switched off' (it is now only used when nothing was touched); no test pinned the old text. test/vrpause-1003.test.mjs only needed the new function added to its extraction list. The existing case 'accepted, but the org still reads it ON' behaves as before (not remembered)."
+      },
+      {
+       "finding": "63",
+       "status": "fixed",
+       "summary": "The same sftkVrPauseMaybeOff also covers a packaged rule whose switch-off deploy was submitted but not followed to its end (refusal text matching 'was submitted' / 'may still finish' from sfMetadataDeploy). Such a rule is remembered with its package and full name, gets a History undo step, and is switched back on right away by a second deploy that Salesforce queues behind the first; if that cannot be followed either, it stays remembered for the leftover card. A plain refusal, or the same text on a non-packaged rule, is not remembered.",
+       "filesChanged": [
+        "sftk-vrpause.js",
+        "test/qa11-reconcile-maybeoff.test.mjs"
+       ],
+       "testFile": "test/qa11-reconcile-maybeoff.test.mjs",
+       "note": "Detection relies on the wording of sfMetadataDeploy's stillRunning message in background.js (outside my lane). If another agent rewords that message so it no longer contains 'was submitted' or 'may still finish', the regex in sftkVrPauseMaybeOff (sftk-vrpause.js) must follow. Not run against a live org."
+      }
+     ],
+     "testsRun": "npx vitest run on the 4 new files (test/qa11-reconcile-onerun, -pkgrule, -ownerpick, -maybeoff: 28 tests) plus every updated test (vrpause-1003, flowpause-0929, regress-1115-refix, regress-1115-engine, regress-1115-reconcile-compare-undo, value-edit-1027) and neighbours (release-qa-1114-vrpause, vrpause-packaged-1119, refusal-source-1113): all pass. npx eslint on studio-reconcile.js, sftk-vrpause.js and all new/updated test files: clean (exit 0). Whole suite (npx vitest run): 5719 passed, 7 failed, 5 skipped in 304 files. The 7 failures are all in tests pinning files outside my lane and were left: test/audit-0912 (background.js), test/flow-filter-1105 (flow-permissions.js), test/pii-list-example-1115 x2 (bldPiiPersonaCols not defined, studio-builder.js), test/release-qa-1114-org-compare (sftkOcIncompleteMsg not defined, studio-compare.js), test/sweep-four-kinds-1118 (sftk-sweep.js), test/value-edit-owner-1108 (studio-valueedit.js). None reference studio-reconcile.js or sftk-vrpause.js."
+    }
+   ]
+  },
+  {
+   "lane": "builder",
+   "files": [
+    "studio-builder.js",
+    "studio-valueedit.js",
+    "studio-compare.js"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "9",
+      "8"
+     ],
+     "results": [
+      {
+       "finding": "9",
+       "status": "fixed",
+       "summary": "The 🎭 chooser no longer destroys the Fields & mapping window. When opened from a mapping row, the window's live DOM nodes are lifted out of #dsModalBox just before the chooser takes the box, and put back (same nodes, listeners, typed values, list scroll) when the chooser closes by Apply, Remove, Cancel, ✕ or Escape, via an observer on the #dsModal overlay. First-time per-target exceptions survive because the mapping window's closure and its Apply button are never thrown away.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/studio-builder.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/pii-ui.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-builder-pii-park.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-builder-pii-park.test.mjs",
+       "note": "No change needed in studio-builder-modals.js: the proposed line-14 change (attach overrides up front) is unnecessary because the window is preserved rather than reopened. New functions in studio-builder.js: bldPiiParkModal, bldPiiUnparkModal, bldPiiParkedNext (pure decision), bldPiiReturnToMapping; bldOpenPiiFieldModal gained a third argument opts ({ returnToMapping: true }). If another window takes the box while the mapping window is set aside, the copy is dropped, not reopened over it. Not exercised in a real browser (no jsdom in the project, harness not allowed for this step): the park/restore functions are tested against a minimal fake element and the wiring is pinned by text. test/pii-ui.test.mjs line 266 updated to the new call text."
+      },
+      {
+       "finding": "8",
+       "status": "fixed",
+       "summary": "The record editor's Suggest PII button now resolves the profile it was opened with to the stored deployment (by id, from _profiles) before calling _depPiiSuggest, so the policy and salt land on the saved deployment and the child-rooted view can never be stored in its place. New pure helper sftkVeSavedProfile(p, profiles) in studio-valueedit.js.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/studio-valueedit.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/deploy-pii-1108.test.mjs",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-builder-pii-view.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-builder-pii-view.test.mjs",
+       "note": "The scenario is closed from the caller side. Optional defence in depth in a file outside my lane (not required for this fix): studio-deploy.js, in _depPiiSuggest, anchor `if (idx >= 0 && _profiles[idx] !== p) _profiles[idx] = p;` -> replace with `if (idx >= 0 && _profiles[idx] !== p) { _profiles[idx].piiPolicy = p.piiPolicy; if (p.piiSalt) _profiles[idx].piiSalt = p.piiSalt; }` so no caller can ever swap a view into storage. test/deploy-pii-1108.test.mjs line 44 updated to the new call text."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-builder-pii-park.test.mjs test/qa11-builder-pii-view.test.mjs test/pii-ui.test.mjs test/deploy-pii-1108.test.mjs -> 4 files, 59 passed, 0 failed. npx eslint on studio-builder.js, studio-valueedit.js and the four test files -> clean. Full suite (npx vitest run): 270 files passed, 15 failed (25 tests failed, 5552 passed, 5 skipped). The failing files pin sources outside my lane that other agents are editing (background.js, studio-reconcile.js, studio-deploy.js, field-cleaner.js, sftk-history.js, sftk-sweep.js, sftk-vrpause.js and others) and were left: audit-0912, dryrun-view-1104, failed-read-not-empty-1111, fc-field-delete-0922, field-delete-history-1002, flowpause-0929, pausepanel-1108, refusal-source-1113, regress-1115-engine, regress-1115-reconcile-compare-undo (sftkRecOwnerThenTyped not defined, studio-reconcile.js), regress-1115-refix, sweep-1108, sweep-static-resources-1117, tool-history-window-1118, value-edit-1027 (its failing assertion pins studio-reconcile.js text, not studio-valueedit.js), vrpause-1003. I checked the three most likely to touch my files (value-edit-1027, regress-1115-reconcile-compare-undo, audit-0912) and they fail on other files; the remaining twelve I judged by name and the diff output only."
+    },
+    {
+     "ids": [
+      "48",
+      "47",
+      "64",
+      "54"
+     ],
+     "results": [
+      {
+       "finding": "48",
+       "status": "fixed",
+       "summary": "Every read behind a PII example (the Masked fields list, the chooser, the Suggest sampler) now takes its persona columns from one helper, bldPiiPersonaCols, which includes Company, so a Lead's e-mail domain follows its Company as in the run. bldPiiPreviewPairs seeds the persona with sftkPiiPersonaSeed(r, '') exactly as background.js sftkPiiMaskRows does, so a record with no name and no Account gets the run's fallback domain.",
+       "filesChanged": [
+        "studio-builder.js",
+        "test/qa11-builder-pii-domain.test.mjs",
+        "test/pii-list-example-1115.test.mjs"
+       ],
+       "testFile": "test/qa11-builder-pii-domain.test.mjs",
+       "note": "The new test runs the engine's own sftkPiiMaskRows (sliced from background.js) against the Builder example and requires the same value for Leads, a Contact and nameless records. test/pii-list-example-1115.test.mjs only needed the new helper added to its extraction list; its assertions are unchanged. Not changed, outside the finding: the example still passes a domain context for rules that are not persona-bound, where the engine passes none."
+      },
+      {
+       "finding": "47",
+       "status": "fixed",
+       "summary": "New pure sftkVeOwnerLine builds the whole Owner-row sentence and is told the mode and the target's current owner. An insert still reads 'Will belong to ...'. A Changed record now says what the update does: 'Stays with <target owner> in <target>' when owners are not copied; otherwise the active user of the same name, else the fallback user, else the owner stays. A queue owner or an unread source owner is named as such. The running user is never named on an update.",
+       "filesChanged": [
+        "studio-valueedit.js",
+        "test/qa11-builder-owner-update.test.mjs",
+        "test/value-edit-owner-1108.test.mjs"
+       ],
+       "testFile": "test/qa11-builder-owner-update.test.mjs",
+       "note": "The test also runs studio-reconcile.js sftkRecOwnerThenTyped to pin that the sentences match the update engine. test/value-edit-owner-1108.test.mjs pinned the old call line and now pins the new one. Not changed, other file: the update matches owners by Owner.Name among active users only, while the insert engine uses the deployment's Email+Name matching. The new update text says 'named' / 'with the same name', so it is truthful about that; aligning the engines would be a change in studio-reconcile.js (around 'SELECT Id, Name FROM User WHERE IsActive = true AND Name IN')."
+      },
+      {
+       "finding": "64",
+       "status": "fixed",
+       "summary": "The running user's name is now cached per org together with the session id it was read with. Another sid on the same org URL (Login As, or a new sign-in) causes a fresh read. If that read returns no name, the old entry is dropped, so the previous user's name is never shown.",
+       "filesChanged": [
+        "studio-valueedit.js",
+        "test/qa11-builder-running-user.test.mjs"
+       ],
+       "testFile": "test/qa11-builder-running-user.test.mjs",
+       "note": "Stored as org URL -> { sid, name } rather than the proposed 'orgUrl|sid' key, so the map holds one entry per org and does not accumulate old session ids."
+      },
+      {
+       "finding": "54",
+       "status": "fixed",
+       "summary": "_ocCompareOneObject now refuses a read flagged incomplete on either side, after the real-error checks and before counting. It returns an error row such as 'source: the read came back incomplete (Salesforce says 5 record(s), 3 arrived) — not compared. Run the compare again.' through the new pure sftkOcIncompleteMsg, so no missing, only-in-target or percentage figures are produced from a partial read.",
+       "filesChanged": [
+        "studio-compare.js",
+        "test/qa11-builder-compare-incomplete.test.mjs",
+        "test/release-qa-1114-org-compare.test.mjs"
+       ],
+       "testFile": "test/qa11-builder-compare-incomplete.test.mjs",
+       "note": "test/release-qa-1114-org-compare.test.mjs slices functions by name into one scope; the new helper was added to that list, assertions unchanged. I did not trace the banner, History entry or CSV code; they consume the same results store, where this object now lands as an error row."
+      }
+     ],
+     "testsRun": "npx vitest run on the 4 new files plus test/value-edit-owner-1108, value-edit-owner-will-1119, release-qa-1114-org-compare and pii-list-example-1115: all pass. npx eslint on studio-builder.js, studio-valueedit.js, studio-compare.js and the 4 new test files: exit 0, no messages. Whole suite (npx vitest run): 310 files passed, 1 failed; 5808 tests passed, 1 failed, 5 skipped. The one failure left is test/sweep-four-kinds-1118.test.mjs > 'a prompt template that merges the field > ⇄ points the merge field at the new field; ✂ is refused with the reason; another input's field is left'. It is a sweep test and none of my three source files is a sweep file (sftk-sweep.js is being edited by another agent); I did not open it to confirm the cause."
+    }
+   ]
+  },
+  {
+   "lane": "popup",
+   "files": [
+    "popup.js",
+    "flow-permissions.js",
+    "user-copy.js"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "12",
+      "53"
+     ],
+     "results": [
+      {
+       "finding": "12",
+       "status": "fixed",
+       "summary": "The SESSION_EXPIRED retry in both wrappers (user-copy.js bg, flow-permissions.js sendBg) now goes through a pure guard (sftkUserCopyRetryOk / sftkFlowAccessRetryOk): the fresh session is taken and the call re-sent only when sftkOrgKey of the fresh org equals the tool's own org and the sid differs from the one that failed. Otherwise the caller gets SESSION_EXPIRED and _orgUrl/_sid are left untouched; if sftkOrgKey is missing the retry is refused.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/user-copy.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/flow-permissions.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-popup-session-org.test.mjs",
+       "note": "Not in my lane, same unguarded pattern still present (seen by grep, not fixed): field-cleaner.js line ~888 and license-manager.js line ~770 both have `if (fresh?.sid && fresh?.orgUrl) {` after `GET_SF_SESSION`. Suggested replacement in each: `if (fresh?.sid && fresh?.orgUrl && typeof sftkOrgKey === 'function' && sftkOrgKey(fresh.orgUrl) && sftkOrgKey(fresh.orgUrl) === sftkOrgKey(_orgUrl) && fresh.sid !== (msg.sid !== undefined ? msg.sid : _sid)) {` (check that sftk-org-identity.js is loaded before them in the page). popup.js needed no change."
+      },
+      {
+       "finding": "53",
+       "status": "fixed",
+       "summary": "Flow Access now reads NamespacePrefix from both FlowDefinitionView and FlowDefinition and joins by full name (ns__Name) in a new pure function sftkFlowAccessJoin, so a packaged flow and an own flow of the same name get two rows with two Ids; a row's DeveloperName is the full name. A flow with no definition row, or whose definition is already taken by another row, is left out, and the count is now shown in the note under the list (sftkFlowAccessNote) with what to do, not only in the debug log.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/flow-permissions.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-popup-flow-namespace.test.mjs",
+       "note": "Not checked against an org (forbidden here): that FlowDefinition (Tooling) accepts NamespacePrefix is taken from dependency-map.js line ~2835, which already runs the identical query. Whether Salesforce accepts a SetupEntityAccess insert for a packaged flow's definition is still unknown; such a flow is now listed under its own Id and a refusal would surface through the existing insert error path. The new on-screen sentence for unresolved flows is new user-facing text."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-popup-session-org.test.mjs test/qa11-popup-flow-namespace.test.mjs test/flow-access-kinds-1110.test.mjs -> 3 files, 28 passed, 0 failed. npx eslint flow-permissions.js user-copy.js and the two new test files -> exit 0, no messages. Whole suite (npx vitest run), last run: 271 files passed / 14 failed, 5553 tests passed / 24 failed / 5 skipped (the counts moved between two runs as other agents edited). None of the failing files reads flow-permissions.js or user-copy.js; they pin studio-deploy.js, field-cleaner.js and the reconcile engine, which are other agents' work in flight, left as is: dryrun-view-1104, failed-read-not-empty-1111, fc-field-delete-0922, field-delete-history-1002, flowpause-0929, pausepanel-1108, refusal-source-1113, regress-1115-engine, regress-1115-reconcile-compare-undo, regress-1115-refix, sweep-1108, sweep-static-resources-1117, value-edit-1027, vrpause-1003. All existing tests that read my two files (flow-access-kinds-1110, release-qa-1114-flow-access, release-qa-1114-user-copy, regress-1115-live, regress-1115-perms-pages, copyperms-*, etc.) pass; no existing test needed updating."
+    },
+    {
+     "ids": [
+      "51",
+      "52",
+      "57"
+     ],
+     "results": [
+      {
+       "finding": "51",
+       "status": "fixed",
+       "summary": "The Versions list now builds one row per flow instead of one per label: label groups that share an API name and a DefinitionId are merged (all versions, named after the newest version), and the search matches any label the flow carries. Any row the tree order still leaves out (two different flows sharing an API name) is added back as its own plain row, so no version can be without a checkbox.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/popup.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/flow-filter-1105.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-popup-versions-label.test.mjs",
+       "note": "New pure functions in popup.js: sftkFlowListRows(groups) and sftkFlowListWholeBlocks(blocks, rows); renderFlowList uses both. test/flow-filter-1105.test.mjs pinned the old `const hit = label => ...` line and was updated to the new one. Not needed for this fix, but sftkFlowTreeOrder in sftk-flowbulk.js still places an API name once (`if (placed.has(r.apiName)) return; placed.add(r.apiName);`); the Switches / API versions panels that call it were not checked for the same collision. Left as is: a tree card's 'tick the whole tree' still matches allFlows by ApiName (popup.js, `names.has(f.ApiName)`), so in the rare case of two different flows sharing an API name it also ticks the other flow's row - visibly now, since that row is drawn."
+      },
+      {
+       "finding": "52",
+       "status": "fixed",
+       "summary": "deactivateFlow now records the flow in track.deactivated as soon as Salesforce accepts the switch-off, before any re-read verdict can throw, so the Activity undo gets its 'switch back ON' step. The re-read is tried three times; if it never answers, the check throws inside the write helper (Activity says 'could not be re-read', not 'still shows an active version') and the run goes on to the delete, whose refusal on a still-active flow triggers the existing switch-back rescue.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/popup.js"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-popup-delete-reread.test.mjs",
+       "note": "Behaviour test runs the real deactivateFlow and deleteOneFlow from popup.js against the real sftkWriteVerified from sftk-write.js with a scripted background. A re-read that answers 'still active' still throws the old message, and the accepted switch-off is now on record in that case too (the undo step is harmless if the flow is on). Not run against an org."
+      },
+      {
+       "finding": "57",
+       "status": "fixed",
+       "summary": "A delete whose re-read never answered is still counted as deleted, but the result now names it: performDeletion passes track.unverified to showResultToast, and both the success toast and the failure dialog print an escaped line saying Salesforce accepted the delete but the org could not be re-read, with what to do. The verify now throws on a failed re-read, so Activity records 'could not be re-read ... treat this as unverified' instead of 'the org still shows the old state'.",
+       "filesChanged": [
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/popup.js",
+        "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/flow-delete-live-0923.test.mjs"
+       ],
+       "testFile": "C:/Users/yonas/OneDrive/Desktop/Saleforce Toolkit/test/qa11-popup-delete-reread.test.mjs",
+       "note": "New pure function sftkFlowDeleteUnverifiedLine(names) in popup.js builds the line (lists up to 8 names, then 'and N more'). The success toast stays 30 s instead of 12 s when the line is present. test/flow-delete-live-0923.test.mjs pinned `showResultToast(successes.length, errors);` and was updated to the three-argument call. The toast/dialog rendering itself is pinned by source text only; it was not viewed in the extension."
+      }
+     ],
+     "testsRun": "npx vitest run test/qa11-popup-versions-label.test.mjs test/qa11-popup-delete-reread.test.mjs test/flow-delete-live-0923.test.mjs -> 3 files, 32 tests, all pass (after correcting one regex in my own new test). npx eslint on popup.js, both new test files, test/flow-delete-live-0923.test.mjs and test/flow-filter-1105.test.mjs -> clean. Full suite, npx vitest run (final run) -> 306 files: 302 passed, 4 failed; 5755 tests: 5745 passed, 5 failed, 5 skipped. The first full run had one extra failure caused by my edit (test/flow-filter-1105.test.mjs pinned the old search line); I updated it and it passes. The 5 failures left are in tests whose names point at files outside my lane (not investigated further): test/pii-list-example-1115.test.mjs (2), test/release-qa-1114-org-compare.test.mjs (1), test/sweep-four-kinds-1118.test.mjs (1), test/value-edit-owner-1108.test.mjs (1). flow-permissions.js and user-copy.js were not changed by me."
+    }
+   ]
+  },
+  {
+   "lane": "stale",
+   "files": [
+    "CHANGELOG.md",
+    "scripts/dev/qa/batches.mjs",
+    "scripts/dev/video/sections.mjs",
+    "studio.css",
+    "styles.css"
+   ],
+   "chunks": [
+    {
+     "ids": [
+      "66",
+      "67",
+      "68",
+      "70",
+      "71",
+      "74",
+      "72",
+      "73",
+      "58",
+      "59"
+     ],
+     "results": [
+      {
+       "finding": "66",
+       "status": "fixed",
+       "summary": "Removed the Remove all / Replace all walk text from the 1.1.0 card: the Pause/Continue sentence on the X bullet, the Remove-all-can-be-paused bullet and the Remove-all-in-one-take bullet. The All at once bullet now says a new button on the list's header and that it takes the place of one dialog per item. The dead .fc-every-paused / .fc-walk-pos / .fc-scope-ask CSS was left alone.",
+       "filesChanged": [
+        "CHANGELOG.md"
+       ],
+       "testFile": "test/qa11-stale-changelog.test.mjs"
+      },
+      {
+       "finding": "67",
+       "status": "fixed",
+       "summary": "Cut the developer notes from the 1.1.0 card: every Live on npc / npc2 sentence with script paths, the packaged-fixture flow tree bullet, Found while building the packaged-object demo, and A colleague's first day. A test fails if org aliases, scripts/dev paths, .mjs names or SFTK_Pkg_ names come back.",
+       "filesChanged": [
+        "CHANGELOG.md"
+       ],
+       "testFile": "test/qa11-stale-changelog.test.mjs"
+      },
+      {
+       "finding": "68",
+       "status": "fixed",
+       "summary": "Removed or reworded each superseded sentence in the 1.1.0 card: the scope-switch sentence, the Everything at once / Act on everything / Replace all 25 · Remove all 15 lines, Undo in History or Restore points under the results (now Undo in Activity), the duplicate-rules-keep-delete-only sentence, the first-200 sentence and the packaged search layouts left to Setup sentence.",
+       "filesChanged": [
+        "CHANGELOG.md"
+       ],
+       "testFile": "test/qa11-stale-changelog.test.mjs"
+      },
+      {
+       "finding": "70",
+       "status": "fixed",
+       "summary": "The 1.1.0 heading date is now 2026-11-20, the date of the newest entry. A test checks it is not earlier than any entry date and is later than 1.0.0.",
+       "filesChanged": [
+        "CHANGELOG.md"
+       ],
+       "testFile": "test/qa11-stale-changelog.test.mjs"
+      },
+      {
+       "finding": "71",
+       "status": "fixed",
+       "summary": "Same three walk bullets as finding 66, fixed by the same edits. Line 21's contradictory A new first button next to Remove all is reworded and its closing sentence no longer names buttons that do not exist.",
+       "filesChanged": [
+        "CHANGELOG.md"
+       ],
+       "testFile": "test/qa11-stale-changelog.test.mjs"
+      },
+      {
+       "finding": "74",
+       "status": "fixed",
+       "summary": "Deleted the three-tabs pause panel bullet. Replaced the first-200 export sentence with Every updated record is kept. Dropped the packaged search layouts left to Setup sentence. Changed Undo in History to Undo in Activity. The History wording that refers to Data Studio's own History page was kept.",
+       "filesChanged": [
+        "CHANGELOG.md"
+       ],
+       "testFile": "test/qa11-stale-changelog.test.mjs"
+      },
+      {
+       "finding": "72",
+       "status": "needs-other-file",
+       "summary": "In scripts/dev/qa/batches.mjs, I replaced the fr-every-replace step with fc-plan-all-at-once, which runs scripts/dev/live/fc-plan.mjs. fc-plan.mjs throws on failed checks and writes nothing to the org by default. I added the same step to qa11 and dropped the second fixture restore, since nothing writes any more. I did not run the harness. The field-replace.mjs fix is outside my lane.",
+       "filesChanged": [
+        "scripts/dev/qa/batches.mjs"
+       ],
+       "testFile": "test/qa11-stale-batches.test.mjs",
+       "note": "scripts/dev/live/field-replace.mjs, STEP === 'every' branch. Anchor: `if (!(await h.eval(`!!document.querySelector(${JSON.stringify(sel)})`))) { h.log('no such button'); return; }`. Replace the log-and-return with `throw new Error('no such button: ' + sel)`. In the 'flowall' branch, replace `if (!lbl) return;` with `if (!lbl) throw new Error('no such button: ' + allSel);`. scripts/dev/live/fc-path-acts.mjs:75 also still selects the removed .fc-fix-all."
+      },
+      {
+       "finding": "73",
+       "status": "fixed",
+       "summary": "In the fields chapter of scripts/dev/video/sections.mjs I removed the dead .fc-fix-all and .fc-fix-every walks (steps 3-many, 5 and 6) and the #fcToolHist step. One step now throws if #fcFixEvery .fc-plan-btn is missing. Otherwise it clicks All at once, confirms the plan, waits for the report, narrates the actual report text, and says how many flows are still open instead of claiming everything is done. I also removed the dead .fc-fix-all[disabled] clause and changed the narration from History to Activity. I did not record the video.",
+       "filesChanged": [
+        "scripts/dev/video/sections.mjs"
+       ],
+       "testFile": "test/qa11-stale-batches.test.mjs"
+      },
+      {
+       "finding": "58",
+       "status": "fixed",
+       "summary": "In styles.css the plan chip counts, .fc-plan-link, the chosen way and its focus ring now use var(--brand) instead of the undefined --accent. I added dark rules: a chosen Delete uses #4a1b1f background with #ffb4b0 text (the same pair as .fc-badge-del), and a chosen Replace or Remove uses dark text. The contrast ratios are from the findings' hex arithmetic, not measured in a browser.",
+       "filesChanged": [
+        "styles.css"
+       ],
+       "testFile": "test/qa11-stale-accent.test.mjs"
+      },
+      {
+       "finding": "59",
+       "status": "fixed",
+       "summary": "In studio.css the PII suggestion window's folded summary, the object pick links and the selected-row tint now use var(--brand, #0176d3) instead of the undefined --accent.",
+       "filesChanged": [
+        "studio.css"
+       ],
+       "testFile": "test/qa11-stale-accent.test.mjs"
+      }
+     ],
+     "testsRun": "The three new files (qa11-stale-changelog, qa11-stale-batches, qa11-stale-accent) pass. The related existing tests (engine-note-1016, merge-first-1021, tick-every-1015, whatsnew-t10) also pass. eslint on batches.mjs, sections.mjs and the new tests reports nothing. The full suite has 27 failures in 15 files, none touching the CHANGELOG, CSS, batches or sections: audit-0912, failed-read-not-empty-1111, fc-field-delete-0922, field-delete-history-1002, flowpause-0929, history-archive, regress-1115-engine, regress-1115-reconcile-compare-undo, regress-1115-refix, sweep-static-resources-1117, tool-history-window-1118, value-edit-1027, vrpause-1003. They pin JS source other agents are editing, and I left them."
+    }
+   ]
+  }
+ ]
+}

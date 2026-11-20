@@ -22,15 +22,31 @@
 // (@salesforce/schema/Account.Field__c), in a formula or SOQL. One
 // case-insensitive word-boundary regex covers them all: the bare name with
 // no identifier character on either side.
-function sftkSweepForms(objApi, fieldApi) {
+// QA 1.1 (finding 30): a custom field has two more spellings the one name missed. A lookup or master-detail
+// Parent__c is written Parent__r wherever a path goes THROUGH it (SOQL, a formula, a merge field, an LWC
+// template), and a Contact field Level__c is Level__pc on Account when person accounts are on. Both are names
+// of this field, so they are searched too: `names` lists every spelling, `re` / `reG` match any of them, `pc`
+// matches the person-account one alone. `fieldType` (the field's data type, "Lookup(Account)" / "reference" /
+// "Text(80)") is optional: a type that is plainly no relationship drops the __r spelling; unknown keeps it.
+function sftkSweepForms(objApi, fieldApi, fieldType) {
   const f = String(fieldApi || '').trim();
+  const o = String(objApi || '').trim();
   const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const custom = /__c$/i.test(f);
+  const stem = f.replace(/__c$/i, '');
+  const ty = String(fieldType || '');
+  const rel = custom && (!ty || /lookup|master|reference|hierarchy/i.test(ty));
+  const pcName = custom && o.toLowerCase() === 'contact' ? stem + '__pc' : '';
+  const names = [f, ...(rel ? [stem + '__r'] : []), ...(pcName ? [pcName] : [])];
+  const any = `(?<![A-Za-z0-9_])(?:${names.map(esc).join('|')})(?![A-Za-z0-9_])`;
   return {
-    object: String(objApi || '').trim(),
+    object: o,
     field: f,
-    re: new RegExp(`(?<![A-Za-z0-9_])${esc(f)}(?![A-Za-z0-9_])`, 'i'),
-    reG: new RegExp(`(?<![A-Za-z0-9_])${esc(f)}(?![A-Za-z0-9_])`, 'gi'),
-    qualified: new RegExp(`(?<![A-Za-z0-9_])${esc(String(objApi || ''))}\\.${esc(f)}(?![A-Za-z0-9_])`, 'i'),
+    names,
+    re: new RegExp(any, 'i'),
+    reG: new RegExp(any, 'gi'),
+    pc: pcName ? new RegExp(`(?<![A-Za-z0-9_])${esc(pcName)}(?![A-Za-z0-9_])`, 'i') : null,
+    qualified: new RegExp(`(?<![A-Za-z0-9_])${esc(o)}\\.${esc(f)}(?![A-Za-z0-9_])`, 'i'),
   };
 }
 
@@ -91,6 +107,14 @@ function sftkSweepTextResource(rec) {
   const n = Number(rec.BodyLength);
   if (!(n > 0) || n > 1000000) return false;   // 1 MB: a bigger text file is a bundled library, not the org's own script
   return /^(text\/|application\/(javascript|x-javascript|json|xml|ecmascript)\b)|\+(json|xml)\b/i.test(String(rec.ContentType || '').trim());
+}
+// QA 1.1 (finding 34): the line under a finished scan that says what it did NOT read. It named static resources
+// (the org's own text ones are read since 2026-11-17) and left out five skipped kinds that can hold a field's
+// name. One sentence, kept beside the skip list it describes. PURE.
+function sftkSweepNotRead() {
+  return 'Kinds not read: binary static resources (images, fonts, zips, or a file over 1 MB), documents, content and site assets, '
+    + 'settings, certificates, territory assignment rules, Experience audiences, CRM Analytics dataflows and recipes, '
+    + 'muting permission sets, and anything installed from a managed package.';
 }
 function _sftkSweepFolderKinds() { return { Report: 'ReportFolder', Dashboard: 'DashboardFolder', EmailTemplate: 'EmailFolder', Document: 'DocumentFolder' }; }
 
@@ -277,8 +301,8 @@ function sftkSweepKindTable() {
   Scontrol:               { label: 'S-controls', sev: 'mention', why: 'the s-control’s code names the field as text — it breaks where it reads it' },
   ExperienceBundle:       { label: 'Experience Cloud pages', sev: 'mention', why: 'the page or component names the field as text — it breaks where it reads it' },
   CustomLabel:            { label: 'Custom Labels', sev: 'mention', why: 'a label’s text holds the field’s name — nothing stops the delete' },
-  DocText:                { label: 'Named only in descriptive text', sev: 'mention', why: 'the name stands only in a description, help text, label or message of the component — plain text Salesforce does not read as a reference; nothing stops the delete and nothing breaks, the text just goes stale' },
-  SameNameOtherObject:    { label: 'Same name, another object', sev: 'mention', why: 'a component of another object holds a field of the same API name by its bare name, or code that names this object nowhere in its file (a file-level test) holds it — most likely that object’s own field, not this one; it does not join the list, and Salesforce’s own delete check decides' },
+  DocText:                { label: 'Named only in descriptive text', sev: 'mention', why: 'the name stands only in a description, help text, label or message of the component, or in a comment of its code — plain text Salesforce does not read as a reference; nothing stops the delete and nothing breaks, the text just goes stale' },
+  SameNameOtherObject:    { label: 'Same name, another object', sev: 'mention', why: 'a component of another object holds a field of the same API name by its bare name or under that object’s own name, or code that names this object nowhere in its file (a file-level test) holds it — most likely that object’s own field, not this one; it does not join the list, and Salesforce’s own delete check decides' },
   Other:                  { label: 'Other components', sev: 'mention', why: 'the component names the field — the delete goes through; what reads it may break' },
   };
 }
@@ -361,7 +385,9 @@ function sftkSweepKind(path, text, hit, forms) {
     if (dir === 'objects') { const sec = secAt(); if (sec && sec.tag === 'validationRules') tags.errorMessage = 'an error message'; }
     const from = Number(hit.offset) || 0;
     let to = s.indexOf('\n', from); if (to < 0) to = s.length;
-    const re = new RegExp(`(?<![A-Za-z0-9_])${String(forms.field).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'gi');
+    // every spelling the sweep searched for (Field__c, Field__r, Field__pc), where the forms carry them
+    const re = forms.reG ? new RegExp(forms.reG.source, 'gi')
+      : new RegExp(`(?<![A-Za-z0-9_])${String(forms.field).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'gi');
     const line = s.slice(from, to);
     let phrase = null;
     for (let m; (m = re.exec(line));) {
@@ -512,7 +538,12 @@ function sftkSweepRun(files, forms) {
     return typeof sftkMdIsOwnObj === 'function' && sftkMdIsOwnObj(o, objName);   // the removers' rule, where the page has it
   };
   const objWord = objName ? new RegExp(`(?<![A-Za-z0-9_])(?:${[objName, ...(ALIAS[objLc] || [])].map(escRx).join('|')})(?![A-Za-z0-9_])`, 'i') : null;
-  const fieldG = forms && forms.field ? new RegExp(`(?<![A-Za-z0-9_])${escRx(forms.field)}(?![A-Za-z0-9_])`, 'gi') : null;
+  // QA 1.1 (finding 30): a mention is any spelling the sweep searched for — a line that only holds Field__r had
+  // no mention at all and was demoted as another object's field
+  const fieldG = forms && forms.field ? (forms.reG ? new RegExp(forms.reG.source, 'gi') : new RegExp(`(?<![A-Za-z0-9_])${escRx(forms.field)}(?![A-Za-z0-9_])`, 'gi')) : null;
+  // Field__pc is a Contact custom field seen from Account, and nothing else is spelled that way: a line that
+  // holds it names OUR field, whichever file it is in and whether or not the code says "Contact"
+  const pcOurs = line => !!(forms && forms.pc && forms.pc.test(String(line || '')));
   // every mention of the field on a line, with the dotted path written before it ("Owner", "Account.Parent", "")
   const mentions = line => {
     const out = [];
@@ -621,6 +652,90 @@ function sftkSweepRun(files, forms) {
     }
   };
   const CODE = new Set(['ApexClass', 'ApexTrigger', 'ApexPage', 'ApexComponent', 'LightningComponentBundle']);
+  // QA 1.1 (finding 32): a field named only inside a comment of Apex or of an LWC's JavaScript was an Apex / LWC
+  // blocker and joined the list with cut and replace; Salesforce compiles no comment and accepts the delete.
+  // blankComments() is the file with every comment character turned into a space — same length, same line
+  // breaks — so a hit's offset still points at its line and a /* … */ opened lines earlier is seen. Strings are
+  // copied whole as in noComments(); a JavaScript template literal may run over lines. Visualforce is left out on
+  // purpose: a page evaluates {!…} wherever it stands, an HTML or script comment included.
+  const COMMENTED = new Set(['ApexClass', 'ApexTrigger', 'LightningComponentBundle']);
+  const blankComments = t => {
+    const s = String(t || '');
+    const blank = x => x.replace(/[^\n]/g, ' ');
+    let out = '', i = 0;
+    while (i < s.length) {
+      const ch = s[i];
+      if (ch === "'" || ch === '"') {
+        let j = i + 1;
+        while (j < s.length && s[j] !== ch && s[j] !== '\n') j += s[j] === '\\' ? 2 : 1;
+        if (j < s.length && s[j] === ch) { out += s.slice(i, j + 1); i = j + 1; continue; }
+        out += ch; i++; continue;
+      }
+      if (ch === '`') {
+        let j = i + 1;
+        while (j < s.length && s[j] !== '`') j += s[j] === '\\' ? 2 : 1;
+        j = Math.min(j, s.length - 1);
+        out += s.slice(i, j + 1); i = j + 1; continue;
+      }
+      if (ch === '/' && s[i + 1] === '*') { const e = s.indexOf('*/', i + 2); const to = e < 0 ? s.length : e + 2; out += blank(s.slice(i, to)); i = to; continue; }
+      if (ch === '/' && s[i + 1] === '/' && s[i - 1] !== ':') { const e = s.indexOf('\n', i); const to = e < 0 ? s.length : e; out += blank(s.slice(i, to)); i = to; continue; }
+      out += ch; i++;
+    }
+    return out;
+  };
+  // true = the hit's line names the field only inside a comment
+  const commentOnly = (blanked, h) => {
+    if (!fieldG) return false;
+    const from = Number(h.offset) || 0;
+    let to = blanked.indexOf('\n', from); if (to < 0) to = blanked.length;
+    fieldG.lastIndex = 0;
+    const live = fieldG.test(blanked.slice(from, to));
+    fieldG.lastIndex = 0;
+    return !live;
+  };
+  const DT = sftkSweepKindTable().DocText;
+  // QA 1.1 (finding 31): a file whose PATH names no object still belongs to one. A Contact record-triggered flow's
+  // $Record.Status__c and a Contact record page's Record.Status__c came back as blockers of Account.Status__c
+  // ("must go or change before the delete - by hand"); Contact's layout, a report column Contact.Status__c and a
+  // permission line Contact.Status__c as its mentions. fileObj() → the OTHER object whose own field the line names,
+  // or null (keep the kind). Narrow on purpose — only the spellings that can mean nothing else:
+  //   flow        the <start> object, and every mention written $Record.X / $Record__Prior.X (a Get Records on our
+  //               object inside a Contact flow names the field bare, beside <object>Account</object>: kept)
+  //   page        <sobjectType>, and every mention written Record.X
+  //   layout      the object before the first "-" of the file name, a bare field item (not a related-list column,
+  //               which is another object's field)
+  //   report, permission set, profile    every mention written Object.X with one plain object name before it
+  const fileObj = (p, text, h, k) => {
+    const seg = String(p || '').replace(/^unpackaged\//, '').split('/');
+    const ms = mentions(h.text);
+    if (!ms.length) return null;
+    const foreign = o => (o && !isOwn(o) ? o : null);
+    const tagIn = (s, tag) => (new RegExp('<' + tag + '>\\s*([^<\\s]+)\\s*</' + tag + '>', 'i').exec(String(s || '')) || [])[1] || '';
+    switch (seg[0]) {
+      case 'flows': {
+        const st = /<start>[\s\S]*?<\/start>/i.exec(String(text || ''));
+        const fo = foreign(st && tagIn(st[0], 'object'));
+        return fo && ms.every(x => /^\$Record(?:__Prior)?$/i.test(x.path)) ? fo : null;
+      }
+      case 'flexipages': {
+        const fo = foreign(tagIn(text, 'sobjectType'));
+        return fo && ms.every(x => /^Record$/i.test(x.path)) ? fo : null;
+      }
+      case 'layouts': {
+        if (k.type !== 'Layout') return null;
+        const base = seg[seg.length - 1] || '';
+        const o = base.includes('-') ? base.slice(0, base.indexOf('-')) : '';
+        const fo = foreign({ caseclose: 'Case', caseinteraction: 'Case' }[o.toLowerCase()] || o);   // Case's two special layouts hold Case's fields
+        return fo && ms.every(x => !x.path) ? fo : null;
+      }
+      case 'reports': case 'permissionsets': case 'profiles': {
+        // "FK_$Contact.X" in a report is Contact's too; a relationship name (…__r) or a longer path is not told here
+        const objs = ms.map(x => (/^[A-Za-z0-9_$]+$/.test(x.path) && !/__r$/i.test(x.path) ? foreign(x.path.replace(/^.*\$/, '')) : null));
+        return objs.every(Boolean) ? objs[0] : null;
+      }
+      default: return null;
+    }
+  };
   const ON = sftkSweepKindTable().SameNameOtherObject;
   const other = (k, note) => ({ ...k, type: 'SameNameOtherObject', label: ON.label, sev: ON.sev, why: ON.why, section: note });
   // 2026-11-15 (second review): a cross-object field update writes the PARENT's field by its bare name, with
@@ -642,16 +757,21 @@ function sftkSweepRun(files, forms) {
     let any = false;
     const owner = ownerOf(path, text);
     const codeNamesObj = !objWord || objWord.test(noComments(text));
+    let blanked = null;   // the file with its comments blanked, made on the first code hit
+    let fo = null;
     for (const h of lines) {
       let k = sftkSweepKind(path, text, h, forms);
       if (!k) continue;
       const qualified = !!(forms && forms.qualified && forms.qualified.test(h.text));
       if (k.type === 'DocText') { /* 2026-11-15: plain text — already 👀 with its own true reason, not "another object's field" */ }
+      else if (COMMENTED.has(k.type) && commentOnly(blanked == null ? (blanked = blankComments(text)) : blanked, h)) k = { ...k, type: 'DocText', label: DT.label, sev: DT.sev, why: DT.why, section: 'named only in a code comment' };
+      else if (pcOurs(h.text)) { /* the person-account spelling is ours for certain: it keeps its kind */ }
       else if (objLc && owner && !isOwn(owner) && !qualified && !pathMayBeOurs(h.text, owner)
         && !(k.type === 'WorkflowFieldUpdate' && fieldUpdateMayBeOurs(text, h, owner))) k = other(k, otherNote(h.text, owner));
       else if (objLc && !owner && CODE.has(k.type) && !codeNamesObj && !codeMayBeOurs(h.text)
         // the hit line itself naming the object ("for (Account a : …) a.Region__c") is never "the code never names it"
         && !objWord.test(noComments(h.text))) k = other(k, `the code never names ${objName}`);
+      else if (objLc && !owner && !qualified && (fo = fileObj(path, text, h, k))) k = other(k, `${fo}’s own field of this name`);
       any = true;
       hits.push({ path: k.path, file: k.file || null, line: h.line, text: h.text, type: k.type, label: k.label, sev: k.sev, why: k.why, component: k.component, section: k.section });
     }
@@ -675,12 +795,18 @@ function sftkSweepCompare(byType, scanItems) {
   const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
   // the scan's names per kind, normalised; a scan name may carry a suffix ("SFTK_Live_Cmt.Ref (Field__c)")
   // or a label instead of the API name, so a match is: equal, or one the start of the other (≥ 6 chars)
+  // QA 1.1 (finding 29): the "start of the other" allowance also matched two DIFFERENT components — the scan's
+  // AccountServiceTest hid the sweep's AccountService, Check_Status_Closed hid Check_Status — and a blocker the
+  // scan had missed was shown nowhere. A scan name that is a plain API name (identifier characters and dots only)
+  // now matches by equality alone; the allowance is kept for what it was written for, a name with a suffix or a
+  // label, and there the shorter name must end where a word of the longer one ends.
   const names = {};
   for (const x of (scanItems || [])) {
     const ty = alias[x.type] || x.type;
-    (names[ty] = names[ty] || []).push(norm(x.name));
+    (names[ty] = names[ty] || []).push({ n: norm(x.name), loose: !/^[A-Za-z0-9_.]+$/.test(String(x.name || '')) });
   }
-  const matches = (ty, k) => (names[ty] || []).some(n => n === k || (k.length >= 6 && n.startsWith(k)) || (n.length >= 6 && k.startsWith(n)));
+  const starts = (long, short) => short.length >= 6 && long.startsWith(short) && long[short.length] === '_';
+  const matches = (ty, k) => (names[ty] || []).some(({ n, loose }) => n === k || (loose && (starts(n, k) || starts(k, n))));
   let known = 0, fresh = 0;
   for (const [type, t] of Object.entries(byType || {})) {
     const ty = alias[type] || type;
@@ -698,7 +824,15 @@ function sftkSweepCompare(byType, scanItems) {
 // that names the field — the kind, 🔒/👀, the component, where (path, line), the text, and whether the everyday
 // scan had listed it / the list above took it in.
 function sftkSweepCsv(result, objApi, fieldApi) {
-  const cell = v => { const s = String(v == null ? '' : v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  // QA 1.1 (finding 11): the cells are org content (a line of a template, a label, Apex). A spreadsheet runs a
+  // cell that starts with = + - @ (or a tab / CR before one) as a formula: "=HYPERLINK(…)" from a template author
+  // became a live link, and an Apex line "+ ',Status__c FROM Account';" showed #NAME? instead of the code. Such a
+  // cell gets a leading apostrophe, which a spreadsheet reads as "this is text"; then the usual quoting.
+  const cell = v => {
+    let s = String(v == null ? '' : v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
   const rows = [['field', 'kind', 'severity', 'component', 'section', 'path', 'line', 'text', 'in the scan list', 'joined the list']];
   for (const [type, t] of Object.entries((result && result.byType) || {})) {
     for (const it of t.items) {
@@ -720,11 +854,15 @@ function sftkSweepJoinKind(type) {
   return ok.has(t) ? t : null;
 }
 // a code kind's Tooling id is found by name: the sobject and the name field
+// QA 1.1 (finding 36): Name / DeveloperName carry no namespace, so the org's own Utils and an installed package's
+// ns.Utils both matched and the caller took the first row — the joined row could carry the packaged class's id,
+// which nobody can read or edit. The sweep only reads the org's own components, so the row with no namespace is
+// the right one; when only a packaged one exists the lookup finds nothing and the hit stays in the sweep's box.
 function sftkSweepIdQuery(kind, component) {
   const q = s => String(s).replace(/'/g, "\\'");
   const name = String(component || '').includes('/') ? component.slice(component.lastIndexOf('/') + 1) : component;
-  if (kind === 'ApexClass' || kind === 'ApexTrigger' || kind === 'ApexPage' || kind === 'ApexComponent') return `SELECT Id FROM ${kind} WHERE Name = '${q(name)}'`;
-  if (kind === 'LightningComponentBundle') return `SELECT Id FROM LightningComponentBundle WHERE DeveloperName = '${q(name)}'`;
+  if (kind === 'ApexClass' || kind === 'ApexTrigger' || kind === 'ApexPage' || kind === 'ApexComponent') return `SELECT Id FROM ${kind} WHERE Name = '${q(name)}' AND NamespacePrefix = null`;
+  if (kind === 'LightningComponentBundle') return `SELECT Id FROM LightningComponentBundle WHERE DeveloperName = '${q(name)}' AND NamespacePrefix = null`;
   return null;
 }
 
@@ -765,4 +903,5 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkSweepEta = sftkSweepEta;
   globalThis.sftkSweepFmtMs = sftkSweepFmtMs;
   globalThis.sftkSweepKindTable = sftkSweepKindTable;
+  globalThis.sftkSweepNotRead = sftkSweepNotRead;
 }

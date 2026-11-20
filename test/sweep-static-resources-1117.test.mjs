@@ -49,7 +49,9 @@ describe('a Change Data Capture channel member that sends the field', () => {
     expect(Object.keys(r.byType)).toEqual(['PlatformEventChannelMember']);
   });
   it('the empty result of a scan still draws the text scan box', () => {
-    const empty = FC.slice(FC.indexOf('<div class="fc-clean-title">No dependencies found</div>'), FC.indexOf('    // Group\n    _groups = {};'));
+    const from = FC.indexOf('<div class="fc-clean-title">${esc(ev.title)}</div>');
+    expect(from).toBeGreaterThan(0);
+    const empty = FC.slice(from, FC.indexOf('    // Group\n    _groups = {};'));
     expect(empty).toContain('renderReportScan();');
     expect(empty).toContain('renderOrgSweep();');
   });

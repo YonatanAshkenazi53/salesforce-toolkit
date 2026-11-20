@@ -326,6 +326,55 @@ let _histFilter = { status: '', profileId: '' };
 // 📦 Archived runs the user loaded into the view this session (IndexedDB
 // tier — see sftk-archive.js). Cleared with the archive itself.
 let _archShown = [];
+// Paging state of that view (QA 1.1 #40, #41). The bound is the oldest startedAt READ from the archive so far, never
+// the hot list's: the cap evicts by position, so an old entry put back at the end of the hot list (an undone change)
+// sat below archived runs that are newer than it, and a bound taken from it skipped them all.
+// _archDup counts archive rows read but not shown because the hot list holds the same id (its newer copy wins).
+let _archBound = null, _archDup = 0;
+function _histArchReset() { _archShown = []; _archBound = null; _archDup = 0; }
+// One page read from the archive → what to add to the view, how many rows the hot list already holds, and the
+// bound for the next page. PURE.
+function _histArchTake(hot, shown, page, bound) {
+  const have = new Set([...(hot || []), ...(shown || [])].map(h => h && h.id));
+  const add = [];
+  let dup = 0, next = bound || null;
+  for (const e of (page || [])) {
+    if (!e) continue;
+    if (e.startedAt && (!next || e.startedAt < next)) next = e.startedAt;
+    if (have.has(e.id)) { dup++; continue; }
+    have.add(e.id); add.push({ ...e, _archived: true });
+  }
+  return { add, dup, bound: next };
+}
+// Everything for the full export: every hot entry, and the archived ones the hot list does not hold. An id in both
+// is an entry that was archived and then written again here (an undo recorded on it) — the hot copy is the current
+// one (QA 1.1 #41: the archived copy won, so the file said a change was not undone beside the entry of its undo). PURE.
+function _histExportAllEntries(arch, hot) {
+  const live = (hot || []).filter(Boolean);
+  const hotIds = new Set(live.map(h => h.id));
+  return [...(arch || []).filter(h => h && !hotIds.has(h.id)), ...live]
+    .sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
+}
+// ↩ Undo on a tool card loaded from the archive (QA 1.1 #39): the entry is not in the hot list, so the undo is
+// handed the entry itself — without the view's own _archived mark, which is not part of the record. → the entry to
+// hand in, or null when the hot list has it (or it is not a tool entry of the archive view). PURE.
+function _histArchHeld(hot, shown, id) {
+  if ((hot || []).some(h => h && h.id === id)) return null;
+  const r = (shown || []).find(x => x && x.id === id && x.kind === 'tool');
+  if (!r) return null;
+  const held = { ...r };
+  delete held._archived;
+  return held;
+}
+// After that undo: the card in the archive view shows the entry as it is now (its done mark). When the entry is in
+// the hot list by then, the archive view's copy goes, so the card is not drawn twice. Changes `shown` in place.
+function _histArchAfterUndo(hot, shown, entry) {
+  if (!entry || !Array.isArray(shown)) return;
+  const at = shown.findIndex(x => x && x.id === entry.id);
+  if (at < 0) return;
+  if ((hot || []).some(h => h && h.id === entry.id)) shown.splice(at, 1);
+  else shown[at] = { ...entry, _archived: true };
+}
 
 // A change made by a Toolkit tool is listed IN that tool, not here (user
 // 2026-10-05: "seeing field cleaner history on the data deployment history is
@@ -341,6 +390,13 @@ function _histKitNote(kit, total) {
       ? `<button class="ds-btn ds-btn-xs" data-hist-kit="${esc(t)}" title="Open ${esc(sftkHistoryTabLabel(t))} on its History">${esc(sftkHistoryTabLabel(t))} (${kit[t]})</button>`
       : `<span class="ds-chip" title="This build does not carry the tool">${esc(sftkHistoryTabLabel(t))} (${kit[t]})</span>`).join(' ')}
     <span class="ds-subtext">⬇ Export still includes them.</span></div>`;
+}
+// What 🗑 Clear All says before it runs: what goes, and that the Toolkit tools' changes are not part of it. PURE.
+function _histClearAllBody(kitTotal) {
+  const n = Number(kitTotal) || 0;
+  const stay = n ? `The ${n.toLocaleString('en-US')} change${n === 1 ? '' : 's'} made with Toolkit tools ${n === 1 ? 'stays, with its' : 'stay, each with its'} ↩ Undo` : 'Changes made with Toolkit tools stay, each with its ↩ Undo';
+  return `Deletes every deployment, rollback and Data Studio change listed here, the archived ones included, and the ↩ restore points kept for Roll back. Nothing in Salesforce is changed.
+    <div class="ds-subtext" style="margin-top:8px">${stay} — clear them in the tool's own Activity.</div>`;
 }
 function _histWireKitNote() {
   document.querySelectorAll('[data-hist-kit]').forEach(b => b.addEventListener('click', () =>
@@ -464,7 +520,8 @@ function _histProfileOptions(runs) {
 
 function renderHistory() {
   const split = (typeof sftkHistoryStudioSplit === 'function') ? sftkHistoryStudioSplit(_history) : { mine: _history, kit: {}, kitTotal: 0 };
-  const mineArch = _archShown.filter(r => typeof sftkHistoryToolTab !== 'function' || !sftkHistoryToolTab(r));
+  const hotIds = new Set(_history.map(h => h && h.id));   // an id the hot list holds is drawn once, from there
+  const mineArch = _archShown.filter(r => r && !hotIds.has(r.id) && (typeof sftkHistoryToolTab !== 'function' || !sftkHistoryToolTab(r)));
   if (!split.mine.length && !mineArch.length) {
     setMain(`
       ${dsViewHeader({ icon: 'scroll', title: 'History' })}
@@ -904,7 +961,7 @@ function renderHistory() {
       // The in-memory dependency map would otherwise keep serving the data we
       // just deleted from disk until the popup is reopened.
       try { window.DependencyMap?.clearCache?.(); } catch (_) {}
-      _archShown = [];
+      _histArchReset();
       await Promise.all([
         storageSaveHistory(),
         storageSaveProfiles(),
@@ -922,15 +979,21 @@ function renderHistory() {
     sftkDialog({
       title: `Clear History`,
       sev: 'red',
-      bodyHtml: `
-Delete all transfer history records?`,
+      bodyHtml: _histClearAllBody((typeof sftkHistoryStudioSplit === 'function') ? sftkHistoryStudioSplit(_history).kitTotal : 0),
       actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsConfirmClearHistory', label: `Clear All`, kind: 'danger' }],
     });
     eid('dsConfirmClearHistory')?.addEventListener('click', async () => {
       closeModal();
-      _history = [];
-      _archShown = [];
-      if (typeof sftkArchClear === 'function') await sftkArchClear();   // "all" includes the 📦 archive
+      // QA 1.1 #6: "all" is everything THIS page lists. A Toolkit tool's changes are not listed here and each
+      // carries its own ↩ Undo, so they stay — in the list and in the 📦 archive.
+      const keepKit = window.sftkHistoryStudioClearKeep, archDrop = window.sftkHistoryArchDrop;   // sftk-history.js
+      if (typeof keepKit !== 'function' || typeof archDrop !== 'function') {
+        showToast('History was not cleared: this page could not tell its own runs from the changes made with Toolkit tools. Reload Data Studio and try again.', 'error', 7000);
+        return;
+      }
+      _history = keepKit(_history);
+      _histArchReset();
+      await archDrop(e => !sftkHistoryToolTab(e));   // "all" includes this page's runs in the 📦 archive
       if (typeof sftkUndoStoreClear === 'function') await sftkUndoStoreClear();   // …and the ↩ restore points
       await sftkFcSweep({ all: true });                                            // …and every run's before/after list
       await storageSaveHistory();
@@ -991,8 +1054,12 @@ function _histToolCard(run) {
 // this only shows the sentence and repaints.
 window.undoTool = async function(id) {
   if (typeof sftkHistoryUndo !== 'function') return;
-  const r = await sftkHistoryUndo(id, {});
+  // QA 1.1 #39: a card loaded from the 📦 archive is not in the hot list — hand its entry in, or the undo answers
+  // "no longer in Activity" under an enabled button.
+  const held = _histArchHeld(_history, _archShown, id);
+  const r = await sftkHistoryUndo(id, held ? { entry: held } : {});
   if (r.cancelled) return;
+  if (held && r.entry) _histArchAfterUndo(_history, _archShown, r.entry);
   showToast(r.text, r.ok ? 'success' : 'warning', r.ok ? 6000 : 9000);
   if (typeof _currentView === 'undefined' || _currentView === 'history') renderHistory();
 };
@@ -1083,19 +1150,22 @@ async function _histFillArchBar() {
   try { total = await sftkArchCount(); } catch (_) { return; }
   if (!total) { bar.innerHTML = ''; bar.style.display = 'none'; return; }
   bar.style.display = '';
-  const remaining = Math.max(0, total - _archShown.length);
+  const remaining = Math.max(0, total - _archShown.length - _archDup);
   bar.innerHTML = `📦 <strong>${total}</strong> older run${total !== 1 ? 's' : ''} archived on this PC
     <span class="ds-subtext">(IndexedDB — outside the extension's ~10MB quota; runs land here instead of being deleted when they age past the 100-run cap)</span>${_archShown.length ? ` · ${_archShown.length} shown above` : ''}
     ${remaining ? `<button class="ds-btn ds-btn-xs" id="dsArchLoad" style="margin-left:8px">⬇ Show ${Math.min(50, remaining)} older</button>` : ''}
     <button class="ds-btn ds-btn-xs" id="dsArchExport" style="margin-left:4px"
       title="Download ONE JSON audit file containing the retained runs above plus every archived run">⬇ Export all (incl. archive)</button>`;
   eid('dsArchLoad')?.addEventListener('click', async () => {
-    const shown = [..._history, ..._archShown];
-    const oldest = shown.reduce((m, h) => (h.startedAt && (!m || h.startedAt < m)) ? h.startedAt : m, null);
     try {
-      const page = await sftkArchList(oldest, 50);
-      const have = new Set(shown.map(h => h.id));
-      _archShown.push(...page.filter(e => !have.has(e.id)).map(e => ({ ...e, _archived: true })));
+      // the first page is the newest of the archive; each next one continues below the oldest row read so far
+      const page = await sftkArchList(_archBound, 50);
+      const t = _histArchTake(_history, _archShown, page, _archBound);
+      _archShown.push(...t.add); _archDup += t.dup; _archBound = t.bound;
+      if (!page.length) {
+        _archDup = Math.max(_archDup, total - _archShown.length);   // nothing older is left to offer
+        showToast('The archive holds no older run than the ones shown.', 'info', 4000);
+      }
       renderHistory();
     } catch (e) {
       showToast(`Could not read the archive: ${e?.message || e}`, 'error', 5000);
@@ -1106,9 +1176,7 @@ async function _histFillArchBar() {
       // One cursor walk gets everything — no pagination seams to lose
       // same-second entries between pages.
       const arch = await sftkArchList(null, 1e9);
-      const archIds = new Set(arch.map(h => h.id));
-      const entries = [...arch, ..._history.filter(h => !archIds.has(h.id))]
-        .sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
+      const entries = _histExportAllEntries(arch, _history);
       const nowIso = new Date().toISOString();
       const stamp = sftkLocalStamp();   // the file is named with the local day and time
       const payload = histExportPayload(entries, _settings, { labels: _histLabelsMap(entries), nowIso, fullChanges: await sftkFcLoad(entries.map(h => h.id)) });

@@ -165,8 +165,25 @@ function _sftkVpBody(rule, active) {
   return { Metadata: { ...md, active: !!active } };
 }
 
+// PURE. After a switch-OFF pass: the rules that MAY be off although they were not confirmed off (QA 1.1, findings
+// 62 and 63). They were dropped — not remembered, not restored, no leftover card — while off for every user:
+//   · accepted by Salesforce, and the re-read failed or did not contain the rule (only a re-read that shows the
+//     rule ON proves it is not off);
+//   · a packaged rule whose deploy was submitted but not followed to its end (sfMetadataDeploy: "Deployment <id>
+//     was submitted but its result could not be read … It MAY STILL FINISH") — Salesforce may still switch it off.
+// results: sftkWriteVerifiedAll's, aligned with rules. → [rule]
+function sftkVrPauseMaybeOff(rules, results) {
+  return (rules || []).filter((r, k) => {
+    const x = (results || [])[k];
+    if (!x || x.ok) return false;
+    if (x.accepted) return !(x.verified && x.detail && x.detail.isOn === true);
+    return !!r.pkg && /was submitted|may still finish/i.test(String(x.text || ''));
+  });
+}
+
 // One switch pass: active = wantOn for each rule, then ONE re-read of all of
-// them. → { done: [rule], failed: [text] }.
+// them. → { done: [rule], failed: [text], maybe: [rule] } — maybe (a switch-OFF pass only): not confirmed off, yet
+// possibly off (sftkVrPauseMaybeOff).
 async function _sftkVpSwitch(sess, rules, wantOn, journal, send) {
   const bg = typeof send === 'function' ? send : sendBg;
   // confirmed-by: runReconcile's confirmation (the ⏸ step is listed in it) or the Deploy page's ▶ Switch back on dialog
@@ -188,13 +205,14 @@ async function _sftkVpSwitch(sess, rules, wantOn, journal, send) {
       const on = new Map((q.records || []).map(x => [String(x.Id).slice(0, 15), !!x.Active]));
       return rules.map(r => {
         const isOn = on.get(String(r.id).slice(0, 15));
-        return { ok: isOn === wantOn, text: isOn === wantOn
+        return { ok: isOn === wantOn, detail: { isOn }, text: isOn === wantOn
           ? `${r.name} (${r.object}): switched ${wantOn ? 'back ON' : 'OFF'} — verified by re-reading the org`
           : `${r.name} (${r.object}): accepted, but the org still reads it ${isOn === undefined ? 'unknown' : isOn ? 'ON' : 'OFF'}` };
       });
     },
   });
-  return { done: rules.filter((r, k) => batch.results[k] && batch.results[k].ok), failed: batch.results.filter(r => !r.ok).map(r => r.text) };
+  return { done: rules.filter((r, k) => batch.results[k] && batch.results[k].ok), failed: batch.results.filter(r => !r.ok).map(r => r.text),
+    maybe: wantOn ? [] : sftkVrPauseMaybeOff(rules, batch.results) };
 }
 
 // ⏸ Switch the rules off for a run. All must be confirmed off, or the ones that
@@ -202,24 +220,30 @@ async function _sftkVpSwitch(sess, rules, wantOn, journal, send) {
 async function sftkVrPauseOff(sess, rules, send) {
   const orgKey = sftkOrgKey(sess.orgUrl);
   const journal = sftkHistoryBegin({ tool: 'Deploy', title: `⏸ ${rules.length} validation rule(s) paused for a deployment — ${orgLabel(sess.orgUrl)}`, orgUrl: sess.orgUrl });
-  let r = { done: [], failed: [] };
+  let r = { done: [], failed: [], maybe: [] };
+  // every rule that is off or MAY be off: remembered, given an undo step, and switched back on if the run cannot start
+  let touched = [];
   try {
     r = await _sftkVpSwitch(sess, rules, false, journal, send);
+    touched = [...r.done, ...(r.maybe || [])];
     // remembered BEFORE the run writes — a closed tab must not lose them
-    if (r.done.length) await _sftkVpMemory(m => { for (const x of r.done) m[x.id] = { name: x.name, object: x.object, at: new Date().toISOString(), ...(x.pkg ? { pkg: x.pkg, fullName: x.fullName } : {}) }; return m; }, orgKey);
+    if (touched.length) await _sftkVpMemory(m => { for (const x of touched) m[x.id] = { name: x.name, object: x.object, at: new Date().toISOString(), ...(x.pkg ? { pkg: x.pkg, fullName: x.fullName } : {}) }; return m; }, orgKey);
   } finally {
     await sftkHistoryEnd(journal, {
-      undo: r.done.length ? { steps: r.done.map(x => ({
+      undo: touched.length ? { steps: touched.map(x => ({
         describe: `${x.name} (${x.object}): switch back ON`,
         // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
         msg: _sftkVpWriteMsg(x, true),
         verify: { query: `SELECT Active FROM ValidationRule WHERE Id = ${_sftkVpLit(x.id)}`, tooling: true, pick: 'records.0', field: 'Active', equals: true,
           text: { ok: `${x.name}: back ON — verified by re-reading the org`, bad: `${x.name}: accepted, but the org still reads it OFF` } },
-      })), note: 'the run switches them back on by itself when it ends — use this only if that did not happen' } : { none: 'no validation rule was confirmed switched off' },
+      })), note: (r.maybe || []).length
+        ? `the run switches them back on by itself when it ends — use this only if that did not happen. Not confirmed off, but possibly off: ${r.maybe.map(x => x.name).join(', ')}`
+        : 'the run switches them back on by itself when it ends — use this only if that did not happen' } : { none: 'no validation rule was switched off' },
     });
   }
   if (r.failed.length) {
-    const back = r.done.length ? await sftkVrPauseOn(sess, r.done, send) : { done: [], failed: [] };
+    // a rule that could not be switched back on here stays remembered: the Deploy page lists it as still OFF, with the button
+    const back = touched.length ? await sftkVrPauseOn(sess, touched, send) : { done: [], failed: [] };
     return { ok: false, off: [], failed: r.failed, restored: back.done, restoreFailed: back.failed };
   }
   return { ok: true, off: r.done, failed: [] };
@@ -268,4 +292,5 @@ if (typeof window !== 'undefined') {
   window.sftkVrPauseOn = sftkVrPauseOn;
   window.sftkVrPausedLeftovers = sftkVrPausedLeftovers;
   window.sftkVrPausePkgFiles = sftkVrPausePkgFiles;
+  window.sftkVrPauseMaybeOff = sftkVrPauseMaybeOff;
 }

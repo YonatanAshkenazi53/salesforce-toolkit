@@ -1312,6 +1312,43 @@ function groupFlows() {
   }
 }
 
+// The rows of the Versions list: ONE row per flow, with every version of it. A flow whose label was edited in a
+// later version sits in two label groups with one API name (QA 1.1 finding 51: the tree order places an API name
+// once, so the older label's versions — the ones a cleaner is there to delete — had no row and no checkbox).
+// Groups that share an API name AND a definition are one flow: one row, named as its newest version is named.
+// Two different flows that only happen to share an API name (a packaged and an own flow, or labels that fall back
+// to the same name) stay two rows.
+//   groups: { MasterLabel: [flow version…] } → [{ apiName, label, labels: [every label of it], versions }]
+function sftkFlowListRows(groups) {
+  const byKey = new Map();
+  for (const label of Object.keys(groups || {}).sort((a, b) => a.localeCompare(b))) {
+    for (const f of (groups[label] || [])) {
+      const apiName = f.ApiName || label;
+      const key = f.DefinitionId ? `${apiName}\n${f.DefinitionId}` : `${apiName}\n\n${label}`;
+      let row = byKey.get(key);
+      if (!row) byKey.set(key, row = { apiName, label, labels: [], versions: [] });
+      if (!row.labels.includes(label)) row.labels.push(label);
+      row.versions.push(f);
+    }
+  }
+  const rows = [...byKey.values()];
+  for (const row of rows) {
+    if (row.labels.length < 2) continue;
+    row.versions.sort((a, b) => (Number(a.VersionNumber) || 0) - (Number(b.VersionNumber) || 0));
+    row.label = row.versions[row.versions.length - 1].MasterLabel || row.label;
+  }
+  return rows.sort((a, b) => a.label.localeCompare(b.label));
+}
+// Every row is drawn: a row the tree order left out (it places an API name once) gets a block of its own.
+function sftkFlowListWholeBlocks(blocks, rows) {
+  const out = [...(blocks || [])], drawn = new Set();
+  for (const b of out) for (const e of b.rows) drawn.add(e.row);
+  for (const r of (rows || [])) {
+    if (!drawn.has(r)) out.push({ rootApi: r.apiName, rows: [{ row: r, depth: 0, parent: null, rootApi: r.apiName }], names: new Set([r.apiName]) });
+  }
+  return out;
+}
+
 // ============================================================
 // Render Flow List
 // ============================================================
@@ -1398,18 +1435,19 @@ function renderFlowList() {
   // more like the other pages"): the flows the dependency map knows to call each other sit in one bordered card —
   // the root, its callees nested with a twig per level, "tick the whole tree" in the header. The cards keep the
   // list's alphabetical order (by the root); a shared subflow nests under its triggered caller first.
-  const hit = label => !search || sftkFlowFilterHit(search, sftkFlowFilterKey(label, (flowGroups[label][0] || {}).ApiName));   // label or API name (2026-11-05)
+  // label or API name (2026-11-05) — any label the flow's versions carry (QA 1.1 finding 51)
+  const hit = row => !search || row.labels.some(label => sftkFlowFilterHit(search, sftkFlowFilterKey(label, row.apiName)));
   const trigMap = (typeof DependencyMap.getDefinitionTriggerMap === 'function' && DependencyMap.getDefinitionTriggerMap()) || {};
-  const rows = sortedLabels.map(label => ({ apiName: (flowGroups[label][0] || {}).ApiName || label, label, versions: flowGroups[label] }));
+  const rows = sftkFlowListRows(flowGroups);
   const calls = (depMap && typeof sftkFlowCallsOf === 'function') ? sftkFlowCallsOf(depMap) : {};
   const rank = r => (trigMap[r.apiName] ? 0 : (r.versions[0] && r.versions[0].ProcessType === 'Flow') ? 1 : 2);
-  const blocks = (typeof sftkFlowTreeBlocks === 'function' && typeof sftkFlowTreeOrder === 'function')
-    ? sftkFlowTreeBlocks(sftkFlowTreeOrder(rows, calls, rank)) : rows.map(r => ({ rootApi: r.apiName, rows: [{ row: r, depth: 0 }], names: new Set([r.apiName]) }));
+  const blocks = sftkFlowListWholeBlocks((typeof sftkFlowTreeBlocks === 'function' && typeof sftkFlowTreeOrder === 'function')
+    ? sftkFlowTreeBlocks(sftkFlowTreeOrder(rows, calls, rank)) : [], rows);
   blocks.sort((a, b) => a.rows[0].row.label.localeCompare(b.rows[0].row.label));
 
   for (const bk of blocks) {
     // a tree shows whole when any of its flows matches the search — the tree is the unit
-    const shown = bk.rows.filter(e => hit(e.row.label));
+    const shown = bk.rows.filter(e => hit(e.row));
     if (!shown.length) continue;
     if (bk.rows.length === 1) {
       visibleCount++;
@@ -2859,16 +2897,24 @@ async function deactivateFlow(flow, journal, track) {
     verify: async () => {
       const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true,
         query: `SELECT Id FROM Flow WHERE DefinitionId = '${defId}' AND Status = 'Active'` });
-      if (!q || q.error) return { ok: false, text: null };
-      return { ok: !(q.records && q.records.length), text: null };
+      // A re-read that FAILED is not "the org still shows an active version" (QA 1.1 finding 52): two more tries,
+      // then the check throws, so the write is recorded as accepted and not re-read — never as a verdict nobody read.
+      let q2 = q;
+      for (let t = 0; t < 2 && (!q2 || q2.error); t++) { await wait(1200); q2 = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true, query: `SELECT Id FROM Flow WHERE DefinitionId = '${defId}' AND Status = 'Active'` }); }
+      if (!q2 || q2.error) throw new Error(String((q2 && q2.error) || 'no answer'));
+      return { ok: !(q2.records && q2.records.length), text: null };
     },
   });
   if (!wr.accepted) throw new Error(`Deactivation failed for "${flow.MasterLabel}": ${(wr.raw && wr.raw.error) || 'refused'}`);
-  if (!wr.ok) throw new Error(`Deactivation failed for "${flow.MasterLabel}": accepted but the org still shows an active version on re-read`);
-  // History: this flow is now OFF where it was ON — track it so
-  // performDeletion's undo can reactivate it if it never ends up deleted
-  // and is never switched back on below.
+  // History: Salesforce ACCEPTED the switch-off, so from here the flow counts as OFF where it was ON — tracked
+  // before anything below can throw, so performDeletion's undo can switch it back on if it never ends up deleted
+  // and is never switched back on by deleteOneFlow's rescue. (It used to be tracked after the re-read verdict: a
+  // failed re-read left the flow off with no switch-back and no undo step.) Switching on a flow that is on is harmless.
   if (track) track.deactivated.set(flow.Id, flow);
+  // Accepted but not re-read: go on to the delete. If the flow is in fact still active Salesforce refuses that
+  // delete, and deleteOneFlow's rescue switches the flow back on and says so.
+  if (!wr.verified) return;
+  if (!wr.ok) throw new Error(`Deactivation failed for "${flow.MasterLabel}": accepted but the org still shows an active version on re-read`);
 }
 
 async function deleteOneFlow(flow, done, total, journal, track) {
@@ -2890,14 +2936,15 @@ async function deleteOneFlow(flow, done, total, journal, track) {
         // flow) a switch-back-on of the deleted version was attempted. Two more tries, then: deleted, not re-read.
         let q2 = q;
         for (let t = 0; t < 2 && (!q2 || q2.error); t++) { await wait(1200); q2 = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true, query: `SELECT Id FROM Flow WHERE Id = '${flow.Id}'` }); }
-        if (!q2 || q2.error) { rereadFailed = String((q2 && q2.error) || 'no answer'); return { ok: false, text: null }; }
+        // Thrown, not returned as a verdict (QA 1.1 finding 57): Activity then says "could not be re-read", not "still shows the old state".
+        if (!q2 || q2.error) { rereadFailed = String((q2 && q2.error) || 'no answer'); throw new Error(rereadFailed); }
         return { ok: !(q2.records && q2.records.length), text: null };
       },
     });
     if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
     if (!wr.ok && rereadFailed) {
       if (track) { track.deleted.add(flow.Id); (track.unverified || (track.unverified = [])).push(`${flow.MasterLabel} v${flow.VersionNumber}`); }
-      return;   // deleted (Salesforce accepted it); the re-read could not confirm
+      return;   // deleted (Salesforce accepted it); the re-read could not confirm — the result says so (sftkFlowDeleteUnverifiedLine)
     }
     if (!wr.ok) throw new Error('deleted, but the org still shows this flow version on re-read');
     // History: a deleted flow version is gone for good — no undo can bring
@@ -3121,7 +3168,7 @@ async function performDeletion(toDelete, toDeactivate) {
   renderFlowList();
   updateActionBar();
   updateSelectionSummary();
-  showResultToast(successes.length, errors);
+  showResultToast(successes.length, errors, track.unverified || []);
 }
 
 // ============================================================
@@ -3158,7 +3205,17 @@ function updateProgressBar(done, total, itemLabel) {
 // ============================================================
 // Result Toast
 // ============================================================
-function showResultToast(successCount, errors) {
+// The versions Salesforce accepted the delete of while the re-read never answered (QA 1.1 finding 57: they were
+// counted as plain successes, and nothing said the org was not re-read for them). '' when there are none.
+function sftkFlowDeleteUnverifiedLine(names) {
+  const list = (names || []).filter(Boolean);
+  if (!list.length) return '';
+  const shown = list.slice(0, 8).join(', ') + (list.length > 8 ? ` and ${list.length - 8} more` : '');
+  return `Salesforce accepted the delete of ${shown}, but the org could not be re-read to confirm ${list.length === 1 ? 'it' : 'them'}. Refresh the list, or check Flow Builder, to see ${list.length === 1 ? 'it is' : 'they are'} gone.`;
+}
+
+function showResultToast(successCount, errors, unverified) {
+  const notReread = sftkFlowDeleteUnverifiedLine(unverified);
   // Show errors in a modal so they can't be missed
   if (errors.length > 0) {
     const errorList = errors.map(e => `<li style="margin-bottom:6px">${escHtml(e.msg)}</li>`).join('');
@@ -3169,6 +3226,7 @@ function showResultToast(successCount, errors) {
       bodyHtml: `
         <p style="margin-bottom:8px">The following could not be deleted:</p>
         <ul class="modal-list" style="font-size:11px;word-break:break-word">${errorList}</ul>
+        ${notReread ? `<p style="margin-top:8px">⚠ ${escHtml(notReread)}</p>` : ''}
       `,
       actions: [{ id: 'modalCancel', label: `Close`, kind: 'secondary' }],
     });
@@ -3183,13 +3241,14 @@ function showResultToast(successCount, errors) {
   // C4: the undo path travels WITH the success message — backed-up flows can
   // come back via Restore mode; everything else is gone for good.
   toast.innerHTML = `<div class="toast-success">✅ ${successCount} flow version${successCount !== 1 ? 's' : ''} deleted successfully.
+    ${notReread ? `<span class="toast-undo-hint">⚠ ${escHtml(notReread)}</span>` : ''}
     <span class="toast-undo-hint">↩ Backed-up flows can be restored via <a href="#" id="toastRestoreLink">Restore mode</a>.</span></div>`;
   list.insertBefore(toast, list.firstChild);
   toast.querySelector('#toastRestoreLink')?.addEventListener('click', e => {
     e.preventDefault();
     if (typeof switchMode === 'function') switchMode('restore');
   });
-  setTimeout(() => toast.remove(), 12000);
+  setTimeout(() => toast.remove(), notReread ? 30000 : 12000);   // the longer line needs the time to be read
 }
 
 // ============================================================

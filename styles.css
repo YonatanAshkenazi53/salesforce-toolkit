@@ -7505,7 +7505,7 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-plan-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 .fc-plan-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--subtext); }
 .fc-plan-chip b { font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
-.fc-plan-chip[data-kind="replace"] b, .fc-plan-chip[data-kind="remove"] b { color: var(--accent, #0b5cab); }
+.fc-plan-chip[data-kind="replace"] b, .fc-plan-chip[data-kind="remove"] b { color: var(--brand); }
 .fc-plan-chip[data-kind="delete"] { border-color: var(--danger); }
 .fc-plan-chip[data-kind="delete"] b { color: var(--danger); }
 .fc-plan-list { max-height: 50vh; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
@@ -7515,7 +7515,7 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-plan-sec-t i { font-style: normal; font-weight: 600; color: var(--subtext); margin-left: 2px; }
 .fc-plan-sec-sub { flex: 1 1 auto; min-width: 0; color: var(--subtext); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fc-plan-bulk { display: inline-flex; gap: 12px; white-space: nowrap; }
-.fc-plan-link { border: 0; background: none; padding: 0; font: inherit; font-size: 11.5px; color: var(--accent, #0b5cab); cursor: pointer; }
+.fc-plan-link { border: 0; background: none; padding: 0; font: inherit; font-size: 11.5px; color: var(--brand); cursor: pointer; }
 .fc-plan-link:hover { text-decoration: underline; }
 .fc-plan-link[data-bulk="delete"] { color: var(--danger); }
 .fc-plan-row { display: flex; align-items: center; gap: 14px; padding: 7px 14px; border-bottom: 1px solid var(--border); }
@@ -7529,9 +7529,12 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-plan-way { border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--subtext); font: inherit; font-size: 12px; padding: 5px 11px; cursor: pointer; white-space: nowrap; }
 .fc-plan-way:first-child { border-left: 0; }
 .fc-plan-way:hover { color: var(--text); background: rgba(127,127,127,.10); }
-.fc-plan-way:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: -2px; }
-.fc-plan-way.on { color: #fff; background: var(--accent, #0b5cab); font-weight: 600; }
+.fc-plan-way:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.fc-plan-way.on { color: #fff; background: var(--brand); font-weight: 600; }
 .fc-plan-way.on[data-kind="delete"] { background: var(--danger); }
+/* dark: --brand is the light blue and --danger the light red, so white text on them is about 3:1 — dark text / the badge pair instead */
+body.sftk-dark .fc-plan-way.on:not([data-kind="delete"]):not([data-kind="leave"]) { color: #0b1220; }
+body.sftk-dark .fc-plan-way.on[data-kind="delete"] { background: #4a1b1f; color: #ffb4b0; }
 .fc-plan-way.on[data-kind="leave"] { background: rgba(127,127,127,.22); color: var(--text); font-weight: 500; }
 .fc-plan-prog { font-size: 12px; color: var(--text); max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fc-plan-rep { padding: 4px 18px 6px; font-size: 13px; }

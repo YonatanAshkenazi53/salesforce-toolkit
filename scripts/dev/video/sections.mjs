@@ -310,7 +310,7 @@ export const SECTIONS = [
     await rec.say('Old versions can be backed up to a zip file, deleted in bulk, and restored from that backup later.', 5000);
     if (await c.has('.flow-whole-btn')) {
       await rec.point('.flow-whole-btn', 900);
-      await rec.say('Or a whole flow at once. Before anything is deleted, a restore point is kept in History: Undo brings the flow back, the version that was active, active again.', 8000);
+      await rec.say('Or a whole flow at once. Before anything is deleted, a restore point is kept in Activity: Undo brings the flow back, the version that was active, active again.', 8000);
     }
     if (await c.has('.flow-int-chip')) {
       await rec.point('.flow-int-chip', 900);
@@ -392,7 +392,7 @@ export const SECTIONS = [
     await rec.fast(() => h.waitFor("/switched (OFF|ON)|❌|stale/.test(document.querySelector('#depFbOut')?.innerText || '')", 600000, 1000));
     await rec.scrollTo('#depFbOut', 'center');
     await rec.say('Each flow is switched off and then read back from the org. The active versions are remembered, so switching on restores exactly those.', 6500);
-    await undoInTool(c, 'The change is now in this tool’s History. Undo writes the earlier state back: here, the three flows on again.');
+    await undoInTool(c, 'The change is now in Activity, under this tool. Undo writes the earlier state back: here, the three flows on again.');
     // read the list again: the three flows must be ON
     await h.eval(`(() => { window.__sftkOldCb = document.querySelector('.dep-fb-cb'); document.querySelector('#depFbReload')?.click(); return true; })()`);
     await rec.fast(async () => { await h.waitFor("document.querySelectorAll('.dep-fb-cb').length > 0 && document.querySelector('.dep-fb-cb') !== window.__sftkOldCb", 300000, 1000); await h.sleep(1200); });
@@ -424,7 +424,7 @@ export const SECTIONS = [
     await rec.fast(() => h.waitFor("/refused the package|changed across/.test(document.querySelector('#depAvLog')?.innerText || '')", 600000, 1500));
     await rec.scrollTo('#depAvLog', 'center');
     await rec.say('Done: the new version is the active one.', 4500);
-    await undoInTool(c, 'This too is in the tool’s History. Undo makes the previous version the active one again.');
+    await undoInTool(c, 'This too is in Activity, under this tool. Undo makes the previous version the active one again.');
   } },
 
   { id: 'debugger', title: 'Debugger', writes: true,
@@ -755,7 +755,7 @@ export const SECTIONS = [
     },
     run: async c => {
       const { h, rec } = c;
-      const settled = "!document.querySelector('#sftkConfirmGo') && !document.querySelector('.fc-fix-btn[disabled]') && !document.querySelector('.fc-fix-all[disabled]')";
+      const settled = "!document.querySelector('#sftkConfirmGo') && !document.querySelector('.fc-fix-btn[disabled]')";
       // off camera: eight fixture accounts get a value in the old field, so there is something to copy
       await rec.fast(async () => {
         const ids = (cliJson('npc', ['data', 'query', '-q', `"SELECT Id FROM Account WHERE Name LIKE 'SFTK PK Account%' ORDER BY Name LIMIT 8"`]).result.records || []).map(r => r.Id);
@@ -849,26 +849,6 @@ export const SECTIONS = [
         await rec.say(okLine ? `Done. The card says: ${okLine}` : 'Done. The card says which version runs now, and that the old versions are gone.');
       }
       h.log('flow group box after replace-one:', await h.eval(`(() => { const b = [...document.querySelectorAll('.fc-fix-allbox')].map(x => x.dataset.type + ':' + x.dataset.n + ' → ' + x.innerText.replace(/\\s+/g, ' ').slice(0, 100)); return b.join(' ‖ ') || '(none)'; })()`), '| pairs:', await h.eval(`[...document.querySelectorAll('.fc-fix-pair[data-type="Flow"]')].map(p => p.dataset.name).join(', ')`));
-      // 3. REPLACE on MANY flows: the group button walks the flows one by one; Cancel stops it
-      const allReplace = '.fc-fix-all[data-type="Flow"][data-swap="1"]';
-      if (await c.has(allReplace) && (await flowsLeft()) >= 3) {
-        await rec.scrollTo(allReplace, 'center');
-        await rec.say(`Now many at once. "Replace in all ${await flowsLeft()} flows" walks the flows one by one. Each still shows its own confirmation, and Cancel in any of them stops the walk.`);
-        await rec.click(allReplace, 600);
-        for (let i = 0; i < 2; i++) {
-          await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 400);
-          const title = await c.text('.sftk-cf-title', 120);
-          await confirmShared(c, { caption: i === 0 ? `${title}. The same plan as before, for this flow. Confirm.` : `${title}. Confirm again.`, flowBackupOff: true });
-          await h.sleep(300);
-          await h.sleep(400);
-        }
-        await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 400);
-        await rec.say('The third one — Cancel. The walk stops here: two flows replaced, the rest untouched.');
-        await rec.click('#sftkConfirmCancel', 800);
-        await rec.fast(() => h.waitFor(settled, 600000, 1000));
-        await h.sleep(1000);
-      }
-      h.log('flow group box after walk-cancel:', await h.eval(`(() => { const b = [...document.querySelectorAll('.fc-fix-allbox')].map(x => x.dataset.type + ':' + x.dataset.n + ' → ' + x.innerText.replace(/\\s+/g, ' ').slice(0, 100)); return b.join(' ‖ ') || '(none)'; })()`), '| pairs:', await h.eval(`[...document.querySelectorAll('.fc-fix-pair[data-type="Flow"]')].map(p => p.dataset.name).join(', ')`));
       // 4. REMOVE on ONE flow, the "flow off" way
       const offBtn = `.fc-fix-pair[data-type="Flow"] .fc-fix-btn[data-swap="0"][data-way="off"]`;
       if (await c.has(offBtn)) {
@@ -879,64 +859,33 @@ export const SECTIONS = [
         await rec.scrollTo(`.fc-fix-pair[data-type="Flow"][data-name="${name}"]`, 'center').catch(() => {});
         await rec.say(`Done: ${name} is off, its versions gone.`);
       }
-      // 5. REMOVE on MANY flows, the "keep running" way
-      const allKeep = '.fc-fix-all[data-type="Flow"][data-swap="0"][data-way="keep"]';
-      h.log('flow group box now:', await h.eval(`(() => { const b = [...document.querySelectorAll('.fc-fix-allbox')].map(x => x.dataset.type + ':' + x.dataset.n + ' → ' + x.innerText.replace(/\\s+/g, ' ').slice(0, 120)); return b.join(' ‖ ') || '(none)'; })()`), '| flows open:', await flowsLeft());
-      if (await c.has(allKeep)) {
-        const n = await flowsLeft();
-        await rec.scrollTo(allKeep, 'center');
-        await rec.say(`Remove on the remaining ${n} flows, the gentle way: "flows keep running". Each gets a new active version with the field taken out, and goes on working.`);
-        await rec.click(allKeep, 600);
-        for (let i = 0; i < n + 1; i++) {
-          await rec.fast(() => h.waitFor(`!!document.querySelector('#sftkConfirmGo') || ${settled}`, 600000, 500));
-          if (!(await c.has('#sftkConfirmGo'))) break;
-          const title = await c.text('.sftk-cf-title', 120);
-          await confirmShared(c, { caption: i === 0 ? `${title}: a new version without the field, the flow stays on.` : `${title}.`, flowBackupOff: true });
-          await h.sleep(300);
-          await h.sleep(400);
-        }
-        await rec.fast(() => h.waitFor(settled, 600000, 1000));
-        await h.sleep(1200);
-        const left = await flowsLeft();
-        await rec.say(left
-          ? `${n - left} done, each card saying which version runs now. ${left === 1 ? 'One was' : `${left} were`} refused before any dialog: there the field sits in a place the automatic remove never rewrites, and the card says so. Replace is the way for ${left === 1 ? 'that one' : 'those'}.`
-          : 'All of them done, each card saying which version runs now.');
-      }
-      // 6. what is not a flow: the layout and the Lightning page, with "Everything at once"
-      const every = '.fc-fix-every[data-swap="1"]';
-      const walking = "[...document.querySelectorAll('#fcFixEvery button')].some(b => b.disabled)";
-      if (await c.has(every)) {
-        await rec.scrollTo('#fcFixEvery', 'center');
-        const left = await flowsLeft();
-        await rec.say(left ? `What is left: ${left} flow${left === 1 ? '' : 's'}, the page layout and the Lightning page. "Everything at once" walks them all the same way.` : 'What is left is not a flow: the page layout and the Lightning page. "Everything at once" walks them the same way.');
-        await rec.click(every, 600);
-        for (let i = 0; i < 12; i++) {
-          await rec.fast(() => h.waitFor(`!!document.querySelector('#sftkConfirmGo') || !${walking}`, 600000, 500));
-          if (!(await c.has('#sftkConfirmGo'))) break;
-          const title = await c.text('.sftk-cf-title', 120);
-          await confirmShared(c, { caption: /layout/i.test(title) ? 'The page layout: the new field takes the old field’s place. A restore point is saved first.' : /lightning|flexi|page/i.test(title) ? 'The Lightning page: its field component and its visibility rule move to the new field.' : `${title}.`, flowBackupOff: true });
-          await h.sleep(300);
-          await h.sleep(500);
-        }
-        await rec.fast(() => h.waitFor(`${settled} && !${walking}`, 600000, 1000));
-        await h.sleep(1200);
-      } else {
-        for (const sel of ['.fc-fix-btn[data-type="Layout"][data-swap="1"]', '.fc-fix-btn[data-type="FlexiPage"][data-swap="1"]']) {
-          if (await c.has(sel)) await fixOne(sel, /Layout/.test(sel) ? 'The page layout: the new field takes the old field’s place. A restore point is saved first.' : 'The Lightning page: its field component and its visibility rule move to the new field.');
-        }
-      }
+      // 5. ⚡ All at once (1.1): one plan screen for everything that is left — flows, the layout, the Lightning page —
+      // one confirmation, one run, one report. It replaced the walk of one dialog per item (Remove all / Replace all).
+      // A chapter that cannot find the button fails here instead of narrating work that never ran (QA 1.1, finding 73).
+      const planBtn = '#fcFixEvery .fc-plan-btn';
+      if (!(await c.has(planBtn))) throw new Error('fields chapter: the ⚡ All at once button is not on the page, so the bulk step cannot be recorded');
+      const leftBefore = await flowsLeft();
+      await rec.scrollTo('#fcFixEvery', 'center');
+      await rec.say(`Everything that is left, in one go. "All at once" opens a single screen: every item that still uses the field — ${leftBefore} flow${leftBefore === 1 ? '' : 's'}, the page layout, the Lightning page — and what will be done to each. Replaced, removed, or left for you; the tool never sets a flow or code to delete.`);
+      await rec.click(planBtn, 800);
+      await h.waitFor("!!document.querySelector('.fc-plan-row')", 300000, 500);
+      await rec.reveal('.sftk-cf-host');
+      await confirmShared(c, { caption: 'One confirmation for the whole plan. Each change keeps its own restore point, and Undo all takes every one of them back.', flowBackupOff: true });
+      await rec.fast(() => h.waitFor("!!document.querySelector('#fcPlanRepClose')", 900000, 1000));
+      await h.sleep(800);
+      const report = (await h.eval(`(document.querySelector('.fc-plan-rep')?.innerText || '')`)).replace(/\s+/g, ' ').trim().slice(0, 200);
+      await rec.say(report ? `The report: ${report}` : 'The report lists what was done and what was not.');
+      await rec.reveal('.fc-plan-rep');
+      await rec.click('#fcPlanRepClose', 800);
+      await rec.fast(() => h.waitFor(settled, 600000, 1000));
+      await h.sleep(1200);
       await rec.scrollTo('#fcResults');
-      await rec.say('Every item done, and every card says what it is now.');
+      const leftAfter = await flowsLeft();
+      await rec.say(leftAfter ? `${leftAfter} flow${leftAfter === 1 ? '' : 's'} still use${leftAfter === 1 ? 's' : ''} the field; the plan left ${leftAfter === 1 ? 'it' : 'them'} for you, and the card says why.` : 'Every item is done, and every card says what it is now.');
       await rec.reveal(null);
-      // 7. the tool's own History
-      if (await c.has('#fcToolHist summary')) {
-        await rec.scrollTo('#fcToolHist', 'center');
-        await rec.click('#fcToolHist summary', 900);
-        await rec.say('Everything the tool changed is listed under the results, with what the org showed afterwards. A change with a way back has an Undo.');
-      }
-      // 8. the field itself
+      // 6. the field itself
       await rec.scrollTo('#fcDeleteZone', 'center');
-      await rec.say('Nothing uses the old field any more. Deprecate hides and renames it, with a one-click way back; Delete removes it.');
+      await rec.say('Deprecate hides and renames the field, with a one-click way back; Delete removes it, once nothing that blocks it is left.');
       const delOn = await h.eval(`(() => { const b = document.querySelector('#fcDelBtn'); return !!b && !b.disabled; })()`);
       if (delOn) {
         await rec.click('#fcDelBtn', 800);
@@ -1021,7 +970,7 @@ export const SECTIONS = [
       await rec.say('It lists what the first user has that the second lacks — here the role — and what they already share. Tick what to copy.');
       await rec.reveal('#ucPreview');
       await rec.point('#ucCopyBtn', 1300);
-      await rec.say('It asks once, reads the user back afterwards to confirm, and the copy is in this tool’s History with its Undo.');
+      await rec.say('It asks once, reads the user back afterwards to confirm, and the copy is in Activity, under this tool, with its Undo.');
     } },
 
   { id: 'flow-access', title: 'Flow Access', run: async c => {

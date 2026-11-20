@@ -58,6 +58,18 @@ function ucNeedsOtherUserLicense(licenseId, targetUserLicenseId) {
   return String(licenseId).slice(0, 15) !== String(targetUserLicenseId).slice(0, 15);
 }
 
+// PURE. QA 1.1 (finding 12): after SESSION_EXPIRED the background may hand back the session of ANOTHER org (its
+// last resorts are "same base domain" and "any org tab"), and a sandbox shares its User, Profile and PermissionSet
+// Ids with production. A call is sent again only to the SAME org, with a session other than the one that just
+// failed — the rule of popup.js sendBg (freshIsCorrectOrg) and lightning-pages.js lpSessionRetryOk.
+// `orgKey` is sftkOrgKey.
+function sftkUserCopyRetryOk(origOrgUrl, failedSid, fresh, orgKey) {
+  if (!fresh || !fresh.sid || !fresh.orgUrl || !origOrgUrl || typeof orgKey !== 'function') return false;
+  const a = orgKey(origOrgUrl), b = orgKey(fresh.orgUrl);
+  if (!a || a !== b) return false;
+  return fresh.sid !== failedSid;
+}
+
 const UserCopy = (() => {
   let _orgUrl = null;
   let _sid    = null;
@@ -1615,7 +1627,9 @@ const UserCopy = (() => {
     }
     if (resp?.error !== 'SESSION_EXPIRED') return resp;
     const fresh = await bgRaw({ type: 'GET_SF_SESSION', activeTabUrl: _orgUrl });
-    if (fresh?.sid && fresh?.orgUrl) {
+    // Same org and a different session only — never another org's session (see sftkUserCopyRetryOk). Otherwise
+    // the caller gets SESSION_EXPIRED and _orgUrl/_sid stay as they were.
+    if (sftkUserCopyRetryOk(_orgUrl, msg.sid !== undefined ? msg.sid : _sid, fresh, typeof sftkOrgKey === 'function' ? sftkOrgKey : null)) {
       _orgUrl = fresh.orgUrl;
       _sid    = fresh.sid;
       const retry = msg.sid !== undefined

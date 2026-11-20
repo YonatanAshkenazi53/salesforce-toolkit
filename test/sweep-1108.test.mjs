@@ -20,7 +20,11 @@ describe('what it looks for', () => {
   it('the bare name as a word, in any form the metadata uses', () => {
     for (const s of ['SFTK_Live_Blk__c', 'Account.SFTK_Live_Blk__c', '$Record.SFTK_Live_Blk__c', '@salesforce/schema/Account.SFTK_Live_Blk__c', 'sftk_live_blk__c = true', '<field>SFTK_Live_Blk__c</field>'])
       expect(F.re.test(s), s).toBe(true);
-    for (const s of ['SFTK_Live_Blk__c2', 'XSFTK_Live_Blk__c', 'SFTK_Live_Blk__r', 'SFTK_Live_Blk']) expect(F.re.test(s), s).toBe(false);
+    for (const s of ['SFTK_Live_Blk__c2', 'XSFTK_Live_Blk__c', 'SFTK_Live_Blk__r2', 'SFTK_Live_Blk__pc', 'SFTK_Live_Blk']) expect(F.re.test(s), s).toBe(false);
+    // QA 1.1 finding 30: the relationship spelling of a lookup IS a name of the field (type unknown: searched) …
+    expect(F.re.test('SFTK_Live_Blk__r.Name')).toBe(true);
+    // … and is left out when the field's type says it is no relationship
+    expect(S.sftkSweepForms('Account', 'SFTK_Live_Blk__c', 'Checkbox').re.test('SFTK_Live_Blk__r.Name')).toBe(false);
     expect(F.qualified.test('Account.SFTK_Live_Blk__c')).toBe(true);
     expect(F.qualified.test('Lead.SFTK_Live_Blk__c')).toBe(false);
   });

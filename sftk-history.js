@@ -191,9 +191,51 @@ async function sftkHistoryAppend(entry) {
   await chrome.storage.local.set({ sftk_history: split.keep });
 }
 
-async function sftkHistoryAll() {
+// The list kept at hand: the newest entries, up to the cap (Data Studio's own array, or the stored list in the popup).
+async function _sftkHistHot() {
   if (_sftkHistStudio()) return _history;
   try { return (await chrome.storage.local.get('sftk_history')).sftk_history || []; } catch (_) { return []; }
+}
+// QA 1.1 #5: the cap is shared by deployments, every tool and every undo, so two long Field Cleaner runs moved the
+// first run's oldest changes to the on-PC archive, where no Toolkit surface read them: they could not be seen,
+// undone, backed up or cleared. A Toolkit tool's archived entries are part of its Activity like any other.
+// → the hot list with the archived Toolkit entries it does not hold put in front (they are older). The hot copy of
+// an id wins. Never a push into the list handed in: Data Studio's `_history` must stay the hot tier only. PURE.
+function sftkHistoryWithArchived(hot, archived) {
+  const base = Array.isArray(hot) ? hot : [];
+  const have = new Set(base.map(e => e && e.id));
+  const add = [];
+  for (const e of (Array.isArray(archived) ? archived : [])) {
+    if (!e || !e.id || have.has(e.id) || !sftkHistoryToolTab(e)) continue;
+    have.add(e.id); add.push(e);
+  }
+  if (!add.length) return base;
+  add.sort((a, b) => String(a.startedAt || '').localeCompare(String(b.startedAt || '')));
+  return [...add, ...base];
+}
+// Every archived entry (sftk-archive.js), or [] on a page without the archive or when it cannot be read.
+async function _sftkHistArchived() {
+  if (typeof sftkArchList !== 'function') return [];
+  try { return (await sftkArchList(null, 1e9)) || []; } catch (_) { return []; }
+}
+// Delete the archived entries `test` picks. → how many were deleted (0 when the archive could not be written).
+async function sftkHistoryArchDrop(test) {
+  if (typeof test !== 'function' || typeof _sftkArchTx !== 'function') return 0;
+  const ids = (await _sftkHistArchived()).filter(e => e && e.id && test(e)).map(e => e.id);
+  if (!ids.length) return 0;
+  try { await _sftkArchTx('readwrite', st => { for (const id of ids) st.delete(id); }); } catch (_) { return 0; }
+  return ids.length;
+}
+// Write a changed entry back WHERE IT IS: in the hot list when it is there, in the archive otherwise — so an
+// archived change that was undone keeps its place and does not come back as the newest entry of the list.
+async function _sftkHistSaveInPlace(entry) {
+  const hot = await _sftkHistHot();
+  if (typeof sftkArchPut !== 'function' || hot.some(h => h && h.id === entry.id)) { await sftkHistoryAppend(entry); return; }
+  try { await sftkArchPut([entry]); } catch (_) { await sftkHistoryAppend(entry); }
+}
+
+async function sftkHistoryAll() {
+  return sftkHistoryWithArchived(await _sftkHistHot(), await _sftkHistArchived());
 }
 
 // What the History card offers for a tool entry.
@@ -399,12 +441,36 @@ async function sftkHistoryUndo(entryId, opts) {
   const undoEntry = await sftkHistoryEnd(j, { undo: { none: 'this entry is itself an undo — redo the change from the tool' }, undoOf: entry.id });
   const stepsRun = j.what.filter(x => !x.info);
   const okAll = stepsRun.length > 0 && stepsRun.every(x => x.ok);
-  entry.toolUndo.done = { at: j.completedAt, ok: okAll, entryId: j.id };
-  await sftkHistoryAppend(entry);
+  // QA 1.1 #37: the mark that closes an entry's Undo is set only when Salesforce accepted at least one step. An
+  // attempt in which every step was refused (connection lost, session expired, API limit, a lock) changed nothing in
+  // the org, and the earlier state is still in the entry: it stays undoable. The attempt has its own entry either way.
+  const written = sftkHistoryUndoWrote(j.what);
+  if (written) {
+    entry.toolUndo.done = { at: j.completedAt, ok: okAll, entryId: j.id };
+    await _sftkHistSaveInPlace(entry);
+  }
   const okN = stepsRun.filter(x => x.ok).length;
   const tail = note ? ` · not restored: ${note}` : '';
   sftkHistoryUndoAnnounce(entry, { ok: okAll });   // the open tool re-reads the org (2026-11-15)
-  return { ok: okAll, text: (okAll ? `Undone — ${okN} step${okN === 1 ? '' : 's'} verified by re-reading the org` : `Undo ran: ${okN} of ${stepsRun.length} step${stepsRun.length === 1 ? '' : 's'} verified — see the undo's entry in Activity`) + tail, entry, undoEntry };
+  const text = okAll ? `Undone — ${okN} step${okN === 1 ? '' : 's'} verified by re-reading the org`
+    : !written ? `Nothing was undone: Salesforce accepted none of the ${stepsRun.length} step${stepsRun.length === 1 ? '' : 's'}, so the org is as it was. The reason is in the undo's entry in Activity. This change can still be undone — try again`
+    : `Undo ran: ${okN} of ${stepsRun.length} step${stepsRun.length === 1 ? '' : 's'} verified — see the undo's entry in Activity`;
+  return { ok: okAll, written, text: text + tail, entry, undoEntry };
+}
+// Did an undo change the org? True when Salesforce accepted at least one of its steps (the "not restored" note
+// line is not a step). PURE.
+function sftkHistoryUndoWrote(what) {
+  return (Array.isArray(what) ? what : []).some(x => x && !x.info && x.accepted);
+}
+// Why an undo that wrote nothing should stop a whole Undo all: the refusals say the org cannot be reached or the
+// session is no longer valid, so every entry after it would be refused the same way. → the first such line, or ''.
+// A refusal about the component itself (a validation error, a lock) answers '' — the next entry is another component. PURE.
+function sftkHistoryUndoUnreachable(what) {
+  const re = /INVALID_SESSION_ID|session (?:has )?expired|expired session|failed to fetch|networkerror|network error|ERR_INTERNET|ERR_NETWORK|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|no response|could not establish connection|message port closed|REQUEST_LIMIT_EXCEEDED|\b401\b/i;
+  const steps = (Array.isArray(what) ? what : []).filter(x => x && !x.info);
+  if (!steps.length || steps.some(x => x.accepted)) return '';
+  const hit = steps.find(x => re.test(String(x.text || '')));
+  return hit ? String(hit.text || '') : '';
 }
 
 // ── Undo all the changes a tool made about one subject (owner 2026-11-15: "we need an undo all. without going over
@@ -434,7 +500,8 @@ function sftkHistoryUndoableForRow(all, o) {
 //   opts: { send?, onStart(i, n, entry), onLog(line), onEnd(i, n, entry, result), undo? (for tests) }
 //   → { total, ran, ok, failed: [{ entry, text }], stopped: '' | why the rest was not tried }
 // A step that fails does not stop the rest (each entry is its own component); no session for the org does — every
-// entry after it would fail the same way.
+// entry after it would fail the same way — and so does an entry whose every step was refused because the org could
+// not be reached (sftkHistoryUndoUnreachable).
 async function sftkHistoryUndoMany(entries, opts) {
   const o = opts || {}, list = Array.isArray(entries) ? entries : [];
   const undo = typeof o.undo === 'function' ? o.undo : sftkHistoryUndo;
@@ -449,6 +516,13 @@ async function sftkHistoryUndoMany(entries, opts) {
     if (r && !r.ok && !r.entry && /^Log in to /.test(String(r.text || ''))) { out.stopped = r.text; break; }
     out.ran++;
     if (r && r.ok) out.ok++; else out.failed.push({ entry: e, text: String((r && r.text) || 'no answer') });
+    // QA 1.1 #37: the session is still listed but the org cannot be reached (connection lost, session expired, API
+    // limit) — this entry wrote nothing and the ones after it would be refused the same way. Stop; all stay undoable.
+    const cut = (r && !r.ok && r.undoEntry) ? sftkHistoryUndoUnreachable(r.undoEntry.what) : '';
+    if (cut) {
+      out.stopped = `Salesforce could not be reached (${cut}). Nothing was written for the last change tried, and every change not undone can still be undone. Check the connection and the org login, then undo the rest`;
+      break;
+    }
   }
   return out;
 }
@@ -501,37 +575,75 @@ function sftkHistoryWithoutTab(all, tab) {
   return (Array.isArray(all) ? all : []).filter(e => !sftkHistoryInTab(e, tab));
 }
 // → how many entries were removed. Nothing in an org is touched: only the record of the changes, and with it their ↩ Undo.
+// The tool's entries in the on-PC archive go too (QA 1.1 #5): cleared means gone from this browser, not kept where
+// Data Studio's full export would still write them out.
 async function sftkHistoryClearTab(tab) {
   if (String(tab) !== '*' && !sftkHistoryTabLabel(tab)) return 0;
+  const archived = await sftkHistoryArchDrop(e => sftkHistoryInTab(e, tab));
   if (_sftkHistStudio()) {
     const keep = sftkHistoryWithoutTab(_history, tab), n = _history.length - keep.length;
     if (n) { _history.splice(0, _history.length, ...keep); await storageSaveHistory(); }
-    return n;
+    return n + archived;
   }
   let list = [];
   try { list = (await chrome.storage.local.get('sftk_history')).sftk_history || []; } catch (_) { list = []; }
   const keep = sftkHistoryWithoutTab(list, tab);
   if (keep.length !== list.length) await chrome.storage.local.set({ sftk_history: keep });
-  return list.length - keep.length;
+  return list.length - keep.length + archived;
 }
 // One entry removed (owner 2026-11-18, in the Activity window: "and allow deletion of individuals"). Only the record
 // goes, and with it that change's ↩ Undo — nothing in an org is touched. → true when an entry was removed.
 async function sftkHistoryRemove(id) {
   const key = String(id || '');
   if (!key) return false;
+  // an entry that aged into the on-PC archive is listed too (QA 1.1 #5) — its copy there goes with it
+  const archived = (await sftkHistoryArchDrop(e => e.id === key)) > 0;
   if (_sftkHistStudio()) {
     const i = _history.findIndex(h => h && h.id === key);
-    if (i < 0) return false;
+    if (i < 0) return archived;
     _history.splice(i, 1); await storageSaveHistory();
     return true;
   }
   let list = [];
   try { list = (await chrome.storage.local.get('sftk_history')).sftk_history || []; } catch (_) { list = []; }
   const keep = list.filter(h => !(h && h.id === key));
-  if (keep.length === list.length) return false;
+  if (keep.length === list.length) return archived;
   await chrome.storage.local.set({ sftk_history: keep });
   return true;
 }
+// ── A Toolkit entry removed on another page is removed here too (QA 1.1 #61) ─────────────────────────────────────
+// Data Studio keeps the list in memory (`_history`) and writes the whole of it on its next save. Its own storage
+// listener only adds and upgrades entries, so an entry deleted or cleared in the Toolkit stayed in that memory —
+// still drawn in Activity with a live Undo — and the next deployment or rollback wrote it back for every page.
+// → the ids of the Toolkit tools' entries the stored list held before a change and no longer holds. Only a Toolkit
+// tool's entry: those are removed on the Toolkit's pages (🗑, Clear, the move to the on-PC archive), never by a
+// write of this page that another page's stale list could appear to undo. PURE.
+function sftkHistoryGoneIds(oldValue, newValue) {
+  const now = new Set((Array.isArray(newValue) ? newValue : []).map(e => e && e.id));
+  return (Array.isArray(oldValue) ? oldValue : []).filter(e => e && e.id && sftkHistoryToolTab(e) && !now.has(e.id)).map(e => e.id);
+}
+// Drop them from a list IN PLACE (Data Studio's own array). → how many were dropped.
+function sftkHistoryDropGone(local, oldValue, newValue) {
+  if (!Array.isArray(local)) return 0;
+  const gone = new Set(sftkHistoryGoneIds(oldValue, newValue));
+  if (!gone.size) return 0;
+  let n = 0;
+  for (let i = local.length - 1; i >= 0; i--) {
+    const h = local[i];
+    if (h && gone.has(h.id) && sftkHistoryToolTab(h)) { local.splice(i, 1); n++; }
+  }
+  return n;
+}
+function _sftkHistOnStorage(changes, area) {
+  if (area !== 'local' || !changes || !changes.sftk_history || !_sftkHistStudio()) return;
+  const n = sftkHistoryDropGone(_history, changes.sftk_history.oldValue, changes.sftk_history.newValue);
+  if (n && typeof renderHistory === 'function' && (typeof _currentView === 'undefined' || _currentView === 'history')) renderHistory();
+}
+try {
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged && typeof chrome.storage.onChanged.addListener === 'function') {
+    chrome.storage.onChanged.addListener(_sftkHistOnStorage);
+  }
+} catch (_) { /* no storage events outside an extension page */ }
 // ── A backup file of one tool's History, WITH its undo (owner 2026-11-16: "and a way for users to backup their
 // activity … along with undo") ──────────────────────────────────────────────────────────────────────────────────
 // The file is the entries as they are stored — the earlier state each ↩ Undo writes back is inside the entry — so a
@@ -557,29 +669,61 @@ function sftkHistoryBackupRead(text, tab) {
 }
 // What is already in History stays as it is (it may have been undone since the backup); the rest is added, marked
 // with the date it came back from a file. → { list (oldest first), added, skipped }. PURE.
-function sftkHistoryMergeBackup(list, entries, nowIso) {
+// `known`: ids kept somewhere else than the list (the on-PC archive) — an entry already there is skipped like one
+// in the list (QA 1.1 #38: a second restore of the same file added the archived ones again and counted them again).
+function sftkHistoryMergeBackup(list, entries, nowIso, known) {
   const base = Array.isArray(list) ? list : [], inc = Array.isArray(entries) ? entries : [];
   const have = new Set(base.map(e => e && e.id));
+  if (known && typeof known.forEach === 'function') known.forEach(id => have.add(id));
   const add = [];
   for (const e of inc) { if (!e || have.has(e.id)) continue; have.add(e.id); add.push({ ...e, restoredFromBackup: String(nowIso || '') || true }); }
   const out = [...base, ...add].sort((a, b) => String((a && a.startedAt) || '').localeCompare(String((b && b.startedAt) || '')));
-  return { list: add.length ? out : base, added: add.length, skipped: inc.length - add.length };
+  return { list: add.length ? out : base, added: add.length, skipped: inc.length - add.length, addedIds: add.map(e => e.id) };
 }
-// → { added, skipped, archived }: archived = older entries the list had no room for (they go to the on-PC archive).
+// The newest `room` of the entries a backup would add — what fits a list that cannot hand its overflow on. PURE.
+function sftkHistoryBackupNewest(entries, ids, room) {
+  const want = new Set(Array.isArray(ids) ? ids : []);
+  return (Array.isArray(entries) ? entries : []).filter(e => e && want.has(e.id))
+    .sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || ''))).slice(0, Math.max(0, Number(room) || 0));
+}
+// → { added, skipped, archived, notKept }
+//   added    = entries that came back and can be listed and undone here (in the list or in the on-PC archive)
+//   archived = the oldest entries of the merged list, moved to the on-PC archive because the list keeps ${SFTK_HISTORY_CAP};
+//              counted only once the archive has taken them
+//   notKept  = entries of the file that were NOT restored: the list had no room and the archive could not be written.
+//              Nothing that was already listed is dropped to make room for them.
+// QA 1.1 #38: the archive write was best-effort and its failure was swallowed, so the overflow — restored entries,
+// and entries that were already here — was dropped while the count said it went to the archive.
 async function sftkHistoryRestoreBackup(entries, nowIso) {
-  if (_sftkHistStudio()) {
-    const m = sftkHistoryMergeBackup(_history, entries, nowIso);
-    if (m.added) { _history.splice(0, _history.length, ...m.list); await storageSaveHistory(); }
-    return { added: m.added, skipped: m.skipped, archived: 0 };
-  }
+  const studio = _sftkHistStudio();
   let list = [];
-  try { list = (await chrome.storage.local.get('sftk_history')).sftk_history || []; } catch (_) { list = []; }
-  const m = sftkHistoryMergeBackup(list, entries, nowIso);
-  if (!m.added) return { added: 0, skipped: m.skipped, archived: 0 };
-  const split = (typeof sftkHistorySplit === 'function') ? sftkHistorySplit(m.list, SFTK_HISTORY_CAP) : { keep: m.list.slice(-SFTK_HISTORY_CAP), overflow: [] };
-  if (split.overflow.length && typeof sftkArchPut === 'function') { try { await sftkArchPut(split.overflow); } catch (_) {} }
-  await chrome.storage.local.set({ sftk_history: split.keep });
-  return { added: m.added, skipped: m.skipped, archived: split.overflow.length };
+  if (studio) list = _history;
+  else { try { list = (await chrome.storage.local.get('sftk_history')).sftk_history || []; } catch (_) { list = []; } }
+  const known = new Set((await _sftkHistArchived()).map(e => e && e.id));
+  let m = sftkHistoryMergeBackup(list, entries, nowIso, known);
+  if (!m.added) return { added: 0, skipped: m.skipped, archived: 0, notKept: 0 };
+  const cut = l => (typeof sftkHistorySplit === 'function') ? sftkHistorySplit(l, SFTK_HISTORY_CAP) : { keep: l.slice(-SFTK_HISTORY_CAP), overflow: l.slice(0, Math.max(0, l.length - SFTK_HISTORY_CAP)) };
+  let split = cut(m.list), archived = 0, notKept = 0;
+  const skipped = m.skipped;
+  if (split.overflow.length) {
+    let put = false;
+    if (typeof sftkArchPut === 'function') {
+      if (studio && typeof _historyStripCountsOnly === 'function') _historyStripCountsOnly(split.overflow);   // as storageSaveHistory does
+      try { await sftkArchPut(split.overflow); put = true; } catch (_) { put = false; }
+    }
+    if (put) archived = split.overflow.length;
+    else {
+      // nowhere to move the overflow to: add only what fits beside what is already listed
+      const fit = sftkHistoryBackupNewest(entries, m.addedIds, SFTK_HISTORY_CAP - list.length);
+      const m2 = sftkHistoryMergeBackup(list, fit, nowIso, known);
+      notKept = m.added - m2.added;
+      m = m2; split = { keep: m2.list, overflow: [] };
+      if (!m.added) return { added: 0, skipped, archived: 0, notKept };
+    }
+  }
+  if (studio) { _history.splice(0, _history.length, ...split.keep); await storageSaveHistory(); }
+  else await chrome.storage.local.set({ sftk_history: split.keep });
+  return { added: m.added, skipped, archived, notKept };
 }
 // Data Studio's side of the split: its own entries, and how many live in which Toolkit tab. PURE.
 function sftkHistoryStudioSplit(all) {
@@ -589,6 +733,13 @@ function sftkHistoryStudioSplit(all) {
     if (tab) kit[tab] = (kit[tab] || 0) + 1; else if (e) mine.push(e);
   }
   return { mine, kit, kitTotal: Object.values(kit).reduce((n, v) => n + v, 0) };
+}
+// Data Studio › History › Clear All removes what that page lists: deployments, rollbacks and Data Studio's own
+// changes. A Toolkit tool's changes are not listed there and stay, each with its ↩ Undo (QA 1.1 #6: Clear All
+// emptied the whole shared list and the archive, so every tool lost its Activity and its Undo without a word).
+// → what is left of the list. PURE.
+function sftkHistoryStudioClearKeep(all) {
+  return (Array.isArray(all) ? all : []).filter(e => !!sftkHistoryToolTab(e));
 }
 // "5m ago" for a card. PURE.
 function sftkHistoryAgo(iso, nowMs) {
@@ -629,6 +780,9 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkHistoryTabLabel    = sftkHistoryTabLabel;
   globalThis.sftkHistoryForTab      = sftkHistoryForTab;
   globalThis.sftkHistoryStudioSplit = sftkHistoryStudioSplit;
+  globalThis.sftkHistoryStudioClearKeep = sftkHistoryStudioClearKeep;
+  globalThis.sftkHistoryWithArchived = sftkHistoryWithArchived;
+  globalThis.sftkHistoryArchDrop    = sftkHistoryArchDrop;
   globalThis.sftkHistoryAgo         = sftkHistoryAgo;
   globalThis.sftkHistoryReport      = sftkHistoryReport;
   globalThis.sftkHistoryReportName  = sftkHistoryReportName;

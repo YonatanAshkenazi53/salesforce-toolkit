@@ -41,6 +41,7 @@ describe('▸ record: what lands, treated; and the suggestion for this one recor
   });
   it('🎭 Suggest PII for this record opens the suggestions on that record alone', () => {
     expect(VE).toContain('id="dsVePiiSug"');
-    expect(VE).toContain("window._depPiiSuggest(p, { [obj]: [ids[0]] }, `this record — ${label || ids[0]}`)");
+    // the saved deployment, not the child-rooted view the editor was opened with (QA 1.1 finding 8)
+    expect(VE).toContain("window._depPiiSuggest(sftkVeSavedProfile(p, typeof _profiles !== 'undefined' ? _profiles : null), { [obj]: [ids[0]] }, `this record — ${label || ids[0]}`)");
   });
 });

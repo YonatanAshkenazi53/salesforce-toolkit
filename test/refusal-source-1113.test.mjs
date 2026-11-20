@@ -56,7 +56,9 @@ describe('a dry run says which refusals the ⏸ pauses would remove', () => {
     expect(N(rule, 'O', null)).toBe('');
   });
   it('the dry run button passes what would be paused', () => {
-    expect(readFileSync(new URL('../studio-deploy.js', import.meta.url), 'utf8')).toContain('{ probe: true, probePaused: _depProbePaused(p) }');
+    const dep = readFileSync(new URL('../studio-deploy.js', import.meta.url), 'utf8');
+    expect(dep).toContain('return sftkDepProbeOpts(_depProbePaused(p), _depDupePauseOpts(p, written));');
+    expect(dep).toContain('return { probe: true, probePaused, dupePause: dupePause || null };');
   });
 });
 

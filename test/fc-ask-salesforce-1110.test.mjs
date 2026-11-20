@@ -109,8 +109,10 @@ describe('the check rides every scan, and what it names joins the list', () => {
 describe('Aura components are read by the scan itself, not through the index', () => {
   it('one Tooling query over every Aura source; a whole-word mention lists the bundle; a packaged one is skipped', () => {
     expect(FC).toContain("const res = await sfQ('SELECT Id, DefType, Source, AuraDefinitionBundleId, AuraDefinitionBundle.DeveloperName, AuraDefinitionBundle.NamespacePrefix FROM AuraDefinition', true);");
-    expect(FC).toContain("add('AuraDefinitionBundle', bid, r.AuraDefinitionBundle?.DeveloperName || bid);");
-    expect(FC).toContain("if (r.AuraDefinitionBundle?.NamespacePrefix) continue;");
+    // QA 1.1 finding 18: the bundles come from fcAuraBundlesNaming (it skips a packaged one); the one that names the
+    // object too is the blocker, the name alone is listed under AuraText (test/qa11-fc-aura-object.test.mjs)
+    expect(FC).toContain("add(b.obj ? 'AuraDefinitionBundle' : 'AuraText', b.id, b.name);");
+    expect(FC).toContain("if (!r || (r.AuraDefinitionBundle && r.AuraDefinitionBundle.NamespacePrefix)) continue;");
     expect(FC).toMatch(/AuraDefinitionBundle: \{ icon: '⚡', label: 'Aura Components', fixable: false, sev: 'blocker'/);
   });
 });

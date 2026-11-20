@@ -1232,7 +1232,7 @@ function _runDupBypassFor(objType) {
 // A function, not consts: test/extract.mjs materializes functions only.
 function sftkProbeLimits() {
   return { sample: 200,      // records per object (one Collections subrequest)
-           maxSubs: 24,      // a composite takes 25 subrequests: 24 + the poison
+           maxSubs: 5,       // a composite takes 25 subrequests, but only 5 of them may be sObject Collections (or query) operations — every object level is one. The poison is a plain sObject POST and does not count. (Salesforce's documented limit; a 6-level request is refused whole with HTTP 400.)
            maxRounds: 8 };   // one level of errors per round; a tree is rarely deeper
 }
 
@@ -1259,7 +1259,11 @@ function sftkProbePoison() {
 // a row no longer in the round means "parent refused" — the caller removed
 // those rows already (sftkProbeCascade), so an unresolved token is a bug and
 // is left as-is for Salesforce to refuse loudly.
-function sftkProbeCompositeBody(subs, apiVersion) {
+// bypassFor(objType) → true when the user chose to bypass duplicate rules for
+// that object. The header then rides on THAT subrequest only (httpHeaders),
+// exactly as the real run sends it per object — never on the outer request,
+// where an unticked object would inherit it. The poison never carries it.
+function sftkProbeCompositeBody(subs, apiVersion, bypassFor) {
   const posOf = new Map();   // ref → Map(srcId → index)
   for (const s of subs) posOf.set(s.ref, new Map(s.rows.map((r, i) => [r.srcId, i])));
   const resolve = (p) => {
@@ -1279,6 +1283,7 @@ function sftkProbeCompositeBody(subs, apiVersion) {
       ? `/services/data/${apiVersion}/composite/sobjects/${s.objType}/${s.upsertField}`
       : `/services/data/${apiVersion}/composite/sobjects`,
     referenceId: s.ref,
+    ...((typeof bypassFor === 'function' && bypassFor(s.objType) === true) ? { httpHeaders: { 'Sforce-Duplicate-Rule-Header': 'allowSave=true' } } : {}),
     body: { allOrNone: false, records: s.rows.map(r => ({ attributes: { type: s.objType }, ...resolve(r.payload) })) },
   }));
   compositeRequest.push({ method: 'POST', url: `/services/data/${apiVersion}/sobjects/Account`, referenceId: 'poison', body: sftkProbePoison() });
@@ -1296,7 +1301,13 @@ function sftkProbeParseRound(subs, resp) {
   const byRef = new Map(items.map(it => [it && it.referenceId, it]));
   const isHalted = b => Array.isArray(b) && b.length > 0 && b.every(x => x && x.errorCode === 'PROCESSING_HALTED');
   const isSaveResults = b => Array.isArray(b) && b.length > 0 && b.every(x => x && typeof x.success === 'boolean');
-  const out = { subs: [], poisonFailed: null, persisted: [] };
+  // `persisted` is what the caller re-reads and DELETES, so it holds only ids
+  // the dry run itself may have created. An upsert row that matched a record
+  // already in the target answers success:true with THAT record's id
+  // (created:false): it goes to `updated`, which is reported and never deleted.
+  // An upsert answer that does not say created:true is treated the same way —
+  // an id whose origin is unknown is not ours to delete.
+  const out = { subs: [], poisonFailed: null, persisted: [], updated: [] };
   for (const s of subs) {
     const it = byRef.get(s.ref);
     const body = it ? it.body : undefined;
@@ -1307,7 +1318,7 @@ function sftkProbeParseRound(subs, resp) {
       r.rows = body.map((x, i) => {
         const srcId = s.rows[i] && s.rows[i].srcId;
         if (x.success) {
-          if (x.id && !/^@/.test(String(x.id))) out.persisted.push({ objType: s.objType, id: x.id, srcId });
+          if (x.id && !/^@/.test(String(x.id))) (s.upsertField && x.created !== true ? out.updated : out.persisted).push({ objType: s.objType, id: x.id, srcId });
           return { i, srcId, state: 'ok' };
         }
         const errs = Array.isArray(x.errors) ? x.errors : [];
@@ -1378,7 +1389,7 @@ function sftkProbeStatus(probe, errors) {
   // in refusedLines); anything else without the ℹ mark is a hard error
   const hard = Math.max(0, (errors || []).filter(e => !String(e).includes('ℹ')).length - ((probe && probe.refusedLines) || 0));
   const refused = objs.reduce((t, a) => t + (a.refused || 0), 0);
-  if (probe && probe.persistedFound) return 'failed';
+  if (probe && (probe.persistedFound || (Array.isArray(probe.updatedExisting) && probe.updatedExisting.length))) return 'failed';
   if (!objs.length) return hard ? 'failed' : 'success';
   if (bad === 0 && hard === 0) return 'success';
   // nothing would be written AND something was refused (or broke): failed;
@@ -1387,12 +1398,14 @@ function sftkProbeStatus(probe, errors) {
   return 'partial';
 }
 
-// POST /composite — the one call a dry run round makes. Duplicate-rule bypass
-// rides along exactly as on a real write.
+// POST /composite — the one call a dry run round makes. The duplicate-rule
+// bypass is NOT sent here: one outer header would cover every object in the
+// transaction, whatever the user ticked per object. It rides on each
+// subrequest instead (sftkProbeCompositeBody's bypassFor), as on a real write.
 async function sfProbeComposite(orgUrl, sid, body) {
   const url = `${orgUrl}/services/data/${API_VERSION}/composite`;
   const { ok, status, body: text } = await sfFetchWithProxy(orgUrl, sid, url, {
-    method: 'POST', headers: { ..._runDupHeaders() }, body: JSON.stringify(body)
+    method: 'POST', headers: {}, body: JSON.stringify(body)
   });
   if (!ok) throw new Error(sfErrorMsg(status, text, url));
   return JSON.parse(text);
@@ -3123,7 +3136,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // would be refused) · not reached (rounds ran out).
   let probeResult = null;
   if (PROBE) {
-    probeResult = { sample: PL.sample, rounds: 0, persisted: [], byObj: {}, objects: probeSubs.length };
+    probeResult = { sample: PL.sample, rounds: 0, persisted: [], updatedExisting: [], byObj: {}, objects: probeSubs.length };
     const verdict = new Map();   // ref → Map(srcId → { state, errors })
     for (const s of probeSubs) verdict.set(s.ref, new Map(s.rows.map(r => [r.srcId, { state: 'unreached' }])));
     const live = probeSubs.map(s => ({ ref: s.ref, objType: s.objType, upsertField: s.upsertField, rows: s.rows.slice() }));
@@ -3135,7 +3148,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       for (const [ref, ids] of Object.entries(dropped)) for (const id of ids) verdict.get(ref).set(id, { state: 'cascade' });
     }
     if (probeSubs.length > PL.maxSubs) {
-      errors.push(`🧪 dry run: this deployment writes ${probeSubs.length} object levels — one rolled-back transaction takes ${PL.maxSubs}; nothing was checked. Dry-run a smaller selection.`);
+      errors.push(`🧪 dry run: this deployment writes ${probeSubs.length} object levels — Salesforce takes ${PL.maxSubs} in one rolled-back transaction; nothing was checked. Dry-run a smaller selection (${PL.maxSubs} object levels or fewer).`);
     } else if (probeSubs.length) {
       let round = 0;
       try {
@@ -3145,10 +3158,13 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           const sending = live.filter(s => s.rows.length);
           if (!sending.length) break;
           postRunProgress({ phase: 'probe', round, subs: sending.map(s => ({ obj: s.objType, n: s.rows.length })) });
-          const resp = await sfProbeComposite(tgtOrgUrl, tgtSid, sftkProbeCompositeBody(sending, API_VERSION));
+          const resp = await sfProbeComposite(tgtOrgUrl, tgtSid, sftkProbeCompositeBody(sending, API_VERSION, o => _runDupBypassFor(o)));
           const parsed = sftkProbeParseRound(sending, resp);
           probeResult.rounds = round;
           if (parsed.persisted.length) probeResult.persisted.push(...parsed.persisted);
+          // an upsert that only UPDATED an existing target record: real only when the round was not
+          // rolled back (the poison did not fail). Never handed to the delete below.
+          if (parsed.updated.length && parsed.poisonFailed !== true) probeResult.updatedExisting.push(...parsed.updated);
           if (parsed.poisonFailed === false) { errors.push('🧪 dry run: the poison record was ACCEPTED, so this round was not rolled back — see the persisted-record check below.'); }
           const failIdx = parsed.subs.findIndex(x => x.state === 'failing' || x.state === 'error');
           for (let k = 0; k < parsed.subs.length; k++) {
@@ -3186,6 +3202,16 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             errors.push(`🧪 ${o}: ${found.length} record(s) from the dry run WERE written (the transaction did not roll back) — ${delOk} deleted again to the Recycle Bin${delOk < found.length ? `, ${found.length - delOk} could NOT be deleted: ${found.slice(0, 10).join(', ')}` : ''}.`);
             probeResult.persistedFound = (probeResult.persistedFound || 0) + found.length;
           } catch (e) { errors.push(`🧪 ${o}: could not check whether dry-run records persisted (${(e && e.message) || e}) — look for records created in the last minute.`); }
+        }
+      }
+      // Records that were in the target BEFORE the dry run and that an upsert of a round that did not roll back
+      // wrote over: they are not the dry run's to delete, and their old values cannot be read back from here.
+      // Said out loud, with the ids, and the run counts as failed.
+      if (probeResult.updatedExisting.length) {
+        const byObj = new Map();
+        for (const p of probeResult.updatedExisting) { if (!byObj.has(p.objType)) byObj.set(p.objType, []); byObj.get(p.objType).push(p.id); }
+        for (const [o, ids] of byObj) {
+          errors.push(`🧪 ${o}: ${ids.length} record(s) that were already in the target were UPDATED by a dry-run round that did not roll back. They were not deleted, and the field values the update overwrote were not restored — review them: ${ids.slice(0, 10).join(', ')}${ids.length > 10 ? ` and ${ids.length - 10} more` : ''}.`);
         }
       }
       // Verdicts → summary. A node is a subrequest; the same object at two
@@ -3739,6 +3765,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message).then(sendResponse).catch(err => {
     const resp = { error: err.message || String(err) };
     if (err.sfBody) resp.sfBody = err.sfBody;  // include raw SF 401 body for diagnostics
+    // a deploy Salesforce accepted whose end was not seen: the caller must not read this as a refusal
+    if (err.sftkSubmitted === true) { resp.submitted = true; if (err.jobId) resp.jobId = err.jobId; }
     sendResponse(resp);
   });
   return true;
@@ -4996,6 +5024,39 @@ async function sfMetadataRead(orgUrl, sid, mdType, fullNames) {
 //   { success, checkOnly: true, failures: [{ problem, type, name }] }
 // It is how Field Cleaner asks Salesforce itself what still blocks a field's delete. Not a write, so an org marked
 // read-only may be asked too.
+
+// Why a finished deploy failed, in Salesforce's own words. A deploy that ran Apex tests fails with EMPTY
+// componentFailures: the reasons are in details.runTestResult — failures (a test that failed) and
+// codeCoverageWarnings (under 75%) — so those are named too, each with its class and method.
+function sftkDeployFailureText(deployResult) {
+  const dr = deployResult || {};
+  const d = dr.details || {};
+  const rt = d.runTestResult || {};
+  const comps = [].concat(d.componentFailures || []).map(f => f && f.problem);
+  const tests = [].concat(rt.failures || []).filter(Boolean).map(f => `Apex test ${f.name || '(unnamed)'}${f.methodName ? '.' + f.methodName : ''} failed: ${f.message || 'no reason given'}`);
+  const cov = [].concat(rt.codeCoverageWarnings || []).filter(Boolean).map(w => `code coverage${w.name ? ' — ' + w.name : ''}: ${w.message || 'below what Salesforce requires'}`);
+  const parts = [...comps, ...tests, ...cov].map(x => String(x || '').trim()).filter(Boolean);
+  const more = parts.length > 8 ? `; and ${parts.length - 8} more — see Setup → Deployment Status` : '';
+  return parts.slice(0, 8).join('; ') + more || String(dr.errorMessage || '') || 'Deployment failed';
+}
+
+// How long a submitted deploy is followed: one poll every 2.5 s. A deploy that runs the org's Apex tests takes
+// minutes, not seconds, so it gets 4 minutes instead of 100 seconds — as long as one message to this service
+// worker can safely stay open (Chrome ends a request that runs past 5 minutes).
+function sftkDeployPollPlan(testLevel) {
+  const tests = testLevel === 'RunLocalTests' || testLevel === 'RunAllTestsInOrg';
+  return tests ? { polls: 96, waited: '4 minutes' } : { polls: 40, waited: '100 seconds' };
+}
+
+// A deploy Salesforce ACCEPTED whose end was not seen is not a refusal: the error says so in a field the caller
+// can test (the message handler passes submitted + jobId on), so History never records "nothing to undo" for it.
+function sftkDeploySubmittedError(text, jobId) {
+  const e = new Error(text);
+  e.sftkSubmitted = true;
+  e.jobId = jobId || null;
+  return e;
+}
+
 async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel, checkOnly) {
   // Decode base64 → raw bytes
   const binaryStr = atob(zipBase64);
@@ -5039,14 +5100,17 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel, checkOnly) {
 
   const { id: jobId } = await deployRes.json();
 
-  // 2. Poll until done (max ~100 s)
+  // 2. Poll until done (about 100 s; 4 minutes when the deploy runs Apex tests — sftkDeployPollPlan)
   // Callers print this error as "the deployment failed — nothing changed". When the job was SUBMITTED and only its
   // status could not be followed, that is false: the org may still apply it. The message says so and names the job.
   let pollMisses = 0;
   const stillRunning = why => checkOnly === true
     ? `The check could not be followed to its end (${why}) — nothing is changed by a check; ask again.`
     : `Deployment ${jobId} was submitted but its result could not be read (${why}). It MAY STILL FINISH in Salesforce: look at Setup → Deployment Status, and re-read the org before trying again.`;
-  for (let i = 0; i < 40; i++) {
+  // a check writes nothing, so its unread end stays a plain error; a real deploy's is marked submitted
+  const unread = text => checkOnly === true ? new Error(text) : sftkDeploySubmittedError(text, jobId);
+  const plan = sftkDeployPollPlan(testLevel);
+  for (let i = 0; i < plan.polls; i++) {
     await new Promise(r => setTimeout(r, 2500));
     const statusUrl = `${orgUrl}/services/data/${API_VERSION}/metadata/deployRequest/${jobId}?includeDetails=true`;
     // The poll goes through the proxy chokepoint (fresh cookie, then the
@@ -5060,21 +5124,21 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel, checkOnly) {
       statusRes = await sfFetchWithProxy(orgUrl, sid, statusUrl, { method: 'GET' });
     } catch (e) {
       if (e && e.message === 'SESSION_EXPIRED') {
-        throw new Error(`Session expired while waiting for deployment ${jobId} — it was submitted and may still finish in Salesforce. Check Setup → Deployment Status before deploying again.`);
+        throw unread(`Session expired while waiting for deployment ${jobId} — it was submitted and may still finish in Salesforce. Check Setup → Deployment Status before deploying again.`);
       }
       // a poll that could not be made is not a deployment that failed (QA 2026-11-11): the job is submitted
       if (++pollMisses <= 3) continue;
-      throw new Error(stillRunning(String((e && e.message) || e)));
+      throw unread(stillRunning(String((e && e.message) || e)));
     }
     if (!statusRes.ok) {
       if (++pollMisses <= 3) continue;
-      throw new Error(stillRunning(sfErrorMsg(statusRes.status, statusRes.body, statusUrl)));
+      throw unread(stillRunning(sfErrorMsg(statusRes.status, statusRes.body, statusUrl)));
     }
     pollMisses = 0;
 
     let payload;
     try { payload = JSON.parse(statusRes.body); }
-    catch (_) { throw new Error(`Deployment ${jobId}: the status reply could not be read — check Setup → Deployment Status before deploying again.`); }
+    catch (_) { throw unread(`Deployment ${jobId}: the status reply could not be read — check Setup → Deployment Status before deploying again.`); }
     const deployResult = payload.deployResult || payload;
 
     if (deployResult.done) {
@@ -5085,14 +5149,10 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel, checkOnly) {
           ...(deployResult.errorMessage ? { errorMessage: String(deployResult.errorMessage) } : {}) };
       }
       if (deployResult.success) return { success: true };
-      const failures = deployResult.details?.componentFailures || [];
-      const msg = failures.map(f => f.problem).filter(Boolean).join('; ')
-                  || deployResult.errorMessage
-                  || 'Deployment failed';
-      throw new Error(msg);
+      throw new Error(sftkDeployFailureText(deployResult));
     }
   }
-  throw new Error(stillRunning('Salesforce had not finished it after 100 seconds'));
+  throw unread(stillRunning(`Salesforce had not finished it after ${plan.waited}`));
 }
 
 // ---------------------------------------------------------------

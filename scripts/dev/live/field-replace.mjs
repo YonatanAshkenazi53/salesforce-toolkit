@@ -161,7 +161,7 @@ export default async function (h) {
   if (step === 'every') {
     const sel = `.fc-fix-every[data-swap="${process.env.SWAP === '0' ? '0' : '1'}"]`;
     h.log('everything box:', await dump(h, '#fcFixEvery', 400));
-    if (!(await h.eval(`!!document.querySelector(${JSON.stringify(sel)})`))) { h.log('no such button'); return; }
+    if (!(await h.eval(`!!document.querySelector(${JSON.stringify(sel)})`))) throw new Error('no such button: ' + sel);
     await h.eval(`document.querySelector(${JSON.stringify(sel)}).click()`);
     // WHY (2026-11-15): "Everything at once" now asks WHICH ones first (the 🔒 that block the delete, or also the 👀
     // that might break) when the list holds both. Unanswered, the walk never started: 0 dialogs, exit 0, nothing done.
@@ -201,7 +201,7 @@ export default async function (h) {
     h.log('all-buttons offered:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-fix-all[data-type="Flow"]')].map(b => b.textContent.trim())`)));
     const lbl = await h.eval(`(() => { const b = document.querySelector(${JSON.stringify(allSel)}); return b ? b.textContent.trim() : null; })()`);
     h.log('pressing:', lbl);
-    if (!lbl) return;
+    if (!lbl) throw new Error('no such button: ' + allSel);
     await h.eval(`document.querySelector(${JSON.stringify(allSel)}).click()`);
     let dialogs = 0;
     for (let i = 0; i < 12; i++) {

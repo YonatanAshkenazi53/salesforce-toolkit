@@ -6172,7 +6172,7 @@ button.ds-badge-masked:hover { filter: brightness(1.1); }
 .ds-pii-sug-top { margin-bottom: 10px; }
 .ds-pii-sug-lead { font-size: 13px; }
 .ds-pii-sug-more { margin-top: 4px; font-size: 12px; }
-.ds-pii-sug-more > summary { cursor: pointer; color: var(--accent, #2563eb); width: fit-content; user-select: none; }
+.ds-pii-sug-more > summary { cursor: pointer; color: var(--brand, #0176d3); width: fit-content; user-select: none; }
 .ds-pii-sug-more[open] > summary { margin-bottom: 6px; }
 .ds-pii-sug-more .ds-pii-sug-note-line { margin: 6px 0 0; }
 .ds-pii-sug-warn { font-size: 12px; background: #fef3c7; color: #92400e; border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; }
@@ -6182,11 +6182,11 @@ button.ds-badge-masked:hover { filter: brightness(1.1); }
 .ds-pii-sug-obj-hd { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 7px 12px; background: var(--surface2); font-size: 13px; }
 .ds-pii-sug-count { margin-left: 0; }
 .ds-pii-sug-objpick { margin-left: auto; font-size: 11.5px; font-weight: 400; color: var(--subtext); }
-.ds-pii-sug-objpick .ds-linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent, #2563eb); cursor: pointer; }
+.ds-pii-sug-objpick .ds-linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--brand, #0176d3); cursor: pointer; }
 .ds-pii-sug-objpick .ds-linkbtn:hover { text-decoration: underline; }
 .ds-pii-sug-obj .ds-pii-sug-empty { padding: 8px 12px; }
 .ds-pii-sug-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) 270px; column-gap: 10px; row-gap: 3px; align-items: center; padding: 8px 12px; border-radius: 0; border-top: 1px solid var(--border); cursor: default; }
-.ds-pii-sug-row.ds-pii-sug-on { background: color-mix(in srgb, var(--accent, #2563eb) 6%, transparent); }
+.ds-pii-sug-row.ds-pii-sug-on { background: color-mix(in srgb, var(--brand, #0176d3) 6%, transparent); }
 .ds-pii-sug-row .ds-pii-sug-field { display: flex; flex-direction: column; min-width: 0; font-size: 12.5px; }
 .ds-pii-sug-row .ds-pii-sug-field strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-pii-sug-row .ds-pii-sug-reason { padding-left: 0; font-size: 11px; }

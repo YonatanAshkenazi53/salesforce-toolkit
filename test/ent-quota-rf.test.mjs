@@ -159,7 +159,8 @@ describe('fcEstimateScanCalls (field-cleaner.js)', () => {
     const e = fcEstimateScanCalls(null);
     expect(e.now).toBe(30);   // +2 on 2026-11-18: Apex classes and triggers are read for the field in a string   // +2 on 2026-11-10: the check-only delete (Ask Salesforce) rides every scan;   // +1 on 2026-11-10: the email-template read; +1 the same day: the object's search layouts
     expect(e.known).toBe(false);
-    expect(e.moreIf).toHaveLength(10);
+    expect(e.moreIf).toHaveLength(16);   // QA 1.1 findings 24 and 22: six more legs open one call per item (or per ten) and are named
+    expect(e.moreIf).toContain('inactive validation rule on this object');
     expect(e.moreIf).toContain('page layout of a parent object');   // 2026-11-19: no bound on the related-list read — its cost is said
     expect(e.moreIf).toContain('Lightning page in the org');
     expect(e.moreIf).toContain('list view on this object');
@@ -168,7 +169,7 @@ describe('fcEstimateScanCalls (field-cleaner.js)', () => {
   });
 
   it('every discovered leg moves from "more if" into the floor at 1 call per item', () => {
-    const e = fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0, customSettings: 0, parentLayouts: 0 });
+    const e = fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0, customSettings: 0, parentLayouts: 0, childObjects: 0, validationRulesOff: 0, paths: 0, promptTemplateBatches: 0, compactLayoutBatches: 0, fieldUpdates: 0 });
     expect(e.now).toBe(30 + 40 + 6 + 3 + 2);
     expect(e.known).toBe(true);
     expect(e.moreIf).toEqual([]);
@@ -178,7 +179,7 @@ describe('fcEstimateScanCalls (field-cleaner.js)', () => {
     const e = fcEstimateScanCalls({ flexiPages: 40 });
     expect(e.now).toBe(70);
     expect(e.known).toBe(false);
-    expect(e.moreIf).toHaveLength(9);
+    expect(e.moreIf).toHaveLength(15);
     expect(e.moreIf).not.toContain('Lightning page in the org');
   });
 
@@ -186,7 +187,7 @@ describe('fcEstimateScanCalls (field-cleaner.js)', () => {
     const e = fcEstimateScanCalls({ flexiPages: 'many', listViews: -2, quickActions: NaN, reportTypes: 'some', workflowRules: 'few', approvals: -1, duplicateRules: {}, customMetadata: 'none' });
     expect(e.now).toBe(30);   // +1 on 2026-11-10: the email-template read; +1 the same day: the object's search layouts
     expect(e.known).toBe(false);
-    expect(e.moreIf).toHaveLength(10);
+    expect(e.moreIf).toHaveLength(16);
   });
 });
 
@@ -206,7 +207,7 @@ describe('fcScanBudgetLine (field-cleaner.js)', () => {
   });
 
   it('a fully known cost drops the conditional clause', () => {
-    const line = fcScanBudgetLine(fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0, customSettings: 0, parentLayouts: 0 }), null);
+    const line = fcScanBudgetLine(fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 0, approvals: 0, duplicateRules: 0, customMetadata: 0, customSettings: 0, parentLayouts: 0, childObjects: 0, validationRulesOff: 0, paths: 0, promptTemplateBatches: 0, compactLayoutBatches: 0, fieldUpdates: 0 }), null);
     expect(line.text).toBe('≈81 API calls');
   });
 

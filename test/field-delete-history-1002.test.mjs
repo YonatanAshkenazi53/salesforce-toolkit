@@ -4,11 +4,11 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 const FC = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8');
-const doDelete = FC.slice(FC.indexOf('async function doDelete(fieldId) {'), FC.indexOf('// ── XML Inspector'));
+const doDelete = FC.slice(FC.indexOf('async function doDelete(fieldId, target) {'), FC.indexOf('// ── XML Inspector'));
 
 describe('🗑 Delete Field is journaled and the page forgets the field', () => {
   it('opens a History journal before the write and ends it on both outcomes', () => {
-    expect(doDelete).toContain("sftkHistoryBegin({ tool: 'Field Cleaner', title: `🗑 Delete field — ${_selObj?.api}.${_selField?.api}`, orgUrl: _orgUrl })");
+    expect(doDelete).toContain("sftkHistoryBegin({ tool: 'Field Cleaner', title: `🗑 Delete field — ${objApi}.${fldApi}`, orgUrl })");   // QA 1.1 C1: the confirmed field
     expect(doDelete.indexOf('sftkHistoryBegin(')).toBeLessThan(doDelete.indexOf("type: 'SF_TOOLING_DELETE'"));
     expect(doDelete).toContain('sftkHistoryNote(j, { ok: !res.error, accepted: !res.error, verified: !res.error,');
     expect(doDelete).toContain('await sftkHistoryEnd(j, { undo: { none: res.error');

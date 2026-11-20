@@ -391,6 +391,7 @@ describe('Reconcile hands that choice to its own overwrite of drifted records', 
       ${sliceFrom(read('studio-history.js'), 'sftkFieldChanges')}
       ${sliceFrom(read('studio-scan.js'), 'sftkEngineCompareSet')}
       ${sliceFrom(RC, 'sftkReconcileChunkedWrite')}
+      ${sliceFrom(RC, 'sftkRecOwnerThenTyped')}
       ${sliceFrom(RC, 'reconcileOverwrite')}
       return reconcileOverwrite;
     `)(sendBg);

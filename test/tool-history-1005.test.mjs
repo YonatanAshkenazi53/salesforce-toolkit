@@ -176,7 +176,8 @@ describe('Data Studio › History', () => {
   it('lists only its own entries, and counts only those', () => {
     expect(SH).toContain("const split = (typeof sftkHistoryStudioSplit === 'function') ? sftkHistoryStudioSplit(_history) : { mine: _history, kit: {}, kitTotal: 0 };");
     expect(SH).toContain('const sorted = [...split.mine, ...mineArch].sort(');
-    expect(SH).toContain("const mineArch = _archShown.filter(r => typeof sftkHistoryToolTab !== 'function' || !sftkHistoryToolTab(r));");
+    // …and an id the hot list holds is drawn once, from there (QA 1.1 #39)
+    expect(SH).toContain("const mineArch = _archShown.filter(r => r && !hotIds.has(r.id) && (typeof sftkHistoryToolTab !== 'function' || !sftkHistoryToolTab(r)));");
   });
   it('says how many Toolkit changes live in which tool, with a button to each — and that the export still has them', () => {
     const note = SH.slice(SH.indexOf('function _histKitNote('), SH.indexOf('function _histWireKitNote('));

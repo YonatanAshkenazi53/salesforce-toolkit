@@ -33,7 +33,8 @@ describe('one entry deleted', () => {
   it('only the record goes — the function touches the list and nothing else', () => {
     const f = H.slice(H.indexOf('async function sftkHistoryRemove(id) {'), H.indexOf("// ── A backup file of one tool's History, WITH its undo"));
     expect(f).toContain('const keep = list.filter(h => !(h && h.id === key));');
-    expect(f).toContain('if (keep.length === list.length) return false;');
+    // QA 1.1 #5: nothing in the list — true only when its archived copy was deleted
+    expect(f).toContain('if (keep.length === list.length) return archived;');
     expect(f).not.toMatch(/SF_|bg\(|send\(/);
   });
 });

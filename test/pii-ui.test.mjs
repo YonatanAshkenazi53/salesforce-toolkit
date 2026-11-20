@@ -263,7 +263,7 @@ describe('Suggest PII masks modal (source)', () => {
   });
 
   it('the 🎭 control opens the chooser for one field; Apply mints the salt, Remove lifts the rule', () => {
-    expect(BUILDER).toContain('bldOpenPiiFieldModal(ctx.objType, field);');
+    expect(BUILDER).toContain('bldOpenPiiFieldModal(ctx.objType, field, { returnToMapping: true });');
     const fm = BUILDER.slice(BUILDER.indexOf('async function bldOpenPiiFieldModal'));
     expect(fm).toMatch(/const res = bldPiiSetRule\(p, objectApi, field, rule\);\s*\n\s*if \(res === 'added'\) bldPiiEnsureSalt\(_editingProfile\);/);
     expect(fm).toContain('will be masked (pseudonymized) at write time');

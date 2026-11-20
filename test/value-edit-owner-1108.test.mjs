@@ -27,7 +27,10 @@ describe('the Owner row', () => {
     expect(VE).toContain("const mapOn = !!(p.ownerMapping && p.ownerMapping.mode === 'match');");
     // 2026-11-19 (owner: "here you dont see who will be the user in the target"): the default is said by sftkVeOwnerWill,
     // with the running user's NAME — test/value-edit-owner-will-1119
-    expect(VE).toContain("const dfl = 'Will belong to ' + sftkVeOwnerWill({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL });");
+    // QA 1.1 finding 47: the whole sentence comes from sftkVeOwnerLine, which is told when the row is an update (a
+    // Changed record keeps or matches its target owner) — test/qa11-builder-owner-update
+    expect(VE).toContain("const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' });");
+    expect(VE).toContain("if (!x.upd) return 'Will belong to ' + sftkVeOwnerWill(x);");
     expect(VE).toContain('data-ve-own-clear="1" title="Forget this pick — the owner is matched by name again">✕ back to matching</button>');
   });
   it('the search lists the queues that take this object and the active standard users of the target, each a pick', () => {

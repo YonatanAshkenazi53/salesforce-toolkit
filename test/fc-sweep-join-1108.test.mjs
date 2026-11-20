@@ -32,9 +32,9 @@ describe('sftkSweepJoinKind / sftkSweepIdQuery', () => {
     for (const t of ['Flow', 'FlexiPage', 'Layout', 'Report', 'Profile', 'PermissionSet', 'Translations', 'AuraDefinitionBundle', 'PathAssistant']) expect(S.sftkSweepJoinKind(t)).toBeNull();
   });
   it('a code kind is found by name; the rest need no id', () => {
-    expect(S.sftkSweepIdQuery('ApexClass', 'SFTK_Live_Class')).toBe("SELECT Id FROM ApexClass WHERE Name = 'SFTK_Live_Class'");
-    expect(S.sftkSweepIdQuery('ApexPage', "O'Brien")).toBe("SELECT Id FROM ApexPage WHERE Name = 'O\\'Brien'");
-    expect(S.sftkSweepIdQuery('LightningComponentBundle', 'lwc/sftkLive')).toBe("SELECT Id FROM LightningComponentBundle WHERE DeveloperName = 'sftkLive'");
+    expect(S.sftkSweepIdQuery('ApexClass', 'SFTK_Live_Class')).toBe("SELECT Id FROM ApexClass WHERE Name = 'SFTK_Live_Class' AND NamespacePrefix = null");
+    expect(S.sftkSweepIdQuery('ApexPage', "O'Brien")).toBe("SELECT Id FROM ApexPage WHERE Name = 'O\\'Brien' AND NamespacePrefix = null");
+    expect(S.sftkSweepIdQuery('LightningComponentBundle', 'lwc/sftkLive')).toBe("SELECT Id FROM LightningComponentBundle WHERE DeveloperName = 'sftkLive' AND NamespacePrefix = null");
     expect(S.sftkSweepIdQuery('ValidationRule', 'Account.X')).toBeNull();
   });
 });

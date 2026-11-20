@@ -2537,7 +2537,20 @@ const sftkMergeHard = (acc, r) => ({
   purgeErrors: [...((acc && acc.purgeErrors) || []), ...((r && r.purgeErrors) || [])],
 });
 
+// PURE. One run per page (QA 1.1, finding 42): a second ▶ Deploy or a 🧪 dry run started while a run is on used to
+// switch the paused rules and flows back on under the live run, wipe its log and remove its ⏸ Pause bar. → the
+// sentence that refuses the new one, or '' when no run is on.
+function sftkRecRunBusyLine(active, probe) {
+  if (!active) return '';
+  return `A run is already in progress on this page — ${probe ? 'the dry run' : 'this run'} was not started and nothing was switched or written. Wait for the run to finish, or press ⏸ Pause and wait for it to stop, then try again.`;
+}
+// The run and dry-run buttons, looked up fresh each time: a repaint during a run replaces the nodes.
+function _recRunBtnsLock(on) {
+  for (const id of ['dsRecRunBtn', 'dsRecProbeBtn']) { const b = eid(id); if (b) b.disabled = !!on; }
+}
 async function runReconcile(profile, objType, buckets, opts) {
+  // refused before the confirmation, before any pause (beforeWrites) and before this page's log is touched
+  { const busy = sftkRecRunBusyLine(window._sftkRunActive, !!(opts && opts.probe === true)); if (busy) { showToast(busy, 'warning', 7000); return; } }
   // ⏸ Record-triggered flows paused for this run (user 2026-09-29, Deploy page
   // option — sftk-flowpause.js): opts.flowPause = { flows, managed } is listed
   // in the confirmation; opts.beforeWrites(tgtSess, log) switches them off
@@ -3022,9 +3035,11 @@ async function runReconcile(profile, objType, buckets, opts) {
   // the flying ragdoll in the header while the run goes (owner 2026-11-14: "i want the kitty there when inserting"),
   // and the log comes into view (owner 2026-11-14, on a dry run: "kinda hard to see whats going on and you need to scroll down")
   const runCat = window.sftkCatSvg ? `<span class="ds-prog-cat">${window.sftkCatSvg('load', 44)}</span>` : '';   // 44 (drawn at about 90 px by the header's own scale), not 26 (owner 2026-11-19: "kitty here is not big enough")
+  // …and again here, after the confirmation's wait: from this line to the flag below nothing waits, so two runs cannot both pass
+  { const busy = sftkRecRunBusyLine(window._sftkRunActive, PROBE); if (busy) { showToast(busy, 'warning', 7000); return; } }
   if (prog) prog.innerHTML = PROBE ? `<div class="ds-prog-hdr">${runCat}🧪 Dry run — nothing is written</div>` : `<div class="ds-prog-hdr">${runCat}Transfer progress</div>`;
   try { prog?.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { /* a view without the log */ }
-  const runBtn = eid('dsRecRunBtn'); if (runBtn) runBtn.disabled = true;
+  _recRunBtnsLock(true);   // both ▶ and 🧪 — the dry run button was left enabled during a run
   // The Deploy page re-renders on every state change (a ring tile landing, a
   // tab switch) — while this flag is on it keeps the SAME #dsRecProgress node
   // instead of snapshotting it as "Last run on this page" (user 2026-10-01:
@@ -3037,7 +3052,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   const tgtSess = _resolveSession(profile.targetOrg, allSess);
   if (!srcSess?.sid || !tgtSess?.sid) {
     log('❌', 'Source or target org session not active — open both in Chrome tabs.', 'ds-prog-err');
-    if (runBtn) runBtn.disabled = false;
+    _recRunBtnsLock(false);
     window._sftkRunActive = false;
     return;
   }
@@ -3045,7 +3060,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   if ((_fp || _vp) && opts && typeof opts.beforeWrites === 'function') {
     let go = false;
     try { go = await opts.beforeWrites(tgtSess, log); } catch (e) { log('❌', `Pausing the automation failed — the run did not start: ${e?.message || e}`, 'ds-prog-err'); go = false; }
-    if (!go) { if (runBtn) runBtn.disabled = false; window._sftkRunActive = false; return; }
+    if (!go) { _recRunBtnsLock(false); window._sftkRunActive = false; return; }
   }
 
   // Stream the engine's per-batch progress into the reconcile log (also
@@ -3815,7 +3830,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       window._sftkRunActive = false;
       eid('dsRunPauseBar')?.remove();
       try { recPort?.disconnect(); } catch (_) {}
-      if (runBtn) runBtn.disabled = false;
+      _recRunBtnsLock(false);
       return;
     }
     const notStarted = `Not started — the remaining steps of this run were skipped: ${busyLine}`;
@@ -4855,23 +4870,14 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         lkpOvUsed++;
       }
     }
-    // ✏ typed values: written in place of the source's, under the mapped name; a PII-covered field keeps its masked value
+    // Owners: matched name → that user; unmatched → fallback; no fallback → the target's current owner stays
+    // untouched. THEN the ✏ typed values: written in place of the source's, under the mapped name; a PII-covered
+    // field keeps its masked value. In that order, so an owner picked in the record editor is the one written.
     const valForRec = valOv && valOv[sr.Id] && typeof valOv[sr.Id] === 'object' ? valOv[sr.Id] : null;
-    if (valForRec) {
-      const vr = sftkValOvApply(p, valForRec, fm, tgtUpdOk, sf => piiActive && !!piiRules[String(sf).toLowerCase()]);
-      valOvUsed += vr.used; valOvMasked += vr.masked;
-    }
-    // Owners: matched name → that user; unmatched → fallback; no fallback →
-    // the target's current owner stays untouched.
-    if (wantOwners) {
-      const oname = sr.Owner ? sr.Owner.Name : null;
-      if (oname) {
-        const matched = ownerByName.get(oname);
-        if (matched)           p.OwnerId = matched;
-        else if (ownerFallback) { p.OwnerId = ownerFallback; ownerFellBack++; }
-        else                    ownerKept++;
-      }
-    }
+    const ot = sftkRecOwnerThenTyped(p, { wantOwners, ownerName: sr.Owner ? sr.Owner.Name : null, ownerByName, ownerFallback },
+      valForRec ? pl => sftkValOvApply(pl, valForRec, fm, tgtUpdOk, sf => piiActive && !!piiRules[String(sf).toLowerCase()]) : null);
+    valOvUsed += ot.used; valOvMasked += ot.masked;
+    ownerFellBack += ot.fellBack; ownerKept += ot.kept;
     payloads.push(p);
     // History/audit outlive the run — a raw label for a record whose name
     // (or name parts) are under policy would leak the exact data the
@@ -5462,13 +5468,33 @@ function sftkRefusalSource(code, why, rules) {
   }
   return { what: 'Salesforce', by: '' };
 }
+// PURE. One update payload: the owner mapping first, the values typed in the record editor after it — the insert
+// engine's order (background.js). The other way round, an owner PICKED in the editor was replaced by the name match
+// or the fallback user on a Changed record while the log still counted it as written (QA 1.1, finding 46).
+//   o: { wantOwners, ownerName, ownerByName: Map name → user id, ownerFallback }; applyTyped(p) → { used, masked } | null
+// Mutates p. → { used, masked, fellBack, kept } — fellBack / kept count only when the mapping's outcome is what is written.
+function sftkRecOwnerThenTyped(p, o, applyTyped) {
+  const out = { used: 0, masked: 0, fellBack: 0, kept: 0 };
+  let how = '';
+  if (o && o.wantOwners && o.ownerName) {
+    const matched = o.ownerByName && o.ownerByName.get(o.ownerName);
+    if (matched) p.OwnerId = matched;
+    else if (o.ownerFallback) { p.OwnerId = o.ownerFallback; how = 'fellBack'; }
+    else how = 'kept';
+  }
+  const mapped = p.OwnerId;
+  const vr = typeof applyTyped === 'function' ? applyTyped(p) : null;
+  if (vr) { out.used = vr.used || 0; out.masked = vr.masked || 0; }
+  if (how && p.OwnerId === mapped) out[how] = 1;   // a picked owner replaced it: no "fallback" / "kept" warning for this record
+  return out;
+}
 // In a dry run: does the ⏸ panel pause what refused these records? PURE. → a sentence, or ''.
 //   paused: { rules: [{ name, object }], flows: [{ label, object }], rulesOn, flowsOn }
 function sftkProbePauseNote(src, obj, paused) {
   if (!src || !paused) return '';
   if (src.what === 'a validation rule' && src.by) {
     if ((paused.rules || []).some(r => r.name === src.by && (!r.object || r.object === obj))) return `⏸ You ticked this rule to be paused: a real ▶ Deploy switches ${src.by} off first, so these records would NOT be refused by it. A dry run switches nothing off — that is why it still shows here.`;
-    return paused.rulesOn ? `⏸ “pause validation rules” is on, but ${src.by} is not among the rules it pauses (unticked in the ⏸ panel, or from a package) — a real ▶ Deploy would be refused the same way.` : `Tick ⏸ “pause validation rules” to have a real ▶ Deploy switch ${src.by} off while it writes.`;
+    return paused.rulesOn ? `⏸ “pause validation rules” is on, but ${src.by} is not among the rules it pauses (unticked in the ⏸ panel) — a real ▶ Deploy would be refused the same way.` : `Tick ⏸ “pause validation rules” to have a real ▶ Deploy switch ${src.by} off while it writes.`;
   }
   if (/flow/.test(src.what)) {
     const mine = (paused.flows || []).filter(f => !f.object || f.object === obj);
@@ -5476,6 +5502,12 @@ function sftkProbePauseNote(src, obj, paused) {
     return paused.flowsOn ? '' : `If a record-triggered flow raises this, ⏸ “pause record-triggered flows” would switch it off for a real ▶ Deploy.`;
   }
   return '';
+}
+// PURE. Tooling ValidationRule rows → [{ name, message }], each named as the ⏸ panel names it (sftkVrPauseSelect): a
+// rule of an installed package carries its namespace, ns__Rule. Without it a ticked packaged rule never matched the
+// paused list, and the dry run said a real run "would be refused the same way" (QA 1.1, finding 45).
+function sftkRecRuleRows(records) {
+  return (records || []).map(r => ({ name: r.NamespacePrefix ? `${r.NamespacePrefix}__${r.ValidationName}` : r.ValidationName, message: r.ErrorMessage }));
 }
 // The target's active validation rules on an object, with their messages — one Tooling query, once per object and run.
 const _recRuleMsgs = new Map();   // `${orgUrl}|${obj}` → [{ name, message }] | null (could not be read)
@@ -5486,8 +5518,8 @@ async function _recRulesFor(sess, obj) {
   let out = null;
   try {
     const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
-      query: `SELECT ValidationName, ErrorMessage FROM ValidationRule WHERE Active = true AND EntityDefinition.QualifiedApiName = ${soqlStrLit(obj)}` });
-    if (q && !q.error) out = (q.records || []).map(r => ({ name: r.ValidationName, message: r.ErrorMessage }));
+      query: `SELECT ValidationName, NamespacePrefix, ErrorMessage FROM ValidationRule WHERE Active = true AND EntityDefinition.QualifiedApiName = ${soqlStrLit(obj)}` });
+    if (q && !q.error) out = sftkRecRuleRows(q.records);
   } catch (_) { out = null; }
   _recRuleMsgs.set(k, out);
   return out;

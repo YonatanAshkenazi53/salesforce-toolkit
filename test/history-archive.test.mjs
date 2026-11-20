@@ -83,7 +83,8 @@ describe('archive plumbing — schema, view, and clear paths', () => {
   it('the History view auto-displays the archive: bar + load-older + full export', () => {
     expect(hist).toMatch(/dsArchBar/);
     expect(hist).toMatch(/sftkArchCount/);
-    expect(hist).toMatch(/sftkArchList\(oldest, 50\)/);
+    // paged from the archive's own bound, not the hot list's oldest date (QA 1.1 #40 — qa11-history-arch-paging.test.mjs)
+    expect(hist).toMatch(/sftkArchList\(_archBound, 50\)/);
     // Full export walks the WHOLE archive in one cursor pass — no pagination
     // seams that could drop same-second entries between pages.
     expect(hist).toMatch(/sftkArchList\(null, 1e9\)/);
@@ -92,8 +93,11 @@ describe('archive plumbing — schema, view, and clear paths', () => {
     expect(hist).toMatch(/📦 archived/);
   });
 
-  it('both clear paths clear the archive (🗑 Clear All and 🧹 Clear cached)', () => {
+  it('both clear paths reach the archive (🗑 Clear All and 🧹 Clear cached)', () => {
+    // 🧹 Clear cached empties it. 🗑 Clear All deletes this page's runs from it and leaves the Toolkit tools'
+    // changes, which the page does not list (QA 1.1 #6 — see qa11-history-clearall.test.mjs).
     const clears = hist.match(/sftkArchClear\(\)/g) || [];
-    expect(clears.length).toBeGreaterThanOrEqual(2);
+    expect(clears.length).toBeGreaterThanOrEqual(1);
+    expect(hist).toContain('await archDrop(e => !sftkHistoryToolTab(e));');
   });
 });

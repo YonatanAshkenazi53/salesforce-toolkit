@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { extractFunctions } from './extract.mjs';
 
 const SRC = readFileSync(new URL('../studio-builder.js', import.meta.url), 'utf8');
-const { bldPiiExampleQuery, bldPiiExampleWhy } = extractFunctions('studio-builder.js', ['bldPiiExampleQuery', 'bldPiiExampleWhy']);
+const { bldPiiExampleQuery, bldPiiExampleWhy } = extractFunctions('studio-builder.js', ['bldPiiExampleQuery', 'bldPiiExampleWhy', 'bldPiiPersonaCols']);   // the query's persona columns come from bldPiiPersonaCols (QA 1.1, finding 48)
 
 describe('the example of a masked field', () => {
   it('reads the newest record that holds a value, with the fields a fabricated person is seeded from', () => {

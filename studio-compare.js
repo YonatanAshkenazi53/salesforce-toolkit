@@ -459,8 +459,20 @@ async function _ocCompareOneObject(objName, srcSess, tgtSess) {
   }
   if (srcRes?.error) return { error: `source: ${srcRes.error}` };
   if (tgtRes?.error) return { error: `target: ${tgtRes.error}` };
+  // A read that ended on another row count than Salesforce announced carries no error, only `incomplete`
+  // (background.js sfQueryAll). Counting it would report the rows that did not arrive as missing / only in
+  // target, so the object is not compared at all and the row says why (QA 1.1, finding 54).
+  const incMsg = sftkOcIncompleteMsg('source', srcRes) || sftkOcIncompleteMsg('target', tgtRes);
+  if (incMsg) return { error: incMsg };
 
   return sftkOcCountByKey(srcRes.records || [], tgtRes.records || [], effectiveKey);
+}
+
+// PURE. Why one side's read cannot be compared — '' when the read is complete.
+function sftkOcIncompleteMsg(side, res) {
+  const inc = res && res.incomplete;
+  if (!inc) return '';
+  return `${side}: the read came back incomplete (Salesforce says ${inc.expected} record(s), ${inc.got} arrived) — not compared. Run the compare again.`;
 }
 
 // PURE. Count records (not distinct keys) on both sides of one object.

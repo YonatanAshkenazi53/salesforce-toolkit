@@ -2326,8 +2326,57 @@ function bldPiiMaskBtnClick(e) {
   if (!ctx || !_editingProfile) return;
   const field = btn.dataset.mask;
   // v2: the chooser — every treatment the field's type can take, with three
-  // real values and what they become; Apply mints the salt, Remove lifts the rule
-  bldOpenPiiFieldModal(ctx.objType, field);
+  // real values and what they become; Apply mints the salt, Remove lifts the rule.
+  // The chooser takes the one modal box, so the Fields & mapping window is set
+  // aside whole and comes back when the chooser closes — its unapplied edits,
+  // its per-target exceptions and its Apply button with it.
+  bldOpenPiiFieldModal(ctx.objType, field, { returnToMapping: true });
+}
+
+// ── The Fields & mapping window, set aside while the 🎭 chooser is up ──
+// showModal() replaces the content of the single #dsModalBox. The mapping
+// window keeps state that reaches the node only on its Apply (the per-target
+// exceptions of a node that had none), so replacing it would drop that work.
+// The live nodes are lifted out instead — listeners and typed values stay on
+// them — and put back, however the chooser is closed (Apply, Remove, Cancel,
+// ✕, Escape).
+let _bldPiiParked = null;          // { nodes, scroll } while the chooser is up
+let _bldPiiParkObserver = null;    // lazy singleton on #dsModal's style
+
+function bldPiiParkModal(box) {
+  const list = box.querySelector('#dsFmList');
+  const parked = { nodes: [], scroll: list ? list.scrollTop : 0 };
+  while (box.firstChild) parked.nodes.push(box.removeChild(box.firstChild));
+  return parked;
+}
+
+function bldPiiUnparkModal(box, parked) {
+  while (box.firstChild) box.removeChild(box.firstChild);
+  for (const n of parked.nodes) box.appendChild(n);
+  const list = box.querySelector('#dsFmList');
+  if (list) list.scrollTop = parked.scroll;
+}
+
+// What a closing of the modal means for the parked mapping window:
+// 'wait' — nothing is parked, or the modal is still open; 'restore' — the
+// chooser has just closed, bring the mapping window back; 'drop' — something
+// else took the box meanwhile, so the parked copy is no longer what the user left.
+function bldPiiParkedNext(hasParked, overlayHidden, chooserInBox) {
+  if (!hasParked || !overlayHidden) return 'wait';
+  return chooserInBox ? 'restore' : 'drop';
+}
+
+function bldPiiReturnToMapping() {
+  const overlay = eid('dsModal'), box = eid('dsModalBox');
+  if (!overlay || !box) return;
+  const next = bldPiiParkedNext(!!_bldPiiParked, overlay.style.display === 'none', !!box.querySelector('#dsPiiFieldApply'));
+  if (next === 'wait') return;
+  const parked = _bldPiiParked;
+  _bldPiiParked = null;
+  if (next === 'drop') return;
+  bldPiiUnparkModal(box, parked);
+  overlay.style.display = 'flex';
+  bldPiiDecorateRows();
 }
 
 // ── The masked fields of one object: what masking does, and a way out of it ──
@@ -2343,8 +2392,15 @@ function bldPiiRulesForObjectList(policy, objectApi) {
 // the newest record of the source that holds a value in the field — the real value struck through, what Deploy
 // writes instead, and the record it comes from. Read-only; one small query per field. A field the source cannot
 // filter on (long text) is read without the filter and the first value found is used.
+// The columns a fabricated persona and its e-mail domain are hashed from (sftkPiiPersonaSeed, sftkPiiDomainSeed):
+// the name parts, and the Account — or, on a Lead, the Company — the domain follows. Every read behind an example
+// asks for the ones the object has, so the example is seeded like the run (QA 1.1, finding 48: without Company a
+// Lead's example showed another domain than Deploy writes). PURE.
+function bldPiiPersonaCols(has, field) {
+  return ['FirstName', 'LastName', 'Name', 'AccountId', 'Company'].filter(n => n !== field && has(n));
+}
 function bldPiiExampleQuery(objectApi, field, desc, fieldNames) {
-  const extra = ['FirstName', 'LastName', 'Name', 'AccountId'].filter(n => n !== field && (fieldNames || []).includes(n));
+  const extra = bldPiiPersonaCols(n => (fieldNames || []).includes(n), field);
   const cols = [field, ...extra].join(', ');
   return desc && desc.filterable === false
     ? `SELECT ${cols} FROM ${objectApi} ORDER BY LastModifiedDate DESC LIMIT 50`
@@ -2501,7 +2557,9 @@ async function bldPiiPreviewPairs(profile, objectApi, field, desc, rule, records
     if (v == null || v === '') continue;
     let ctx = null;
     try {
-      const seed = sftkPiiPersonaSeed(r, v);
+      // seeded exactly as the run seeds it (background.js sftkPiiMaskRows): a record with no name parts takes the
+      // constant 'value|' seed, never one made of the field's own value — else the fallback domain differs
+      const seed = sftkPiiPersonaSeed(r, '');
       const hebrew = sftkPiiHasHebrew([r.FirstName, r.LastName, r.Name].filter(Boolean).join(' '));
       const persona = sftkPiiPersona(await sftkPiiHashHex(seed, salt), hebrew);
       const dseed = sftkPiiDomainSeed(r);
@@ -2570,7 +2628,7 @@ async function bldOpenPiiSuggestModal(opts) {
       if (!q?.error && Array.isArray(q.records)) for (const r of q.records) if (r.QualifiedApiName && r.ComplianceGroup) complianceByField[r.QualifiedApiName] = r.ComplianceGroup;
       // v2 — the VALUES: 200 recent rows of every text-like field (the strongest signal there is)
       const sampleFields = d.fields.filter(f => f && f.name && SAMPLE_TYPES.has(f.type) && !f.calculated && f.name !== 'Id').map(f => f.name).slice(0, 60);
-      const personaFields = ['Id', 'FirstName', 'LastName', 'Name', 'AccountId'].filter(n => d.fields.some(f => f.name === n) && !sampleFields.includes(n));
+      const personaFields = ['Id', ...bldPiiPersonaCols(() => true, '')].filter(n => d.fields.some(f => f.name === n) && !sampleFields.includes(n));
       const only = byObj ? (byObj[obj] || []).filter(x => /^[A-Za-z0-9]{15,18}$/.test(String(x))).slice(0, 200) : null;
       if (sampleFields.length && (!only || only.length)) {
         const q2 = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
@@ -2687,7 +2745,7 @@ async function bldOpenPiiSuggestModal(opts) {
 
 // One field: the 🎭 control's chooser. Three real values, every treatment
 // the type can take, Apply / Remove.
-async function bldOpenPiiFieldModal(objectApi, field) {
+async function bldOpenPiiFieldModal(objectApi, field, opts) {
   const p = _editingProfile;
   if (!p || !objectApi || !field) return;
   bldPiiEnsureSalt(p);
@@ -2700,10 +2758,20 @@ async function bldOpenPiiFieldModal(objectApi, field) {
   let records = [];
   const sess = _builderSession();
   if (sess.orgUrl && sess.sid) {
-    const extra = ['FirstName', 'LastName', 'Name', 'AccountId'].filter(n => n !== field && d && d.fields.some(f => f.name === n));
+    const extra = bldPiiPersonaCols(n => !!(d && Array.isArray(d.fields) && d.fields.some(f => f.name === n)), field);
     const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
       query: `SELECT ${[field, ...extra].join(', ')} FROM ${objectApi} WHERE ${field} != null ORDER BY LastModifiedDate DESC LIMIT 3` });
     if (!q?.error && Array.isArray(q.records)) records = q.records;
+  }
+  // opened from Fields & mapping: set that window aside (only if it is still
+  // the one up — the reads above take a moment) and watch for the chooser closing
+  const mbox = eid('dsModalBox'), movl = eid('dsModal');
+  if (opts && opts.returnToMapping && mbox && movl && movl.style.display !== 'none' && mbox.querySelector('#dsFmList')) {
+    _bldPiiParked = bldPiiParkModal(mbox);
+    if (!_bldPiiParkObserver) {
+      _bldPiiParkObserver = new MutationObserver(bldPiiReturnToMapping);
+      _bldPiiParkObserver.observe(movl, { attributes: true, attributeFilter: ['style'] });
+    }
   }
   showModal(`<div class="ds-modal-header">🎭 ${esc(objectApi)}.${esc(field)} <span class="ds-pii-sug-type">${esc(desc.type || '')}</span><button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
     <div class="ds-modal-body">

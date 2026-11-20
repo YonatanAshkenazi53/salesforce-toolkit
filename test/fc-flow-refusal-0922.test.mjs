@@ -50,7 +50,9 @@ describe('flow fix — the deploy refusal', () => {
     expect(win).toMatch(/String\(deployRes\.error\)/);
     expect(win).not.toMatch(/_feText\(deployRes\.error\)/);
     expect(win).toMatch(/Nothing was deleted/);
-    expect(win).toMatch(/Switch the flow off and delete its versions/);
+    // the delete it points at is the button on the flow's card; the walk whose radio it used to quote is gone (QA 1.1 finding 69)
+    expect(win).toMatch(/Press 🗑 Delete versions · flow off on this flow, or open in Flow Builder/);
+    expect(win).not.toMatch(/in a walk over all items/);
     expect(win).toMatch(/Flow Builder/);
     expect(SRC).not.toMatch(/Couldn't deploy the fixed/);
   });

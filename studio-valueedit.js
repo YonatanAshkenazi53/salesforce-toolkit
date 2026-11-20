@@ -26,20 +26,49 @@ function sftkVeOwnerWill(o) {
   if (x.src && !x.src.queue) return `the user in ${tl} that matches ${x.src.name} — and when there is no such user, ${last}.`;
   return `${last}${x.src ? ' — a queue is not matched between orgs' : ''}.`;
 }
-// The name of the user who runs the deployment, in that org (one read per org per page; '' when it cannot be read).
-const _sftkVeMe = new Map();
+// The whole sentence of the Owner row. A NEW record (mode 'ins') "will belong to" someone — sftkVeOwnerWill. A
+// CHANGED record (mode 'chg', o.upd) already has an owner in the target, and the update (studio-reconcile.js,
+// sftkRecOwnerThenTyped) never hands it to the running user: owners not copied → OwnerId is not sent and the owner
+// stays; owners matched → the active user of the same NAME, else the fallback user, else the owner stays (QA 1.1,
+// finding 47: the row said "Will belong to <you>" on a Changed record). PURE.
+//   o: sftkVeOwnerWill's, and { upd, tgtName (the record's owner in the target now, '' = not read) }
+function sftkVeOwnerLine(o) {
+  const x = o || {};
+  if (!x.upd) return 'Will belong to ' + sftkVeOwnerWill(x);
+  const tl = x.tgtL || 'the target';
+  const cur = x.tgtName || 'its current owner';
+  if (!x.mapOn) return x.many
+    ? `Each record keeps its current owner in ${tl} — the update does not change owners. This deployment does not copy owners.`
+    : `Stays with ${cur} in ${tl} — the update does not change the owner. This deployment does not copy owners — pick a user or a queue here to give the record to someone else.`;
+  const fb = x.fallbackName ? `the fallback user ${x.fallbackName}` : '';
+  if (x.many) return `Each record is given the active user in ${tl} with the same name as its owner — and where there is no such user, ${fb || 'the record keeps its current owner'}.`;
+  if (!x.src) return `Stays with ${cur} in ${tl} — the source record’s owner could not be read, so the update does not change the owner.`;
+  if (x.src.queue) return fb ? `Will be given to ${fb} — a queue is not matched between orgs.` : `Stays with ${cur} in ${tl} — a queue is not matched between orgs and no fallback user is set.`;
+  return `Will be given to the active user in ${tl} named ${x.src.name} — and when there is no such user, ${fb || `it stays with ${cur}`}.`;
+}
+// The name of the user who runs the deployment, in that org ('' when it cannot be read). One read per org AND
+// session: Login As, or signing in as someone else, puts another user's sid on the same org URL, and the name is
+// then read again (QA 1.1, finding 64: keyed by the org alone, the row kept naming the user before the switch).
+const _sftkVeMe = new Map();   // org URL → { sid, name }
 async function sftkVeRunningUser(sess) {
   if (!sess || !sess.sid) return '';
   const k = String(sess.orgUrl || '');
-  if (_sftkVeMe.has(k)) return _sftkVeMe.get(k);
+  const hit = _sftkVeMe.get(k);
+  if (hit && hit.sid === sess.sid) return hit.name;
   let name = '';
   try {
     const u = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/oauth2/userinfo', _suppressError: true });
     name = (u && !u.error && (u.name || u.preferred_username)) || '';
     if (!name) { const c = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/data/v62.0/chatter/users/me', _suppressError: true }); name = (c && !c.error && (c.displayName || c.name)) || ''; }
   } catch (_) { name = ''; }
-  if (name) _sftkVeMe.set(k, name);
+  if (name) _sftkVeMe.set(k, { sid: sess.sid, name }); else _sftkVeMe.delete(k);
   return name;
+}
+// The saved deployment a record editor's profile stands for. The Deploy page opens the editor of a non-root object
+// with a child-rooted copy that keeps the deployment's id; anything that SAVES must go to the stored object.
+function sftkVeSavedProfile(p, profiles) {
+  if (!p || !Array.isArray(profiles)) return p;
+  return profiles.find(x => x && x.id === p.id) || p;
 }
 async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onSaved, opts) {
   const ids = [...new Set((Array.isArray(srcIds) ? srcIds : [srcIds]).filter(Boolean))];
@@ -215,7 +244,8 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     // the engine (background.js): owners are never copied unless the deployment's owner mapping is on ('match'),
     // and then a USER is matched by name — a queue is not
     const mapOn = !!(p.ownerMapping && p.ownerMapping.mode === 'match');
-    const dfl = 'Will belong to ' + sftkVeOwnerWill({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL });
+    // a Changed row is an update: it says what the update does to the owner the record already has in the target
+    const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' });
     const curName = cur && cur !== '__mixed__' ? nameOf(cur) : '';
     return `<tr class="ds-ve-row ds-ve-owner${cur && cur !== '__mixed__' ? ' ds-ve-row-on' : ''}" data-ve-row="OwnerId" data-ve-search="owner ownerid user queue"><th scope="row">Owner<div class="ds-dep-muted">OwnerId · a user${ownerCanQueue ? ' or a queue' : ''} in ${esc(tgtL)}</div></th>${many ? '' : `<td class="ds-ve-src">${src ? val(ownerText(src)) : val(null)}</td>`}${many || !tgtId ? '' : `<td class="ds-ve-tgt">${tgtOwn ? val(ownerText(tgtOwn)) : val(null)}</td>`}<td class="ds-ve-cell">
       <div class="ds-ve-lkp ds-ve-own" data-ve-own="1" data-ve-own-dfl="${esc(dfl)}">
@@ -236,7 +266,9 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
 
   // 🎭 a field the PII policy covers is written masked — the row says what lands (user 2026-11-07: "display the
   // treated values inside ▸ record"); a typed value never replaces it: the policy wins
-  eid('dsVePiiSug')?.addEventListener('click', () => { closeModal(); window._depPiiSuggest(p, { [obj]: [ids[0]] }, `this record — ${label || ids[0]}`); });
+  // the editor of a child object is handed a VIEW of the deployment ({ ...p, tree: <the child node> }); the policy
+  // belongs to the saved deployment, so the suggestions get that one — never the view, which would be stored in its place
+  eid('dsVePiiSug')?.addEventListener('click', () => { closeModal(); window._depPiiSuggest(sftkVeSavedProfile(p, typeof _profiles !== 'undefined' ? _profiles : null), { [obj]: [ids[0]] }, `this record — ${label || ids[0]}`); });
   if (!many && srcRec && p.piiPolicy && typeof bldPiiRuleFor === 'function' && typeof bldPiiPreviewPairs === 'function') {
     (async () => {
       for (const f of fields) {

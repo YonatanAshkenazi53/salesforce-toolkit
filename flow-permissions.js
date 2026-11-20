@@ -60,8 +60,9 @@ if (typeof globalThis !== 'undefined') globalThis.sftkFlowAccessCheck = sftkFlow
    matching on the flow Ids we display is robust.
 
    Flow Id resolution: each assignable flow (FlowDefinitionView) is joined
-   to its FlowDefinition.Id by DeveloperName; flows with no FlowDefinition
-   row (managed-package / read-only) are skipped.
+   to its FlowDefinition.Id by full name (ns__DeveloperName for a packaged
+   flow); flows with no FlowDefinition row are left out and counted under
+   the list.
 
    NOTE: we do NOT modify runInMode (a Flow-builder setting, not an access
    grant; not a valid FlowDefinition.Metadata property in the Tooling API).
@@ -89,6 +90,57 @@ function sftkFlowAccessWireUndo(doc, api) {
   return on;
 }
 if (typeof globalThis !== 'undefined') { globalThis.sftkFlowAccessOnUndo = sftkFlowAccessOnUndo; globalThis.sftkFlowAccessWireUndo = sftkFlowAccessWireUndo; }
+
+// PURE. QA 1.1 (finding 12): after SESSION_EXPIRED the background may hand back the session of ANOTHER org (its
+// last resorts are "same base domain" and "any org tab"), and a sandbox shares its record Ids with production. A
+// call is sent again only to the SAME org, with a session other than the one that just failed — the rule of
+// popup.js sendBg (freshIsCorrectOrg) and lightning-pages.js lpSessionRetryOk. `orgKey` is sftkOrgKey.
+function sftkFlowAccessRetryOk(origOrgUrl, failedSid, fresh, orgKey) {
+  if (!fresh || !fresh.sid || !fresh.orgUrl || !origOrgUrl || typeof orgKey !== 'function') return false;
+  const a = orgKey(origOrgUrl), b = orgKey(fresh.orgUrl);
+  if (!a || a !== b) return false;
+  return fresh.sid !== failedSid;
+}
+
+// PURE. QA 1.1 (finding 53): the full name of a flow, ns__Name for a packaged one. FlowDefinitionView gives a
+// packaged flow's ApiName WITHOUT its prefix and the NamespacePrefix beside it (live note in sftk-flowbulk.js,
+// 2026-09-03); a name that already carries the prefix is left as it is.
+function sftkFlowAccessFullName(ns, name) {
+  const n = String(name || '');
+  return (ns && !n.startsWith(`${ns}__`)) ? `${ns}__${n}` : n;
+}
+
+// PURE. Joins the assignable flows (FlowDefinitionView rows) to their FlowDefinition Id — the SetupEntityId of a
+// grant — by FULL name, so a packaged flow pkg__Onboard and the org's own Onboard are two rows with two Ids.
+// A flow with no definition row, or whose definition was already taken by another row, is left out and named in
+// `unresolved`: two rows never share one Id (the tick boxes and the grant go by Id).
+//   → { flows: [{ Id, MasterLabel, DeveloperName, ProcessType, TriggerType }], unresolved: [full name] }
+function sftkFlowAccessJoin(viewRows, defRows) {
+  const idByName = new Map();
+  for (const d of (defRows || [])) {
+    if (!d || !d.DeveloperName || !d.Id) continue;
+    idByName.set(sftkFlowAccessFullName(d.NamespacePrefix, d.DeveloperName), d.Id);
+  }
+  const flows = [], unresolved = [], taken = new Set();
+  for (const r of (viewRows || [])) {
+    if (!r || !r.ApiName) continue;
+    const full = sftkFlowAccessFullName(r.NamespacePrefix, r.ApiName);
+    const id = idByName.get(full);
+    if (!id || taken.has(id)) { unresolved.push(full); continue; }
+    taken.add(id);
+    flows.push({ Id: id, MasterLabel: r.Label, DeveloperName: full, ProcessType: r.ProcessType, TriggerType: r.TriggerType || null });
+  }
+  return { flows, unresolved };
+}
+
+// PURE. The line under the flow list: what is not listed, counted and said (never silently left out).
+function sftkFlowAccessNote(selfRunning, unresolved) {
+  const parts = [];
+  if (selfRunning > 0) parts.push(`${selfRunning} more active flow${selfRunning === 1 ? ' is' : 's are'} not listed: record-triggered, scheduled and event flows start by themselves, so nobody is given access to them. Inactive flows are not listed either.`);
+  if (unresolved > 0) parts.push(`${unresolved} flow${unresolved === 1 ? ' is' : 's are'} not listed because Salesforce returned no flow definition for ${unresolved === 1 ? 'it' : 'them'}, so access cannot be granted here. Grant ${unresolved === 1 ? 'it' : 'them'} in Setup, on the permission set's Flow Access page.`);
+  return parts.join(' ');
+}
+if (typeof globalThis !== 'undefined') { globalThis.sftkFlowAccessRetryOk = sftkFlowAccessRetryOk; globalThis.sftkFlowAccessFullName = sftkFlowAccessFullName; globalThis.sftkFlowAccessJoin = sftkFlowAccessJoin; globalThis.sftkFlowAccessNote = sftkFlowAccessNote; }
 
 const FlowPermissions = (() => {
   let _orgUrl, _sid;
@@ -129,7 +181,9 @@ const FlowPermissions = (() => {
     }
     if (resp?.error !== 'SESSION_EXPIRED') return resp;
     const fresh = await sendBgRaw({ type: 'GET_SF_SESSION', activeTabUrl: _orgUrl });
-    if (fresh?.sid && fresh?.orgUrl) {
+    // Same org and a different session only — never another org's session (see sftkFlowAccessRetryOk). Otherwise
+    // the caller gets SESSION_EXPIRED and _orgUrl/_sid stay as they were.
+    if (sftkFlowAccessRetryOk(_orgUrl, msg.sid !== undefined ? msg.sid : _sid, fresh, typeof sftkOrgKey === 'function' ? sftkOrgKey : null)) {
       _orgUrl = fresh.orgUrl;
       _sid    = fresh.sid;
       const retry = msg.sid !== undefined
@@ -255,7 +309,7 @@ const FlowPermissions = (() => {
       //   • Scheduled / Platform Event / Data Cloud → same ProcessType, different TriggerType
       const fdvRes = await sendBg({
         type: 'SF_QUERY_ALL', tooling: false, orgUrl: _orgUrl, sid: _sid,
-        query: `SELECT DurableId, Label, ApiName, ProcessType, TriggerType
+        query: `SELECT DurableId, Label, ApiName, NamespacePrefix, ProcessType, TriggerType
                 FROM FlowDefinitionView
                 WHERE (ProcessType = 'Flow' OR ProcessType = 'AutoLaunchedFlow')
                 AND ActiveVersionId != null
@@ -281,14 +335,9 @@ const FlowPermissions = (() => {
       if (prog) prog.step('defs');
       const fdRes = await sendBg({
         type: 'SF_QUERY_ALL', tooling: true, orgUrl: _orgUrl, sid: _sid,
-        query: `SELECT Id, DeveloperName FROM FlowDefinition`
+        query: `SELECT Id, DeveloperName, NamespacePrefix FROM FlowDefinition`
       });
-      // Build a lookup: DeveloperName → FlowDefinition.Id
-      const fdIdByName = {};
       if (!fdRes || fdRes.error) throw new Error(`the org's flows could not be read — ${(fdRes && fdRes.error) || 'no answer'}`);   // not "No active assignable flows found" (QA 2026-11-11)
-      if (fdRes.records) {
-        for (const r of fdRes.records) fdIdByName[r.DeveloperName] = r.Id;
-      }
 
       // ── Step 3: Build normalised _flows array ─────────────────────────────
       // CRITICAL: only the real FlowDefinition.Id is valid as a SetupEntityId.
@@ -299,23 +348,15 @@ const FlowPermissions = (() => {
       // couldn't resolve a flow to its FlowDefinition row, drop it from the
       // assignable list — managed-package / read-only flows can't get
       // SetupEntityAccess granted to them anyway.
-      const unresolved = [];
-      _flows = assignable
-        .map(r => {
-          const fdId = fdIdByName[r.ApiName];
-          if (!fdId) { unresolved.push(r.ApiName); return null; }
-          return {
-            Id:            fdId,                        // real FlowDefinition.Id
-            MasterLabel:   r.Label,
-            DeveloperName: r.ApiName,
-            ProcessType:   r.ProcessType,
-            TriggerType:   r.TriggerType || null
-          };
-        })
-        .filter(Boolean);
+      // The join is by FULL name (ns__Name for a packaged flow) on both sides, so a packaged flow and an own flow
+      // of the same name never collapse to one Id (QA 1.1, finding 53). What is left out is counted under the list.
+      const joined = sftkFlowAccessJoin(assignable, fdRes.records);
+      const unresolved = joined.unresolved;
+      _flows = joined.flows;                            // Id = the real FlowDefinition.Id
+      _unresolved = unresolved.length;
       if (unresolved.length && window.SFToolkitDebug?.enabled) {
         window.SFToolkitDebug.log('flow-perms', 'info',
-          `${unresolved.length} flow(s) skipped — no matching FlowDefinition row (likely managed-package): ` +
+          `${unresolved.length} flow(s) skipped — no matching FlowDefinition row: ` +
           unresolved.slice(0, 5).join(', ') + (unresolved.length > 5 ? ', …' : ''));
       }
 
@@ -491,14 +532,16 @@ const FlowPermissions = (() => {
   }
 
   let _selfRunning = 0;   // active flows left out because they start by themselves
+  let _unresolved  = 0;   // assignable flows left out because no FlowDefinition row answers to their full name
   function renderFlows() {
     const list    = document.getElementById('fpFlowList');
     const countEl = document.getElementById('fpFlowCount');
     if (!list) return;
     const note = document.getElementById('fpFlowNote');
     if (note) {
-      note.hidden = !_selfRunning;
-      note.textContent = _selfRunning ? `${_selfRunning} more active flow${_selfRunning === 1 ? ' is' : 's are'} not listed: record-triggered, scheduled and event flows start by themselves, so nobody is given access to them. Inactive flows are not listed either.` : '';
+      const text = sftkFlowAccessNote(_selfRunning, _unresolved);
+      note.hidden = !text;
+      note.textContent = text;
     }
 
     const search   = (document.getElementById('fpFlowSearch')?.value || '').toLowerCase().trim();

@@ -13,14 +13,15 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
-## 1.1.0 — 2026-11-04
+## 1.1.0 — 2026-11-20
 
+- **A review of 1.1 and its fixes** (2026-11-20). Every change of this version was read again and 76 faults were fixed. The ones that matter most: Delete Field always deletes the field you confirmed, even if you pick another one while it works. A scan that could not read some kinds no longer says nothing was found. History keeps changes past its 100 newest in an archive you can list, undo and back up, and Clear All in Data Studio no longer removes Toolkit changes. A dry run no longer deletes records that were already in the target. A second deployment run reads each rule again before switching it. Suggest PII and the mask in Fields & mapping keep the rest of the saved deployment. Flow Access and Copy Permissions never send a change to another org after the session ends. CSV exports are safe to open in a spreadsheet.
 - **Field Cleaner: each item shows its own progress** (2026-11-20). During All at once and Undo all, every item gets its own row under the main bar. Its three-part bar fills as the item is read from the org, changed in Salesforce and read again to verify, one item after the other. A finished row keeps its result; a refused one turns red and says why.
 - **Field Cleaner: a clearer done line** (2026-11-20). After a fix, the row shows what was done as a green chip (Deleted, Removed, Replaced), then what happened in plain words, then a small mark when the change was read back from the org. A row that was undone, or where nothing had to change, shows a quiet chip. A run now shows its count once, under the bar.
 - **Field Cleaner rows are lighter and line up** (2026-11-17). Every row now ends with a Setup link that opens that kind in Salesforce Setup. The actions sit in fixed columns (Replace, Remove, Delete, view, Setup), the buttons have no boxes, and the delete button just says Delete.
-- **Every confirmation closes with an X** (2026-11-17). Each confirmation window has a close button in its top corner. In a Remove all or Replace all walk it replaces the Pause button: closing the window leaves the walk waiting, and Continue goes on from the same item.
+- **Every confirmation closes with an X** (2026-11-17). Each confirmation window has a close button in its top corner.
 - **Rows that cannot be removed keep their name** (2026-11-17). A Field Cleaner row with a note saying Remove is not possible lost its name and showed its buttons on the left. The name and buttons now stay on one line and the note sits under them.
-- **Field Cleaner: all at once** (2026-11-17). A new first button next to Remove all opens one screen with every item that uses the field and what will be done to it: replaced where a replacement field is picked, removed where the component works without the field, deleted only where that is the one way and the item holds no logic of its own. Flows, code and rules are never set to Delete by the tool; each row has its own choice, so you can remove the field from one component and delete another. One confirmation runs them all, each with its own restore point, with a progress bar and a stop. A report lists what was done and what was not, and Undo all takes everything back. It replaces Remove all and Replace all, which asked about every item in its own dialog; each group’s button opens the same screen for that group.
+- **Field Cleaner: all at once** (2026-11-17). A new button on the list's header opens one screen with every item that uses the field and what will be done to it: replaced where a replacement field is picked, removed where the component works without the field, deleted only where that is the one way and the item holds no logic of its own. Flows, code and rules are never set to Delete by the tool; each row has its own choice, so you can remove the field from one component and delete another. One confirmation runs them all, each with its own restore point, with a progress bar and a stop. A report lists what was done and what was not, and Undo all takes everything back. It takes the place of one dialog per item; each group’s button opens the same screen for that group.
 - **Data Deployment: a record's editor says who it will belong to** (2026-11-19). The Owner row names the user the record gets in the target: you, the matching user, or the fallback user. You can still pick another user or a queue for that record.
 - **Data Deployment: owners are kept by default in a new deployment** (2026-11-19). The Record owners setting now reads "Keep the same owner — the matching user in the target; when there is none, the fallback user, else you". A new deployment starts on it; saved deployments are not changed.
 - **A larger loader everywhere** (2026-11-19). The small loading cat in lists, dropdowns and fact rows is more than twice its size, in the Toolkit and in Data Studio; a deployment run's header and a record that is opening show it large too.
@@ -41,7 +42,6 @@ extensions containing root files that start with `_`).
 - **Field Cleaner: a search layout of a packaged object is fixed here** (2026-11-17). It used to be sent to Setup. Its Setup link also opened an empty page; it now opens the object’s Search Layouts.
 - **Field Cleaner finds every object in a large org** (2026-11-17). In an org with more than 2,000 objects, an object late in the alphabet could not be picked: Salesforce refused the two requests that load the rest of the list and search it by name. The list is now loaded page by page and the search asks for the API name and the label separately.
 - **The full metadata text scan is offered when the scan finds nothing** (2026-11-17). Its box was left empty on a field with no listed dependencies. The scan also reads the org’s own text static resources (scripts, style sheets, JSON, XML, up to 1 MB each) and lists them under Static Resources; a Change Data Capture channel that sends the field has its own group. Neither blocks a delete.
-- **Remove all can be paused and continued** (2026-11-16). Every dialog of a Remove all or Replace all walk shows which item it is on, and its Cancel button is now Pause. A bar next to the walk buttons says where it stopped, with Continue and End. Continue goes on from the same item with the same choices and does not ask again about items you skipped. The bar is still there after the window is closed and the field is scanned again.
 - **Custom metadata records: blocker or not** (2026-11-16). Field Cleaner now reads each custom metadata type and lists a record as a blocker only when the field’s name sits in a relationship column, which is what makes Salesforce refuse the delete. A record that holds the name as plain text is listed under “might break”. Export and backup files are named with your local date. A custom setting value can also be pointed at the replacement field.
 - **Undo on the row** (2026-11-16). A row that Field Cleaner cleared has its own Undo button, which takes back that row’s change after one confirmation and scans the list again. The list of changes and the restore points are no longer on the Field Cleaner page: Activity lists every change, and its Restore points button opens the saved metadata.
 - **Every row in Field Cleaner has an action** (2026-11-16). The three kinds that only linked to Setup can now be cleared in place: a custom setting record (✂ takes the field’s name out of its value; the value before and after is shown first), an email alert that sends a template using the field (🗑 deletes the alert), and a path (✂ or ⇄ on a step’s key field). Each keeps what it changed and can be undone. A path itself is deleted in Setup: Salesforce does not allow it from outside.
@@ -65,9 +65,8 @@ extensions containing root files that start with `_`).
 - **Salesforce’s refusal names flows, not ids** (2026-11-11): “Flow SFTK Pkg Screen — v1 (not active) · v2 (Active)” instead of “Flow Version - 301…”.
 - **The ⏸ panel on the Deploy page is a list** (2026-11-11). One row per flow, validation rule or duplicate rule, under its object: a tick, the name, what it is, and what happens to it during the run in words (“Off during the run, back on after” / “Stays on”). One sentence of explanation, the rest behind “more”.
 - **Field Cleaner reads entitlement processes and custom-setting records** (2026-11-11). An entitlement process whose criteria name a Case or Work Order field blocks the delete and Salesforce’s index does not list it — it is now found and can be deleted from its row. A custom-setting record that holds the field’s name as text is listed under “might break”.
-- **Field Cleaner finds email alerts and outbound messages on custom and packaged objects** (2026-11-11). They were looked up by the object’s name, which Salesforce stores only for standard objects — on every custom object the scan listed none. Found while building the packaged-object demo.
+- **Field Cleaner finds email alerts and outbound messages on custom and packaged objects** (2026-11-11). They were looked up by the object’s name, which Salesforce stores only for standard objects — on every custom object the scan listed none.
 - **Full metadata text scan: two scopes** (2026-11-11). “Your objects” as before, or “Your objects + packaged objects”, which also reads what your org added inside objects that came with a package (fields, validation rules, list views, buttons, workflow and sharing rules).
-- **Field Cleaner: ✂ Remove all goes through everything in one take** (2026-11-11). Where the field cannot be taken out — it is the only criterion, the only recipient, or the kind (a formula, code, a button) cannot lose a field — the walk stops on that item, says why, and offers to delete the whole component, skip it, or stop. Nothing is passed over in silence, and the button counts everything it will stop on.
 - **Field Cleaner says before the click where ✂ Remove cannot work** (2026-11-11). Right after the scan each row is checked with the same rule the fix uses; a row that would be refused has ✂ switched off and the reason under it.
 - **Field Cleaner asks Salesforce by itself — the 🩺 button is gone** (2026-11-11). The check-only delete already ran with every scan; the button only repeated it. The answer line now says when Salesforce was asked, with a small "↻ Ask again" for a fix made by hand in Setup.
 - **↻ Retry failed really ticks the failed records** (2026-11-11). Opened right after a run, the Deploy page said "1 of 1 failed record(s) are ticked" and then a fresh read of both orgs cleared the tick, so ▶ Deploy had nothing to write. The failed records are now ticked on the scan you act on.
@@ -75,7 +74,7 @@ extensions containing root files that start with `_`).
 - **What Salesforce names joins the list** (2026-11-10). When Salesforce refuses the delete over something the scan did not find — an Apex class or trigger, a Visualforce page, an Aura component, or anything else — it is added to the list, marked 🩺. A blocker can no longer be missing from the list while Salesforce refuses over it.
 - **Aura components are read by the scan itself** (2026-11-10). Salesforce’s index can fail to return an Aura component that uses the field (seen live, and the delete was refused over it). The scan now reads the Aura sources directly, and a component Salesforce names in its answer joins the list.
 - **Dependent picklists are listed** (2026-11-10). When the field is the controlling field of another picklist, that picklist shows under "Dependent Picklists". Salesforce lets the delete through and the dependent picklist then offers every value, with no warning — so it is worth seeing first. No extra API call: it rides the read of the object.
-- **Search layouts are scanned, and fixed** (2026-11-10). A field listed in one of the object’s search layouts — search results, lookup dialogs, the tab’s recently viewed list, search filter fields — shows under "Search Layouts", with the layout named. It does not stop the delete. ✂ takes the column out and ⇄ puts the replacement field in its place; the confirmation shows the diff, the org is read again afterwards, and ↩ Undo in History puts the layout back. A packaged object’s search layouts are left to Setup.
+- **Search layouts are scanned, and fixed** (2026-11-10). A field listed in one of the object’s search layouts — search results, lookup dialogs, the tab’s recently viewed list, search filter fields — shows under "Search Layouts", with the layout named. It does not stop the delete. ✂ takes the column out and ⇄ puts the replacement field in its place; the confirmation shows the diff, the org is read again afterwards, and ↩ Undo in Activity puts the layout back.
 - **A deleted quick action no longer comes back on a re-scan** (2026-11-10). Salesforce keeps serving a deleted action from its cache for a while; the scan now checks its finds against the live list.
 - **A scoping rule says it is one** (2026-11-10). Rows under "Scoping & Restriction Rules" carry their kind and state: "(scoping rule, inactive)".
 - **Email rows say what they are** (2026-11-10). Every email template in the list carries its kind — classic text, classic HTML, Lightning or Visualforce — and the email alerts that send it. Each of those alerts also gets a row of its own, under "Email Alerts (send a template that uses the field)": the alert does not name the field, so it does not stop the delete; fixing the template is the fix.
@@ -100,32 +99,26 @@ extensions containing root files that start with `_`).
   folded under "Advanced" (open only when something is set); the suggestions as a table — key · score · a short
   reason · Use / Grade — with the grade's detail under each row, the depth sentence said once above the table,
   and the fields that add almost nothing named in ONE line instead of one sentence each.
-- **⏸ The pause panel is three tabs** (2026-11-08): ⏸ Flows · ⏸ Validation rules · 🔁 Duplicate rules — a tab appears only when its option is
-  on, carries its count ("2 of 3" once something is unticked), opens with one plain sentence on what the run does
-  with that kind and when it comes back, then the objects this run writes with their items, "N of M ticked" and
-  all / none per object; the one-line summary stays under the tabs. Live on npc2 (pause-panel.mjs, light + dark).
 - **▸ record: the Owner row** (2026-11-08). Right under Record Type: the source owner by name (👤 a user, 👥 a queue), what the run would write by
   default said in words (the owner mapping is off unless the deployment switched it on; a queue is never matched
   by name), and a search over the target's active users and — where the object can be queue-owned — the queues
   that take it. A pick is stored as the value OwnerId and written after the engine's own owner mapping, like any
-  typed value; ✕ forgets it. Live on npc → npc2 (scripts/dev/live/ve-owner.mjs): "Account records cannot be owned
-  by a queue — users only", a user picked and stored, cleared.
+  typed value; ✕ forgets it. A queue is refused for an object that cannot be queue-owned ("users only").
 - **⏸ The pause panel: what this run switches off in the target, per object, with a tick on every item.**
   (2026-11-08) With ⏸ pause flows, ⏸ pause validation rules or Duplicate rules =
   Bypass chosen, the Deploy page lists under each object the deployment writes to the record-triggered flows
   and validation rules that go off and the duplicate rules the bypass header passes; every item has a tick,
   each object has all / none, and the unticked stay exactly as they are. The confirmation names what is left
   on "by your choice", the duplicate-rule bypass is sent only for the objects ticked (the engine's header is
-  per write), and an object with nothing to switch is said in one line. Live npc → npc2: Account's two flows
-  off and back on, Contact's flow left on (CLI mid-run), Contact's duplicate rule respected, rollback clean.
+  per write), and an object with nothing to switch is said in one line.
 - **🎭 PII suggestions on the Deploy page, with the record each example comes from.** "Suggest PII
   treatment for all N to insert" reads the very records the deployment inserts and proposes a treatment per
   field, each with real examples and the record they come from — for example Omer → Lior, in Omer SFTK CX Lead One.
   ▸ record shows, under every field the policy covers, the value that is actually written — 🎭 written as Lior — and offers the same suggestions for that one record.
 - **The History export says what an update changed, field by field.** A run that updates records now keeps,
   for every field it changed, the value the target held just before the run and the value written; a
-  run's JSON export lists them (`fieldChanges`: object, record, field, before, after). The first 200
-  updated records per object are kept; a field under the PII policy keeps no "before"; counts-only mode
+  run's JSON export lists them (`fieldChanges`: object, record, field, before, after). Every updated
+  record is kept; a field under the PII policy keeps no "before"; counts-only mode
   keeps no values at all.
 - **Opening a deployment reads every object in it.** No more "not counted yet" cards and Count buttons
   to press one by one: when a deployment opens, the root and every child are read in both orgs, parents
@@ -180,43 +173,30 @@ extensions containing root files that start with `_`).
 - **Field Cleaner: the scan has a progress bar with the time left** (2026-11-08). Under the cat, one segment per leg of the scope (the index, Lightning pages, report types, list
   views… up to 17), filled as each leg ends, the current one pulsing; under it "Step 6 of 17 · quick actions ·
   about 17 s left · 20 places so far" — the time left from the legs already done and a weight per leg, said once
-  two legs are behind. The "Act on everything" fold and the "How each item is fixed" fold are gone.
+  two legs are behind.
 - **Field Cleaner: the 👀 mentions get the ways too, the confirm is editable, the gate sits on top** (2026-11-08).
   - **Email templates** — classic text and HTML, Lightning, Visualforce — get 🔍 (the subject, body, HTML and
     markup with the field's lines marked), ✂ Remove (every merge field that names the field taken out of the
     texts), ⇄ Replace (renamed inside them) and ✎ Edit texts, through the EmailTemplate record; a restore point
-    puts the texts back, History undo verified by re-reading. Email alerts already had ✂ / ⇄.
+    puts the texts back, Activity undo verified by re-reading. Email alerts already had ✂ / ⇄.
   - **List views, compact layouts, quick actions and inactive validation rules** get ✂ / ⇄ / ✎ / 🗑 like the
     blockers (a view's column and filter, a numbered filter logic refusing ✂; a compact layout's field but not its
     last; an action's layout field and predefined value; an inactive rule's formula by ⇄).
   - **"✎ Edit the XML before deploying"** inside every ✂ / ⇄ confirm (and a code file's text in the code ⇄): the
     proposal in a box, well-formed or the button stays off, the name locked, and the deploy sends what the box holds.
-  - **⚡ Everything at once** sits on the 🔒 section card's header (or the 👀 card's when no blockers are listed),
-    not in the header bar; the **🔒 gate** (the chips, the Delete button) sits above the lists, and in the 👀 scope
-    it is one sentence with a 🔍 Everything button instead of twelve chips saying "hidden".
-  Live on npc: ⇄ on the three demo templates → the CLI reads the new merge field, undo → the originals; ⇄ on the
-  list view (column + filter), the compact layout, the quick action and the inactive rule → CLI, undo; ✂ on a
-  validation rule with a hand edit in the dialog → the CLI reads the edited description, undo → original.
+  - The **🔒 gate** (the chips, the Delete button) sits above the lists.
 - **Field Cleaner: every kind has its ways, and the page reads in one glance** (2026-11-08).
   - **Code**: an Apex class or trigger, a Visualforce page or component, an LWC or an Aura bundle gets 🔍 with every
     file and the field's lines marked, **⇄ Replace** as a whole-word rename of the field's API name in every file
     (the diff of each changed file confirmed first), and **✎ Edit code** — one box per file, deployed back as the
     whole component. ✂ is not offered on code: which line of a program goes is yours, in ✎. In a production org the
-    deploy runs the org's Apex tests when Salesforce asks for them. Restore point, History undo verified by
+    deploy runs the org's Apex tests when Salesforce asks for them. Restore point, Activity undo verified by
     re-reading the source (line endings aside).
   - **Duplicate rules** get ✂ / ⇄ / ✎ like every other declarative kind — your own click, the diff first, a restore
     point. Nothing switches a duplicate rule off or edits one behind a deployment (that rule stands).
   - **The 🔒 box under the results** is one header, one chip per kind (click → its group; the tooltip says its
     ways) and one sentence; the count follows every fix.
-  - **⚡ Everything at once** and the group "… all N" buttons cover every kind with a way: ⇄ for all of them (code
-    too), ✂ where the kind can lose the field; a Remove walk names the Replace-only kinds it left out. The two
-    counts differ on purpose (live: Replace all 25 · Remove all 15).
-  - **The header folds** into three sections — The field's data · Look further than the index · Act on everything —
-    each with a one-line summary when folded, remembered.
   - The Reports row says the scan itself read every custom report type (it always did).
-  Live on npc (scripts/dev/live/fc-code-edit.mjs): ⇄ on the LWC → the CLI reads the new import, 0 of the old; ⇄ on the
-  duplicate rule → the retrieve shows the new field in the filter; both undone through History, the CLI reads the
-  originals back.
 - **Every long load shows the cat, a bar, the step and the time left** (2026-11-08). One widget (sftk-progress.js) for three shapes of work — a fixed order of steps (one segment each),
   N of M items (a filling bar), or one long call (a sweeping bar, with how long it took last time in this org) —
   on the Flows list, the Dependencies scan (with Stop, in the tab and in the strip above the Flows list), ⏻ Flow
@@ -226,11 +206,6 @@ extensions containing root files that start with `_`).
 - **Flows › Versions: a flow tree is a card too** (2026-11-08): the flows the dependency map knows to call each other sit in one bordered card — the root, its
   subflows nested with a twig per level, "tick the whole tree" in the header (half-ticked when only some are),
   "🌳 tree · N flows · M levels deep" — in the list's own alphabetical order.
-- **The packaged fixture has a tree of every flow kind** (2026-11-08): SFTK_Pkg_Screen →
-  SFTK_Pkg_Screen_Child (a screen flow) → SFTK_Pkg_Screen_Leaf; SFTK_Pkg_Parent_Trigger on the packaged Lookup
-  Parent with two subflows — the immediate path calls SFTK_Pkg_Path_Now_Sub, a scheduled path an hour later calls
-  SFTK_Pkg_Path_Later_Sub → SFTK_Pkg_Path_Deep_Sub; next to the record-triggered and scheduled trees already there.
-  Deployed to npc and npc2.
 - **Field Cleaner: one scan, one list** (2026-11-08). The 🔍 / 🔒 / 👀 scope switch is gone — every
   scan reads everything — and the two sections became one list with a filter row: All · 🔒 Must fix · 👀 Might
   break; each group carries its tag. The 👀 sentence in the gate says those kinds WERE read and what happens to
@@ -252,9 +227,7 @@ extensions containing root files that start with `_`).
   others has its callees nested under it with a connector, as soon as the dependency map knows the links; a subflow
   leaves its own kind-group for its caller's (so a record-triggered flow on an object shows its subflows under that
   object), each flow placed once — a shared subflow under its triggered caller before a plain autolaunched one. A
-  subflow whose caller is not in the list carries an "↳ SUBFLOW" tag; the chips are grouped by direction. Live on
-  npc: the four dep-test levels nested under their Account trigger, the packaged SFTK_Pkg_Sub under SFTK_Pkg_Child
-  Trigger (Lookup Child 2), SFTK_Pkg_Sched_Sub under the scheduled flow.
+  subflow whose caller is not in the list carries an "↳ SUBFLOW" tag; the chips are grouped by direction.
 - **⏻ Flow switches: the whole chain** (2026-11-08):
   next to "↳ calls N" a dashed "⇊ whole chain down N" when the chain goes deeper than one level, and "⇈ every
   caller up N" next to "↰ called by"; the tooltip names every flow in order, a click ticks them all; nothing is
@@ -268,18 +241,15 @@ extensions containing root files that start with `_`).
   marked "in the list above" when the scan already lists it. The cost is said before anything is read
   (components, retrieves, API calls, a time estimate), a progress bar with the time left runs on the page,
   and Stop keeps what was read. Nothing is written. Not read: static resources, documents, content and site
-  assets, settings, certificates, installed packages. Live on npc: 1,127 components in 5 retrieves, about a minute,
-  29 🔒 / 57 👀 (44 of them profiles' field access), 52 of them not in the scan's list.
-- **⏻ Flow switches lists every flow, not only the triggered kinds.** A colleague's first day with the tool
-  (2026-11-08): scheduled, autolaunched and screen flows were missing from the list, which showed only
+  assets, settings, certificates, installed packages.
+- **⏻ Flow switches lists every flow, not only the triggered kinds** (2026-11-08). Scheduled, autolaunched and screen flows were missing from the list, which showed only
   record-triggered, scheduled and platform-event flows and read the org's flow list one page deep. The
   panel now reads every flow definition, every page of it: record-triggered flows stay grouped by object,
   every other flow sits under its kind (screen flows, autolaunched subflows, Process Builder, Omni-Channel
   routing, appointments, approvals…). A flow with no trigger can be switched too, and its line in the
   confirmation says what switching it off breaks. After the dependency scan each row shows "↳ calls N" and
   "↰ called by N"; a click ticks those flows as well, so a subflow goes off with its caller. A record-triggered
-  flow on a packaged object whose label is missing groups under the object's API name. Live on npc: 138 of
-  138 flows listed in ⏻ Switches and in ⚙ API versions.
+  flow on a packaged object whose label is missing groups under the object's API name.
 - A long line in a confirmation's item list wraps instead of crushing the item's name to a sliver.
 - **Field Cleaner's blocker list was put to the test — and fixed.** Every kind of reference a field can
   have was built in a test org and the field was deleted under it, to see what Salesforce really
@@ -304,14 +274,14 @@ extensions containing root files that start with `_`).
 - **Every blocker can be deleted from Field Cleaner, in one click, with a way back.** Until now a
   blocker outside flows, layouts, Lightning pages and reports only had ↗ Setup. Each 🔒 item now
   carries 🗑 Delete: the component's full definition is read first and kept as a restore point, a
-  destructive deploy removes it, a re-read proves it is gone, and ↩ Undo in History (or ↩ Restore
-  points under the results) deploys it back as it was. Validation rules, workflow rules, field updates,
+  destructive deploy removes it, a re-read proves it is gone, and ↩ Undo in Activity
+  deploys it back as it was. Validation rules, workflow rules, field updates,
   email alerts, outbound messages, approval processes, sharing rules, matching rules, field sets,
   custom buttons, formula fields, scoping and restriction rules, Lightning pages, custom metadata
   records, Apex classes and triggers, Visualforce pages and components, Lightning web components and
   Aura components — each one deleted and put back live. The four that are not components of their own
-  get the same button, their own way: a duplicate rule (deleted only from this button — nothing switches
-  one off or edits one behind a run), the lead field mapping (only the line of this field goes, the
+  get the same button, their own way: a duplicate rule (nothing switches
+  one off behind a run), the lead field mapping (only the line of this field goes, the
   settings and the other lines stay), a lookup filter (only the filter goes, the lookup field and its
   data stay) and a Process Builder process (every version goes, switched off first; Undo brings its
   latest version back, inactive). In a production org Salesforce may run the org's Apex tests before
@@ -327,23 +297,21 @@ extensions containing root files that start with `_`).
   way would change. When what is left would not work — the field is a rule's only criterion, an alert's
   only recipient, or sits in a formula (✂ never cuts a formula; a validation rule is switched off
   instead, since an inactive rule does not block the delete) — the edit is refused before anything is
-  written, with the reason and the way that does work. A restore point is kept and ↩ Undo in History
-  deploys the original back. Duplicate rules keep 🗑 only: the tool never edits a duplicate rule's
-  criteria. Assignment, auto-response and escalation rules are now read through their object's rules,
+  written, with the reason and the way that does work. A restore point is kept and ↩ Undo in Activity
+  deploys the original back. Assignment, auto-response and escalation rules are now read through their object's rules,
   which also makes their 🗑 restore point work.
 - **✎ Edit the XML and deploy it back, from Field Cleaner's 🔍.** For every declarative blocker the XML the
   org holds opens in an editor box: change what you need and press Deploy. Nothing is sent until the
   text is well-formed (the box names the line that is not); the component's name cannot change; the
   confirm shows your change line by line; a restore point is kept; if Salesforce refuses the deploy its
-  own words appear under the box and nothing changes; ↩ Undo in History deploys the previous XML.
+  own words appear under the box and nothing changes; ↩ Undo in Activity deploys the previous XML.
 - **Field Cleaner's "how much data is stored" line was audited**. Three ways it could be wrong are closed: a count that came back for an earlier pick
   could land under the next field; a formula field was counted as if it stored data (describe never
   says "formula"); a checkbox was "100% populated" on every org, since false is a value — a checkbox is
   now counted by how many records have it ticked, and says so.
 - **Field Cleaner tells blockers from mentions, and scans either.** The results now come in two
   sections: 🔒 what must be cleared before Salesforce deletes the field, and 👀 the other mentions (the
-  delete goes through, these break afterwards). A switch above Scan picks what to read: 🔍 Everything,
-  🔒 What blocks the delete or 👀 Other mentions. A scan that read less says so, and a blocker is never
+  delete goes through, these break afterwards). A scan that read less says so, and a blocker is never
   hidden from the Delete button, only from the list.
 - **A filter box on ⏻ Switches and ⚙ API versions.** Type or paste a flow name or API name and the
   list narrows as you type. A flow you ticked stays ticked when the filter hides it — the line under

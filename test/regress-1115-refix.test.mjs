@@ -375,7 +375,7 @@ describe('G1. an engine leg refused BUSY is not a run that inserted 0', () => {
     expect(block).toContain('await sftkRunRefusedBusy({ busy: true, error: busyLine }');
     expect(block).toContain('sftkUndoStoreDelete(runId)');
     expect(block).toContain('window._sftkRunActive = false;');
-    expect(block).toMatch(/if \(runBtn\) runBtn\.disabled = false;\n\s+return;/);
+    expect(block).toMatch(/_recRunBtnsLock\(false\);\r?\n\s+return;/);   // QA 1.1 finding 42: both buttons, looked up fresh
     expect(block).not.toContain('_history.push');
   });
   it('the refusal itself is said as a warning and drops the restore point (the shared ending of the Transfer page)', async () => {

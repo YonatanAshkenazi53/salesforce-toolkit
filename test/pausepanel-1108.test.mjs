@@ -122,10 +122,12 @@ describe('the wiring', () => {
     expect(DEP).not.toContain("const active = kinds.filter(k => k.on);");
     expect(DEP).toContain("${secs.map(({ k, items }) => `<div class=\"ds-dep-pause-kindhd\" data-kind=\"${k.kind}\">${k.title}");
     expect(DEP).toContain('Automation in ${esc(tgt)} on the objects of this deployment');
-    expect(DEP).toContain("if (!_depFlowPause.on || _depFlowPause.key !== key) load(); else paint();");
-    expect(DEP).toContain("if (!_depRulePause.on || _depRulePause.key !== key) load(); else paint();");
+    // QA 1.1 #55: a failed read is tried again on the next render
+    expect(DEP).toContain("if (sftkDepPauseNeedsRead(_depFlowPause, key)) load(); else paint();");
+    expect(DEP).toContain("if (sftkDepPauseNeedsRead(_depRulePause, key)) load(); else paint();");
     expect(DEP).toContain("sftkVrPauseList(sess, objects, undefined, { light: true })");
-    expect(DEP).toContain("try { await sftkVrPauseHydrate(sess, vp.rules); }");
+    // QA 1.1 #7, #43: the definitions are read into fresh copies of the rules that are still active
+    expect(DEP).toContain("const read = await sftkVrPauseHydrate(sess, still.go);");
     // every item starts unticked; the box above ticks the whole kind
     expect(DEP).toContain("if (f.scheduled || !_depFlowPause.all) _depPauseSkip.add(sftkPauseKey('flow', f));");
     expect(DEP).toContain("if (!_depRulePause.all) _depPauseSkip.add(sftkPauseKey('rule', r));");

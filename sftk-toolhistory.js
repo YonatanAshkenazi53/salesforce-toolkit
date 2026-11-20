@@ -172,7 +172,7 @@
       say(tab, (n ? `⬆ Restored ${n.toLocaleString('en-US')} change${n === 1 ? '' : 's'} from ${f.name}, each with its Undo` : `Nothing to restore from ${f.name}`)
         + (res.skipped ? ` · ${res.skipped.toLocaleString('en-US')} already listed here` : '')
         + (r.dropped ? ` · ${r.dropped.toLocaleString('en-US')} left out (not a change of this tool)` : '')
-        + (res.archived ? ` · the ${res.archived.toLocaleString('en-US')} oldest went to the archive: the list keeps ${SFTK_HISTORY_CAP}` : '') + '.');
+        + (res.archived ? ` · the ${res.archived.toLocaleString('en-US')} oldest went to the archive: the list keeps ${SFTK_HISTORY_CAP}` : '') + (res.notKept ? ` · ${res.notKept.toLocaleString('en-US')} older change${res.notKept === 1 ? ' was' : 's were'} not restored: the list keeps ${SFTK_HISTORY_CAP} and the archive on this PC could not be written. Keep the backup file, clear entries you no longer need, then restore it again` : '') + '.', !!res.notKept);
     });
     document.body.appendChild(inp); inp.click();
   }
