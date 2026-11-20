@@ -5247,6 +5247,8 @@ function sftkRecDupsHtml(scan, p, objLabel) {
   // (user 2026-09-21: followed the advice, the dialog was empty).
   const unS = (scan.missingInTarget || []).length, unT = (scan.onlyInTarget || []).length;
   const n = ((scan.dupKeys.keys || []).length || ex.length).toLocaleString('en-US');
+  const nAmb = (scan.ambiguous || []).length;
+  const oneSided = ex.some(e => !((e.src || []).length && (e.tgt || []).length));
   // one line, then the copies and the way out under a fold (user 2026-10-25: "make this tab more readable and
   // easier to understand" / "here we don't offer to merge them")
   return `<div class="ds-rec-dups">
@@ -5255,7 +5257,7 @@ function sftkRecDupsHtml(scan, p, objLabel) {
       <div class="ds-rec-dup-rows">${rows}</div>${more}
       <div class="ds-rec-dup-fix"><b>What to do, safest first</b>
         <ol>
-          <li><b>Copies of the same record? 🔀 Merge them.</b> Under ⚠ Needs a decision below, every such name offers a merge: the copies in ${esc(orgLabel(p.sourceOrg))}, in ${esc(orgLabel(p.targetOrg))}, or both sides — you choose the record that stays and the values it keeps. One of them junk? Delete or rename it, then 🔄 Refresh state.</li>
+          <li><b>Copies of the same record? 🔀 Merge them.</b> ${nAmb ? `A name that BOTH orgs hold is listed under ⚠ Needs a decision below, with a merge for the copies in ${esc(orgLabel(p.sourceOrg))}, in ${esc(orgLabel(p.targetOrg))}, or both — you choose the record that stays and the values it keeps.` : 'None of these names is held by both orgs, so ⚠ Needs a decision has nothing to ask.'}${oneSided ? ` A name that only one org holds is not listed there: there is no record on the other side to choose between, and a run creates every copy as its own record. Merge or delete those copies in Salesforce (the links above open each one), then 🔄 Refresh state.` : ''} One of them junk? Delete or rename it, then 🔄 Refresh state.</li>
           <li><b>Different records that share a name? Make the key tell them apart.</b> Add a field to the key — most specific first matches each record by the fields it has (Name + account number, Name + billing city). ${saved ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(p.id)}" title="Opens this deployment in the builder — Pick Records → Matching">✏ Change the match key</button>` : '<span class="ds-lkp-hint">Save this pair as a deployment to change its match key.</span>'}</li>
           ${unS && unT
             ? `<li><b>Or pair them by hand.</b> <button class="ds-btn ds-btn-xs" data-rec-dupfix="review" title="Pick, for each unmatched source record, the target record it really is — remembered for this org pair">🔗 Match review</button> pairs the ${unS.toLocaleString('en-US')} unmatched source record(s) with the ${unT.toLocaleString('en-US')} unmatched target record(s) — you say which is which.</li>`

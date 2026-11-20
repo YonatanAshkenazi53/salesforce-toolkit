@@ -1933,6 +1933,29 @@ const ApexDebugger = (() => {
   // `timestamp|EVENT|…`; we test the EVENT token. 'nonoise' hides the
   // high-volume low-signal events that bury the interesting ones.
   const _LOG_NOISE = /\|(HEAP_ALLOCATE|STATEMENT_EXECUTE|SYSTEM_METHOD_ENTRY|SYSTEM_METHOD_EXIT|SYSTEM_CONSTRUCTOR_ENTRY|SYSTEM_CONSTRUCTOR_EXIT|VARIABLE_SCOPE_BEGIN|VARIABLE_ASSIGNMENT)\|/;
+  // WHICH LINES "Hide noise" HIDES (owner 2026-11-20: "when i click hide noise here nothing happens" — a short
+  // DEBUG-level log has none of the events above; its bulk is the governor-limits block, which was never counted as
+  // noise). Noise is: the high-volume events above; the limits and profiling blocks from their first line to their
+  // END line; and every line WITHOUT a timestamp that continues a noise line (the indented "Number of SOQL
+  // queries: 1 out of 100" rows). PURE. → one boolean per line, true = hidden.
+  function _logNoiseMask(lines) {
+    const out = [];
+    const EV = /^\d\d:\d\d:\d\d[.\d]*\s*\(\d+\)\|([A-Z_]+)/;
+    const BLOCK_OPEN = { CUMULATIVE_LIMIT_USAGE: 'CUMULATIVE_LIMIT_USAGE_END', CUMULATIVE_PROFILING_BEGIN: 'CUMULATIVE_PROFILING_END' };
+    const ONE = /^(HEAP_ALLOCATE|STATEMENT_EXECUTE|SYSTEM_METHOD_ENTRY|SYSTEM_METHOD_EXIT|SYSTEM_CONSTRUCTOR_ENTRY|SYSTEM_CONSTRUCTOR_EXIT|VARIABLE_SCOPE_BEGIN|VARIABLE_ASSIGNMENT|LIMIT_USAGE_FOR_NS|LIMIT_USAGE|CUMULATIVE_PROFILING|TESTING_LIMITS)$/;
+    let closeOn = '', prev = false;
+    for (const line of (Array.isArray(lines) ? lines : [])) {
+      const m = EV.exec(String(line));
+      let noise;
+      if (!m) noise = prev || !!closeOn;                 // a continuation line follows the line it continues
+      else if (closeOn) { noise = true; if (m[1] === closeOn) closeOn = ''; }
+      else if (BLOCK_OPEN[m[1]]) { noise = true; closeOn = BLOCK_OPEN[m[1]]; }
+      else noise = ONE.test(m[1]);
+      out.push(noise);
+      prev = noise;
+    }
+    return out;
+  }
   function _logMatchesCat(line, cat) {
     switch (cat) {
       case 'debug':   return line.includes('|USER_DEBUG|');
@@ -2021,14 +2044,20 @@ const ApexDebugger = (() => {
 
     const ql = q.toLowerCase();
     let html = '', matches = 0;
+    // Hide noise knows blocks and continuation lines, so it is decided over the whole log, once
+    const noise = cat === 'nonoise' ? _logNoiseMask(st.lines) : null;
+    const hidden = noise ? noise.filter(Boolean).length : 0;
+    if (noise) html = `<div class="adbg-log-more adbg-log-noise-note">${hidden
+      ? `${hidden.toLocaleString('en-US')} of ${st.lines.length.toLocaleString('en-US')} lines hidden: the limits and profiling blocks, heap, statement and system-method lines. Line numbers are the log’s own.`
+      : 'This log has no noise lines to hide: no limits or profiling block, no heap, statement or system-method lines.'}</div>`;
     for (let i = 0; i < st.lines.length && matches < FILTER_CAP; i++) {
       const line = st.lines[i];
-      if (cat && !_logMatchesCat(line, cat)) continue;
+      if (noise ? noise[i] : (cat && !_logMatchesCat(line, cat))) continue;
       if (ql && !line.toLowerCase().includes(ql)) continue;
       html += _oneLogLine(line, i);   // keeps original line numbers
       matches++;
     }
-    if (!html) {
+    if (!matches) {
       view.innerHTML = '<div class="adbg-log-empty-filter">No lines match the current filter.</div>';
       return;
     }
@@ -3782,7 +3811,7 @@ const ApexDebugger = (() => {
 
   // ── Export ────────────────────────────────────────────────
   // Test-only surface (harness/unit tests). Harmless in production — just refs.
-  const _test = { parseLog: _parseLog, matchesCat: _logMatchesCat, renderDetail: _renderDetail,
+  const _test = { parseLog: _parseLog, matchesCat: _logMatchesCat, noiseMask: _logNoiseMask, renderDetail: _renderDetail,
     setLogs: (l) => { _logs = l; }, peak: _logPeak,
     // Release QA 2026-11-14: the trace / delete paths, for the regression tests.
     stopTrace: _stopTrace, deleteLogs: _deleteApexLogsVerified,

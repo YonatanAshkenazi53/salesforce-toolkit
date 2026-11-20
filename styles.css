@@ -7624,3 +7624,9 @@ body.sftk-dark .fc-plan-way.on[data-kind="delete"] { background: #4a1b1f; color:
 .fc-undoall-log ol.sftk-it-list { padding-left: 0; max-width: none; }
 .sftk-it-ok .sftk-it-name, .sftk-it-bad .sftk-it-name { font-weight: 500; }
 @media (prefers-reduced-motion: reduce) { .sftk-it-seg.now { animation: none; } }
+
+/* Copy Permissions: one loading cat for the page, large and centred (owner 2026-11-20) */
+/* the list is 190px high: the cat (112px, with room for its lap) and its line fit inside it, nothing is cut */
+.uc-drop-loading-one { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 188px; box-sizing: border-box; padding: 10px 12px; overflow: hidden; font-size: 13px; color: var(--text); }
+.uc-drop-loading-one .sftk-cat { width: 124px; height: 124px; flex: 0 0 auto; }
+.uc-drop-loading-quiet { padding: 16px 12px; text-align: center; }

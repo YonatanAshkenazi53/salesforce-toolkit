@@ -125,7 +125,7 @@ function renderBuilder() {
             title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">${dsIcon('swap')}</button>
         </div>
         <div class="ds-builder-org-col ds-bld-col-tgt">
-          <div class="ds-lbl ds-bld-col-hd">${dsIcon('box')}Default target <span class="ds-builder-org-hint">where records are written</span></div>
+          <div class="ds-lbl ds-bld-col-hd">${dsIcon('box')}Target <span class="ds-builder-org-hint">where records are written</span></div>
           <select id="dsProfileTgtOrg" class="ds-select" aria-label="Default target org — where records are written">
             <option value="">— Select target org —</option>${orgOpts(p.targetOrg, p.sourceOrg)}${gone(p.targetOrg)}
           </select>

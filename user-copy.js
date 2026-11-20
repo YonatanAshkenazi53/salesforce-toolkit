@@ -433,7 +433,10 @@ const UserCopy = (() => {
     // 'idle' is the sliver between renderTab() and loadAllUsers()'s first
     // state change — show the spinner, never a misleading "0 users".
     if (usersLoadState === 'loading' || usersLoadState === 'idle') {
-      list.innerHTML = `<div class="uc-drop-item uc-drop-loading">${sftkCatSm('Loading users…')}</div>`;
+      // one cat for the page, in the first list, large and centred; the second list waits in words
+      list.innerHTML = role === 'source'
+        ? `<div class="uc-drop-loading uc-drop-loading-one">${window.sftkCatSvg ? window.sftkCatSvg('load', 96) : ''}<span>Loading this org’s users…</span></div>`
+        : '<div class="uc-drop-loading uc-drop-loading-quiet">The same list of users appears here.</div>';
       return;
     }
 
