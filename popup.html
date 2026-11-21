@@ -125,8 +125,7 @@
         <div id="tab-flows" class="tab-content" style="display:none">
           <!-- One page for everything about flows (user 2026-10-17): versions · dependencies · switches · API versions -->
           <div class="mode-toggle flow-views" id="flowViews" role="tablist" aria-label="Flows page views">
-            <button type="button" class="flow-view-btn active" data-view="versions" role="tab" aria-selected="true" title="Every flow and its versions: delete, back up, restore">🗂 Versions</button>
-            <button type="button" class="flow-view-btn" data-view="deps" role="tab" aria-selected="false" title="What calls what, what uses a field or a value, blast radius">🔗 Dependencies</button>
+            <button type="button" class="flow-view-btn active" data-view="versions" role="tab" aria-selected="true" title="Every flow: its kind, its versions and what it calls — delete, back up, restore, and the dependency tools">🗂 Flows</button>
             <button type="button" class="flow-view-btn" data-view="switches" role="tab" aria-selected="false" title="Switch flows off and on in bulk — record-triggered flows by object, every other flow by kind">⏻ Switches</button>
             <button type="button" class="flow-view-btn" data-view="apiver" role="tab" aria-selected="false" title="The API version every flow is pinned to, and changing it">⚙ API versions</button>
           </div>
@@ -155,6 +154,26 @@
               </div>
             </div>
           </div>
+
+          <!-- The kinds of flow, on the list itself (owner 2026-11-20: "we do need this options as well" — they were on
+               the Dependencies view only). popup.js: _flowTypeFilter, renderFlowList -->
+          <div class="flow-type-filter" id="flowTypeFilter" role="tablist" aria-label="Show flows of one kind">
+            <button type="button" class="flow-type-btn active" data-ftype="all" role="tab" aria-selected="true">All</button>
+            <button type="button" class="flow-type-btn" data-ftype="RecordTriggeredFlow" role="tab" aria-selected="false">⚡ Record-Triggered</button>
+            <button type="button" class="flow-type-btn" data-ftype="Flow" role="tab" aria-selected="false">🖥 Screen</button>
+            <button type="button" class="flow-type-btn" data-ftype="AutoLaunchedFlow" role="tab" aria-selected="false">🔄 Auto-launched</button>
+            <button type="button" class="flow-type-btn" data-ftype="ScheduledFlow" role="tab" aria-selected="false">📅 Scheduled</button>
+            <button type="button" class="flow-type-btn" data-ftype="other" role="tab" aria-selected="false" style="display:none">Other</button>
+          </div>
+          <!-- The dependency tools, on the same page (owner 2026-11-20: "maybe versions and dependecies can be one
+               page?"): what uses a field or a value, the report, the whole map. Drawn when the fold is opened. -->
+          <details class="flow-deps-fold" id="flowDepsFold">
+            <summary>🔗 Dependencies <span class="flow-deps-sub">what uses a field or a value · export a report · the whole map, with dates and managed package flows</span></summary>
+            <div class="flow-deps-body">
+              <div id="depNoDataBanner" class="info-banner" style="display:none"></div>
+              <div id="depTreeContainer"></div>
+            </div>
+          </details>
 
           <!-- Loading state -->
           <div id="loadingState" class="loading-state">
@@ -234,12 +253,10 @@
           </div>
           </div><!-- /flowViewVersions -->
 
-          <!-- Dependencies, switches and API versions: the second view of the same page (the ids are kept —
-               dependency-map.js and popup.js render into them) -->
+          <!-- Switches and API versions: the other two views of the page. The dependency map itself lives in the
+               fold of the Flows view since 2026-11-21 (#depTreeContainer, #depNoDataBanner — the ids are kept) -->
           <div id="tab-dependencies" class="flow-view" style="display:none">
             <div id="flowToolHost" style="display:none"></div>
-            <div id="depNoDataBanner" class="info-banner" style="display:none"></div>
-            <div id="depTreeContainer"></div>
           </div>
         </div>
 

@@ -13,8 +13,10 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
-## 1.1.0 — 2026-11-20
+## 1.1.0 — 2026-11-21
 
+- **Flows: one list, with the kinds of flow on it** (2026-11-21). Versions and Dependencies are one view, Flows. The list has the tabs All, Record-Triggered, Screen, Auto-launched and Scheduled, each with its count, and every flow shows its kind as an icon. A flow that calls subflows is shown with them when it is of the kind picked. The dependency tools open in a fold on the same page: what uses a field or a value, the report, and the whole map with dates and managed package flows; the map follows the kind picked on the list. Old links to the Dependencies view open that fold.
+- **Log viewer: text size** (2026-11-21). The A−, A and A+ buttons sit at the right end of the filter row, named Text size.
 - **Deploy: duplicate names are in one place** (2026-11-21). Needs a decision now also lists the names that only one org holds more than once, under the questions: each name with its copies as links, what a run does with them, and a Merge button. The warning above has four short steps, each with its button, and a button that opens the tab. On a child object the warning shows only the two steps that apply.
 - **Log viewer: Hide noise hides the limits block** (2026-11-20). In a short log the button hid nothing, because the governor-limits and profiling blocks were not counted as noise. They are now hidden from their first line to their last, with their indented rows, and the button says how many lines it hid, or that the log has none to hide.
 - **Smaller fixes** (2026-11-20). Copy Permissions shows one loading cat, larger and centred, where it showed two. The duplicate-names warning on the Deploy page says which names are listed under Needs a decision and what happens to a name only one org holds. The builder's target card is headed "Target".

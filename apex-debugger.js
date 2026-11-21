@@ -2463,15 +2463,6 @@ const ApexDebugger = (() => {
             <span class="adbg-log-caret adbg-i" data-i="chevron" aria-hidden="true"></span>
             <span class="adbg-i" data-i="doc" aria-hidden="true"></span>Log Content
             <span class="adbg-cnt-badge">${(p.stats?.lines || 0).toLocaleString('en-US')} lines</span>
-            <!-- Font-size controls. NO inline onclick here — MV3 extension
-                 pages block inline handlers (CSP), so it silently never ran
-                 and every A± click also collapsed the log via bubbling. The
-                 addEventListener wiring stops propagation instead. -->
-            <span class="adbg-log-fontctl">
-              <button class="adbg-log-font-btn" id="adbgLogFontDown" title="Smaller text">A−</button>
-              <button class="adbg-log-font-btn" id="adbgLogFontReset" title="Reset text size">A</button>
-              <button class="adbg-log-font-btn" id="adbgLogFontUp" title="Larger text">A+</button>
-            </span>
           </div>
           <div class="adbg-sec-hdr adbg-log-hdr">
             <input type="number" id="adbgLogGoto" class="adbg-log-goto" placeholder="Go to line #" min="1">
@@ -2502,6 +2493,14 @@ const ApexDebugger = (() => {
               ${[['', 'All', ''], ['debug', 'Debug', 'speech'], ['soqldml', 'SOQL/DML', 'database'],
                  ['errors', 'Errors', 'alert'], ['nonoise', 'Hide noise', 'mute']].map(([c, lbl, ic], i) =>
                 `<button class="adbg-log-cat${i === 0 ? ' adbg-log-cat-on' : ''}" data-cat="${c}">${ic ? _ICON(ic) : ''}${lbl}</button>`).join('')}
+              <!-- Text size, at the right end of this row, named (owner 2026-11-21). No inline onclick: MV3 pages
+                   block inline handlers (CSP); the buttons are wired by id. -->
+              <span class="adbg-log-fontctl" role="group" aria-label="Text size of the log">
+                <span class="adbg-log-fontlbl">Text size</span>
+                <button class="adbg-log-font-btn" id="adbgLogFontDown" title="Smaller text" aria-label="Smaller text">A−</button>
+                <button class="adbg-log-font-btn" id="adbgLogFontReset" title="Reset text size" aria-label="Reset text size">A</button>
+                <button class="adbg-log-font-btn" id="adbgLogFontUp" title="Larger text" aria-label="Larger text">A+</button>
+              </span>
             </div>
           </div>
           <div class="adbg-log-view" id="adbgLogView">${_renderLogLines(p.raw || '')}</div>

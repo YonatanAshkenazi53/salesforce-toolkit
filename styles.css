@@ -7630,3 +7630,23 @@ body.sftk-dark .fc-plan-way.on[data-kind="delete"] { background: #4a1b1f; color:
 .uc-drop-loading-one { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 188px; box-sizing: border-box; padding: 10px 12px; overflow: hidden; font-size: 13px; color: var(--text); }
 .uc-drop-loading-one .sftk-cat { width: 124px; height: 124px; flex: 0 0 auto; }
 .uc-drop-loading-quiet { padding: 16px 12px; text-align: center; }
+
+/* Flows: the kinds of flow on the list, and the dependency tools in a fold of the same page (owner 2026-11-20) */
+.flow-type-filter { display: flex; gap: 0; flex-wrap: nowrap; overflow-x: auto; flex-shrink: 0; border-bottom: 1px solid var(--border); margin: 2px 0 6px; }
+.flow-type-btn { background: transparent; border: none; border-bottom: 3px solid transparent; color: var(--subtext); padding: 8px 13px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; border-radius: 0; }
+.flow-type-btn:hover:not(.active) { color: var(--brand); background: var(--brand-bg); }
+.flow-type-btn.active { color: var(--brand); border-bottom-color: var(--brand); }
+.flow-type-btn.flow-type-none { opacity: .45; }
+.flow-kind-ico { flex: 0 0 auto; width: 18px; text-align: center; font-size: 12px; margin-right: 2px; }
+.flow-deps-fold { flex-shrink: 0; margin: 0 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+.flow-deps-fold > summary { cursor: pointer; padding: 7px 11px; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.flow-deps-sub { font-weight: 400; color: var(--subtext); font-size: 11.5px; margin-left: 6px; }
+.flow-deps-body { border-top: 1px solid var(--border); max-height: 46vh; overflow: auto; }
+
+/* Flows: the list's kind tabs are the page's only ones — the map's own are hidden in the fold (it follows the list) */
+.flow-deps-body .dep-filter-buttons { display: none; }
+.flow-deps-body .dep-filter-bar { justify-content: flex-end; border-bottom: 0; }
+/* Log viewer: text size sits at the right end of the filter row, with its name (owner 2026-11-21) */
+.adbg-log-cats { align-items: center; width: 100%; flex: 1 1 100%; box-sizing: border-box; }
+.adbg-log-cats .adbg-log-fontctl { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.adbg-log-fontlbl { font-size: 11.5px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--subtext); margin-right: 4px; white-space: nowrap; }

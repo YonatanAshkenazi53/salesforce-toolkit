@@ -1029,7 +1029,7 @@ async function loadFlows() {
           // The cached map paints before this list lands, so a managed
           // subflow target read "Not found" until something else repainted.
           if (loadOrgUrl === orgUrl && DependencyMap.treeStaleForManaged?.()
-              && document.getElementById('tab-dependencies')?.style.display !== 'none') renderDependenciesTab();
+              && _depsFoldOpen()) renderDependenciesTab();
         })
         .catch(() => {});
     }
@@ -1065,7 +1065,7 @@ window.sftkRescanDependencies = async function () {
     hideScanOfferBar();
     await runDependencyScan(orgUrl, sid);
   }
-  if (document.getElementById('tab-dependencies')?.style.display !== 'none') renderDependenciesTab();
+  if (_depsFoldOpen()) renderDependenciesTab();
 };
 
 // P1 — the dependency scan costs ONE metadata GET per flow VERSION. In a small
@@ -1096,7 +1096,7 @@ async function fetchAllMetadataSilently(loadOrgUrl, loadSid) {
     // abandoned when this load reset the module.
     showScanProgress(false);
     showScanOfferBar(loadOrgUrl, loadSid);
-    if (document.getElementById('tab-dependencies').style.display !== 'none') {
+    if (_depsFoldOpen()) {
       renderDependenciesTab();
     }
     return;
@@ -1125,7 +1125,7 @@ async function runDependencyScan(loadOrgUrl, loadSid) {
   // The starting count is whatever is already covered: with a warm cache that is
   // not zero, and starting the bar at 0 would imply work that is not happening.
   showScanProgress(true, `🔍 Building dependency map · ${sftkProgLine(scanEta)}`, stop);
-  if (document.getElementById('tab-dependencies').style.display !== 'none') {
+  if (_depsFoldOpen()) {
     renderDependenciesTab();
   }
 
@@ -1153,7 +1153,7 @@ async function runDependencyScan(loadOrgUrl, loadSid) {
   renderFlowList(); // re-render with corrected types + 🔗 icons
 
   // If the dependency tab is already open, refresh it now that data is ready
-  if (document.getElementById('tab-dependencies').style.display !== 'none') {
+  if (_depsFoldOpen()) {
     renderDependenciesTab();
   }
 }
@@ -1269,7 +1269,7 @@ async function verifyFlowListCoverage(loadOrgUrl, loadSid, got) {
     if (r.totalSize <= got) return;
     flowListShortfall = r.totalSize - got;
     showScanOfferBar(loadOrgUrl, loadSid);     // surface the warning now
-    if (document.getElementById('tab-dependencies').style.display !== 'none') {
+    if (_depsFoldOpen()) {
       renderDependenciesTab();
     }
   } catch (_) { /* best-effort — a failed check must never break the load */ }
@@ -1290,7 +1290,7 @@ function patchFlowTypesFromDefinitions(loadOrgUrl) {
   if (!changed) return;
   groupFlows();
   renderFlowList();
-  if (document.getElementById('tab-dependencies')?.style.display !== 'none') renderDependenciesTab();
+  if (_depsFoldOpen()) renderDependenciesTab();
 }
 
 function patchFlowTypesFromMetadata() {
@@ -1419,6 +1419,58 @@ async function deleteFlowInterviews(label, list, which) {
   await loadFlowInterviews();
 }
 
+// THE KIND OF A FLOW, for the list's filter and its icon. Salesforce stores record-triggered, scheduled and platform
+// event flows as ProcessType 'AutoLaunchedFlow'; the definition's TriggerType tells them apart (resolveFlowType).
+// The version that speaks for the flow is its active one, else its newest. PURE.
+//   row: { apiName, versions: [{ ProcessType, Status }] } · trigMap: apiName → TriggerType
+// → 'RecordTriggeredFlow' | 'Flow' | 'AutoLaunchedFlow' | 'ScheduledFlow' | another ProcessType | ''
+function sftkFlowKindOfRow(row, trigMap) {
+  const vs = (row && row.versions) || [];
+  const v = vs.find(x => x && x.Status === 'Active') || vs[vs.length - 1] || vs[0];
+  if (!v) return '';
+  const trig = (trigMap && trigMap[row.apiName]) || v.TriggerType || '';
+  const pt = String(v.ProcessType || '');
+  if (pt === 'AutoLaunchedFlow') {
+    if (/^Record/i.test(String(trig))) return 'RecordTriggeredFlow';
+    if (trig === 'Scheduled') return 'ScheduledFlow';
+    if (trig === 'PlatformEvent') return 'PlatformEventFlow';
+  }
+  return pt;
+}
+const SFTK_FLOW_KIND_TABS = ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'];
+// Which tab a kind is shown under: its own, or "other" (Process Builder, platform event, orchestration …). PURE.
+function sftkFlowKindTab(kind) { return ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'].includes(kind) ? kind : 'other'; }
+// How many flows each tab holds. PURE. → { all, RecordTriggeredFlow, Flow, AutoLaunchedFlow, ScheduledFlow, other }
+function sftkFlowKindCounts(rows, trigMap) {
+  const out = { all: 0, RecordTriggeredFlow: 0, Flow: 0, AutoLaunchedFlow: 0, ScheduledFlow: 0, other: 0 };
+  for (const r of (rows || [])) { out.all++; out[sftkFlowKindTab(sftkFlowKindOfRow(r, trigMap))]++; }
+  return out;
+}
+const SFTK_FLOW_KIND_ICON = { RecordTriggeredFlow: '⚡', Flow: '🖥', AutoLaunchedFlow: '🔄', ScheduledFlow: '📅', PlatformEventFlow: '🔁', Workflow: '🧱' };
+let _flowTypeFilter = 'all';
+let _flowDepsFollowT = null;
+// The dependency map in the fold shows the kind picked on the list's tabs (its own tabs are hidden there — one row
+// of tabs for the page). "Other" has no tab in the map: it shows all.
+function _flowDepsFollowKind() {
+  const want = SFTK_FLOW_KIND_TABS.includes(_flowTypeFilter) ? _flowTypeFilter : 'all';
+  const btn = [...document.querySelectorAll('#depTreeContainer .dep-filter-btn')].find(b => b.dataset.type === want);
+  if (!btn || btn.classList.contains('active')) return;
+  btn.click();
+  // the map dims the other kinds where they stand: bring its first flow of this kind into view, inside the fold
+  if (want !== 'all') setTimeout(() => { try { document.querySelector('#depTreeContainer .dep-node:not(.dep-dimmed)')?.scrollIntoView({ block: 'nearest' }); } catch (_) { /* not laid out */ } }, 80);
+}
+// the tabs carry their counts; a tab with no flow of its kind is greyed, "Other" shows only when the org has some
+function _flowTypePaint(counts) {
+  document.querySelectorAll('#flowTypeFilter .flow-type-btn').forEach(b => {
+    const k = b.dataset.ftype, n = counts[k] || 0, on = k === _flowTypeFilter;
+    if (!b.dataset.label) b.dataset.label = b.textContent.trim();
+    b.textContent = `${b.dataset.label} ${n.toLocaleString('en-US')}`;
+    b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
+    b.classList.toggle('flow-type-none', !n && k !== 'all');
+    if (k === 'other') b.style.display = n ? '' : 'none';
+  });
+}
+
 function renderFlowList() {
   if (currentMode === 'restore') return; // restore mode owns the content area
   const list = document.getElementById('flowList');
@@ -1439,6 +1491,11 @@ function renderFlowList() {
   const hit = row => !search || row.labels.some(label => sftkFlowFilterHit(search, sftkFlowFilterKey(label, row.apiName)));
   const trigMap = (typeof DependencyMap.getDefinitionTriggerMap === 'function' && DependencyMap.getDefinitionTriggerMap()) || {};
   const rows = sftkFlowListRows(flowGroups);
+  // the kind picked on the tabs above the list; a tab whose kind is gone from the org falls back to All
+  const kindCounts = sftkFlowKindCounts(rows, trigMap);
+  if (_flowTypeFilter !== 'all' && !kindCounts[_flowTypeFilter]) _flowTypeFilter = 'all';
+  _flowTypePaint(kindCounts);
+  const kindHit = row => _flowTypeFilter === 'all' || sftkFlowKindTab(sftkFlowKindOfRow(row, trigMap)) === _flowTypeFilter;
   const calls = (depMap && typeof sftkFlowCallsOf === 'function') ? sftkFlowCallsOf(depMap) : {};
   const rank = r => (trigMap[r.apiName] ? 0 : (r.versions[0] && r.versions[0].ProcessType === 'Flow') ? 1 : 2);
   const blocks = sftkFlowListWholeBlocks((typeof sftkFlowTreeBlocks === 'function' && typeof sftkFlowTreeOrder === 'function')
@@ -1447,8 +1504,9 @@ function renderFlowList() {
 
   for (const bk of blocks) {
     // a tree shows whole when any of its flows matches the search — the tree is the unit
+    // …and when any of its flows is of the kind picked: a record-triggered flow is shown with the subflows it calls
     const shown = bk.rows.filter(e => hit(e.row));
-    if (!shown.length) continue;
+    if (!shown.length || !bk.rows.some(e => kindHit(e.row) && (!search || hit(e.row) || shown.length))) continue;
     if (bk.rows.length === 1) {
       visibleCount++;
       list.appendChild(buildGroupElement(bk.rows[0].row.label, bk.rows[0].row.versions, depMap));
@@ -1462,6 +1520,7 @@ function renderFlowList() {
   emptyState.style.display = visibleCount === 0 && sortedLabels.length > 0 ? '' : 'none';
   // a search that matches nothing says so — it is not an empty org (QA 2026-10-18)
   if (visibleCount === 0 && sortedLabels.length > 0) emptyState.textContent = `No flow name or API name matches “${document.getElementById('searchInput').value.trim()}”.`;
+  if (visibleCount === 0 && sortedLabels.length > 0 && !search && _flowTypeFilter !== 'all') emptyState.textContent = 'No flow of this kind in the org.';
   if (allFlows.length === 0) {
     emptyState.style.display = '';
     emptyState.textContent = 'No flows found in this org.';
@@ -1574,6 +1633,14 @@ function buildGroupElement(label, versions, depMap, o) {
   const groupLabel = document.createElement('span');
   groupLabel.className = 'group-label';
   groupLabel.textContent = label;
+  {
+    const kind = sftkFlowKindOfRow({ apiName, versions }, (typeof DependencyMap.getDefinitionTriggerMap === 'function' && DependencyMap.getDefinitionTriggerMap()) || {});
+    const ico = document.createElement('span');
+    ico.className = 'flow-kind-ico';
+    ico.textContent = SFTK_FLOW_KIND_ICON[kind] || '•';
+    ico.title = kind ? humanProcessType(kind) : 'Kind not read';
+    groupInfo.appendChild(ico);
+  }
 
   const versionBadge = document.createElement('span');
   versionBadge.className = 'version-count-badge';
@@ -2387,6 +2454,15 @@ function setupModeToggle() {
   document.querySelectorAll('#flowViews .flow-view-btn').forEach(btn => {
     btn.addEventListener('click', () => setFlowView(btn.dataset.view));
   });
+  // the kinds of flow, on the list
+  document.querySelectorAll('#flowTypeFilter .flow-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => { _flowTypeFilter = btn.dataset.ftype || 'all'; renderFlowList(); _flowDepsFollowKind(); });
+  });
+  // the map is re-drawn by scans and reloads, and starts on All each time: bring it back to the kind picked
+  { const host = document.getElementById('depTreeContainer');
+    if (host && typeof MutationObserver === 'function') new MutationObserver(() => { clearTimeout(_flowDepsFollowT); _flowDepsFollowT = setTimeout(_flowDepsFollowKind, 60); }).observe(host, { childList: true }); }
+  // the dependency tools are drawn when their fold is opened, not before
+  document.getElementById('flowDepsFold')?.addEventListener('toggle', e => { if (e.target.open) renderDependenciesTab(); });
 
   // Drop-zone click → open file picker
   const dropZone = document.getElementById('restoreDropZone');
@@ -2414,8 +2490,15 @@ function setupModeToggle() {
 // features … it will be easier to understand") — four views: Versions (this list), Dependencies, ⏻ Switches,
 // ⚙ API versions. The last two are the dependency view's own lazy panels, opened for the user. ──
 let _flowView = 'versions';
+// One list (owner 2026-11-20: "maybe versions and dependecies can be one page?"): the dependency map is a fold of the
+// Flows view. It is "on screen" — worth re-drawing after a scan — only while that fold is open.
+function _depsFoldOpen() {
+  const d = document.getElementById('flowDepsFold');
+  return !!(d && d.open && _flowView === 'versions');
+}
 function setFlowView(view) {
-  const v = ['deps', 'switches', 'apiver'].includes(view) ? view : 'versions';
+  const wantDeps = view === 'deps';   // every old link to the Dependencies view: the Flows view, its fold opened
+  const v = ['switches', 'apiver'].includes(view) ? view : 'versions';
   _flowView = v;
   document.querySelectorAll('#flowViews .flow-view-btn').forEach(b => {
     const on = b.dataset.view === v;
@@ -2432,7 +2515,13 @@ function setFlowView(view) {
   const tree = document.getElementById('depTreeContainer'), banner = document.getElementById('depNoDataBanner');
   if (tree) tree.style.display = tool ? 'none' : '';
   if (banner && tool) banner.style.display = 'none';   // renderDependenciesTab sets it again on the Dependencies view
-  if (v === 'versions') return;
+  if (v === 'versions') {
+    if (wantDeps) {
+      const fold = document.getElementById('flowDepsFold');
+      if (fold) { fold.open = true; renderDependenciesTab(); try { fold.scrollIntoView({ block: 'start' }); } catch (_) { /* not laid out */ } }
+    }
+    return;
+  }
   // ⏻ Switches and ⚙ API versions draw their panel at the top of the view at once — no dependency scan is
   // needed for them; the dependency tree follows below as on the Dependencies view
   if (host && (v === 'switches' || v === 'apiver')) {

@@ -17,7 +17,8 @@ describe('one Flows page', () => {
     expect(flows).toBeGreaterThan(0); expect(deps).toBeGreaterThan(flows); expect(next).toBeGreaterThan(deps);
     expect(HTML).toContain('<div id="tab-dependencies" class="flow-view" style="display:none">');   // not a tab-content: navigateToTab leaves it alone
     expect(HTML).toContain('id="depTreeContainer"');
-    for (const v of ['versions', 'deps', 'switches', 'apiver']) expect(HTML).toContain(`class="flow-view-btn${v === 'versions' ? ' active' : ''}" data-view="${v}"`);
+    expect(HTML).not.toContain('data-view="deps"');   // 2026-11-21: the dependency map is a fold of the Flows view
+    for (const v of ['versions', 'switches', 'apiver']) expect(HTML).toContain(`class="flow-view-btn${v === 'versions' ? ' active' : ''}" data-view="${v}"`);
     expect(HTML).toContain('<script src="sftk-flowinterviews.js"></script>');
     expect(readFileSync(new URL('../styles.css', import.meta.url), 'utf8')).toContain('.flow-views { margin-bottom: 8px; flex-shrink: 0; }');
   });
