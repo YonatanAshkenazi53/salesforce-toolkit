@@ -4,6 +4,7 @@
 //   1. open the deployment, press nothing → every card counted; the parents' alignment check runs
 //   2. 🔄 Rescan all → every object read again (each child's runAt moves)
 //   3. Contact's key changed from its card → Contact (and its children) read again, the other children not
+import { MQ_SENTENCE, mqAdd } from './_match-ui.mjs';
 const NL = String.fromCharCode(10);
 const dump = async (h, sel, n = 1500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
 const dark = async (h, on) => { await h.eval(`(() => { if (!document.getElementById('noTrans')) { const st = document.createElement('style'); st.id = 'noTrans'; st.textContent = '*{transition:none!important}'; document.head.appendChild(st); } document.documentElement.classList.toggle('ds-dark', ${on}); return true; })()`); await h.sleep(500); };
@@ -41,8 +42,7 @@ export default async function (h) {
   const before3 = JSON.parse(await runAts());
   await h.eval(`(() => { const d = document.querySelector('#dsDepTree details'); if (d) d.open = true; document.querySelector('[data-tree-match="${cKey}"]').click(); return true; })()`);
   await h.waitFor("!!document.querySelector('#dsMatchTestBtn')", 90000, 500);
-  await h.eval(`(() => { const r = document.querySelector('input[name="dsMatchStrat"][value="composite"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`); await h.sleep(800);
-  await h.eval(`(() => { const s = document.querySelector('[data-match-comp="1"]'); const o = [...s.options].find(x => x.value === 'Title') || [...s.options].find(x => x.value); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`); await h.sleep(800);
+  h.log('  Contact rule, a field added:', await h.eval(mqAdd('^Title$')), '·', await h.eval(MQ_SENTENCE)); await h.sleep(1200);
   await h.eval(`document.querySelector('#dsRecSave').click()`);
   await h.waitFor("!!document.querySelector('#dsDepRefresh')?.disabled", 30000, 200).catch(() => h.log('  (the re-read was not seen starting)'));
   await idle(); await h.sleep(1500);

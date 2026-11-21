@@ -1074,55 +1074,61 @@ export const SECTIONS = [
     // matching: the records window of the root
     if (await c.has('[data-records-btn=""]')) {
       await rec.click('[data-records-btn=""]', 800);
-      await rec.fast(() => h.waitFor("!!document.querySelector('input[name=\"dsMatchStrat\"]')", 60000, 300));
+      // the matching rule as one question and a sentence (the panel since 2026-11-20; the Single / Composite /
+      // External ID radios this chapter used to point at are gone)
+      await rec.fast(() => h.waitFor("!!document.querySelector('.ds-match-fold')", 60000, 300));
       await h.sleep(800);
-      await rec.point('input[name="dsMatchStrat"]', 500);
-      await rec.say('Matching: how two records are recognised as the same record across orgs. It decides what a scan calls missing, changed or in sync, and what a re-run updates.', 8500);
-      await rec.point('input[name="dsMatchStrat"][value="field"]', 700);
-      await rec.say('One field — here the Name. Or several fields together, for a junction object that has no name of its own. Or an external id, the strongest key: it survives renames and lets a re-run upsert instead of duplicating.', 10000);
-      if (await c.has('#dsRecTgtMatchField')) {
-        await rec.point('#dsRecDisplayField', 600);
-        await rec.point('#dsRecTgtMatchField', 600);
-        await rec.say('The field can differ by org: match on one field in the source and another in the target. Normalize forgives case and spacing on both sides.', 6500);
+      await h.eval(`(() => { const d = document.querySelector('.ds-match-fold'); if (d && !d.open) d.open = true; return true; })()`);
+      await rec.fast(() => h.waitFor("!!document.querySelector('[data-mq-field=\"0\"]')", 30000, 300));
+      await h.sleep(600);
+      await rec.point('.ds-mq-q', 500);
+      await rec.say('Matching is one question: how do we know a record is already in the target? The answer decides what a scan calls missing, changed or in sync, and what a re-run updates.', 8500);
+      await rec.point('[data-mq-field="0"]', 700);
+      await rec.say('The answer is a sentence. It has the same Name — or the same unique ID, the strongest rule: it survives renames and lets a re-run update instead of duplicating.', 9000);
+      await rec.fast(() => h.waitFor("!!document.querySelector('#dsMatchLive .ds-mq-res') && !document.querySelector('#dsMatchLive .ds-mq-spin')", 90000, 400).catch(() => {}));
+      if (await c.has('#dsMatchLive .ds-mq-res')) {
+        await rec.point('#dsMatchLive', 800);
+        await rec.say('Under it, the result on the real records of both orgs, with examples: how many are already in the target, how many a run would create, and how many the rule cannot tell apart. A weak rule is seen here, not after a run.', 10500);
       }
-      // a key of several fields, most specific first, and suggestions of a chosen depth (user 2026-10-23)
-      if (await c.has('input[name="dsMatchStrat"][value="composite"]')) {
-        await rec.click('input[name="dsMatchStrat"][value="composite"]', 900);
-        await rec.fast(() => h.waitFor("!!document.querySelector('[data-match-comp=\"1\"]')", 30000, 300));
-        await h.sleep(600);
-        await rec.say('Several fields make a sequence: the name first, then the fields that tell records apart.', 5000);
-        const pick = async (slot, name) => h.eval(`(() => { const s = document.querySelector('[data-match-comp="${slot}"]'); if (!s) return false; const o = [...s.options].find(o => o.value === ${J(name)}); if (!o) return false; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.value; })()`);
-        await rec.point('[data-match-comp="1"]', 500);
-        if (await pick(1, 'AccountNumber')) { await rec.fast(() => h.waitFor("!!document.querySelector('[data-match-comp=\"2\"]')", 30000, 300)); await h.sleep(1200); }
-        if (await pick(2, 'Phone')) await h.sleep(1500);
-        if (await c.has('#dsMatchTiered')) {
-          await rec.scrollTo('#dsMatchReadsAs', 'center');
-          await rec.point('#dsMatchTiered', 800);
-          await rec.say('Most specific first. Every account here has a name, nine of ten have an account number. A record with all three values is matched on all three; one without a phone on name and number; one with only a name, on the name alone. A value that differs on both sides rules the pair out.', 13500);
-          await rec.point('#dsMatchReadsAs', 800);
-          await rec.say('The page reads the key back in plain words, so there is no guessing what it does.', 4500);
+      // several fields, most specific first, and other rules of a chosen depth (user 2026-10-23)
+      const addField = async name => h.eval(`(() => { const a = document.querySelector('.ds-mq-add'); if (!a) return false; const o = [...a.options].find(o => o.value === ${J(name)}); if (!o) return false; a.value = o.value; a.dispatchEvent(new Event('change', { bubbles: true })); return o.value; })()`);
+      const dropField = async i => h.eval(`(() => { const x = document.querySelector('.ds-mq-sentence [data-mq-field="${i}"]:not(.ds-mq-add)'); if (!x) return false; x.value = ''; x.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+      if (await c.has('.ds-mq-add')) {
+        await rec.point('.ds-mq-add', 600);
+        if (await addField('AccountNumber')) { await rec.fast(() => h.waitFor("!!document.querySelector('.ds-mq-sentence [data-mq-field=\"1\"]:not(.ds-mq-add)')", 30000, 300)); await h.sleep(1200); }
+        if (await addField('Phone')) await h.sleep(1500);
+        await rec.say('Add a field and the sentence grows: the name first, then the fields that tell records apart.', 5000);
+        if (await c.has('.ds-mq-empty')) {
+          await rec.scrollTo('.ds-mq-empty', 'center');
+          await rec.point('.ds-mq-empty', 800);
+          await rec.say('One question follows: a record with no account number — match it by the name alone? Yes means most specific first. A record with all three values is matched on all three; one without a phone on name and number; one with only a name, on the name alone. A value that differs on both sides rules the pair out.', 14500);
+        }
+        if (await c.has('#dsMqForgive')) {
+          await rec.point('#dsMqForgive', 700);
+          await rec.say('One switch forgives small differences on both sides: capitals, extra spaces, phone punctuation.', 5500);
         }
         if (await c.has('#dsMatchSuggestBtn')) {
           await rec.click('#dsMatchSuggestBtn', 800);
           await rec.fast(() => h.waitFor("!!document.querySelector('[data-match-depth]')", 30000, 300));
           await rec.scrollTo('#dsMatchSuggestBox', 'start');
-          await rec.say('Suggestions ask how many fields the key should have. One field: how many records hold a value for it, in both orgs.', 6500);
+          await rec.say('Try another rule asks how many fields it should have. One field: how many records hold a value for it, in both orgs.', 6500);
           await rec.click('[data-match-depth="3"]', 800);
-          await rec.fast(() => h.waitFor("[...document.querySelectorAll('[data-match-grade-out]')].slice(0, 3).every(el => el.innerText && !/grading/i.test(el.innerText))", 180000, 500).catch(() => {}));
+          await rec.fast(() => h.waitFor("(() => { const els = [...document.querySelectorAll('[data-match-grade-out]')].slice(0, 3); return els.length > 0 && els.every(el => el.innerText && !/grading/i.test(el.innerText)); })()", 180000, 500).catch(() => {}));
           await h.sleep(800);
-          await rec.say('Three fields: the name first, then the fields that tell records apart, graded against both orgs live. A field nobody fills is named and costs the key points; the best key wears the star.', 9500);
+          await rec.say('Three fields: the name first, then the fields that tell records apart, graded against both orgs live. A field nobody fills is named and costs the rule points; the best one wears the star.', 9500);
         }
         // back to the one field the rest of this tour uses
-        await rec.click('input[name="dsMatchStrat"][value="field"]', 800);
-        await rec.fast(() => h.waitFor("!!document.querySelector('#dsRecDisplayField')", 30000, 300).catch(() => {}));
-        await h.sleep(800);
+        await dropField(2); await h.sleep(900);
+        await dropField(1); await h.sleep(900);
+        await rec.fast(() => h.waitFor("!document.querySelector('.ds-mq-sentence [data-mq-field=\"1\"]:not(.ds-mq-add)')", 30000, 300).catch(() => {}));
+        await h.sleep(600);
       }
       if (await c.has('#dsMatchTestBtn')) {
         await rec.click('#dsMatchTestBtn', 700);
         await rec.fast(() => h.waitFor("(document.querySelector('#dsMatchTestResults')?.innerText || '').length > 20", 120000, 500).catch(() => {}));
         await h.sleep(800);
         await rec.point('#dsMatchTestResults', 700);
-        await rec.say('Test grades the key against both orgs, live: how many records carry a value, how many values are unique, and how many pairs would match. A weak key is seen here, not after a run.', 8500);
+        await rec.say('The full report gives the numbers behind that result, for the source and every target: how many records carry a value, how many values are unique, and how many pairs would match.', 8500);
       }
       if (await c.has('#dsRecSave')) await rec.click('#dsRecSave', 700);
       await h.sleep(600);

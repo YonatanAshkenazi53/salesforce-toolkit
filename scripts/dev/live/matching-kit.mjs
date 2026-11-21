@@ -7,6 +7,7 @@
 //   2. a tree card's ✏ matching → the object's own Matching kit (composite) → saved → read again → the card
 //      says the new key
 // PARENT=<obj> (default Individual), PFIELD=<field> to use (default: the first suggestion that is not Name)
+import { MQ_SENTENCE, mqAdd } from './_match-ui.mjs';
 const NL = String.fromCharCode(10);
 const dump = async (h, sel, n = 1500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
 const waitScanned = h => h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 400000, 1000);
@@ -56,11 +57,9 @@ export default async function (h) {
   await h.eval(`document.querySelector('.ds-match-cfg')?.scrollIntoView({ block: 'start' })`); await h.sleep(400);
   await h.shot(h.shots + '/mk-3-card-kit.png');
   // composite: Name + the first other text field
-  await h.eval(`(() => { const r = document.querySelector('input[name="dsMatchStrat"][value="composite"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
-  await h.sleep(800);
-  const comp = await h.eval(`(() => { const s = document.querySelector('[data-match-comp="1"]'); if (!s) return null; const o = [...s.options].find(x => x.value && /Email|Phone|Title|Department/.test(x.value)) || [...s.options].find(x => x.value); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.value; })()`);
-  await h.sleep(800);
-  h.log('composite with:', comp, '| reads as:', await dump(h, '#dsMatchReadsAs', 300));
+  const comp = await h.eval(mqAdd('Email|Phone|Title|Department'));
+  await h.sleep(1200);
+  h.log('a second field:', comp, '| the rule reads:', await h.eval(MQ_SENTENCE));
   await h.shot(h.shots + '/mk-4-card-composite.png');
   await dark(h, true); await h.shot(h.shots + '/mk-4-card-composite-dark.png'); await dark(h, false);
   await h.eval(`document.querySelector('#dsRecSave').click()`);
