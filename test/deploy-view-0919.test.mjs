@@ -351,8 +351,9 @@ describe('2026-09-21 — four asks from the live page', () => {
     expect(RC).toContain('_health.push(sftkRecDupsHtml(scan, p));');
     expect(DV).toContain('notes.push(sftkRecDupsHtml(scan, p));');
     const fn = RC.slice(RC.indexOf('function sftkRecDupsHtml(scan, p, objLabel) {'), RC.indexOf('function sftkRecWireDupFix('));
-    expect(fn.indexOf('Copies of the same record? 🔀 Merge them.')).toBeLessThan(fn.indexOf('Then make it stick'));   // 2026-10-25: the merge is offered here, first
-    expect(fn).toContain('stamping while copies are still ambiguous would cement a coin flip');
+    expect(fn.indexOf('The same record, entered more than once? Merge the copies.')).toBeLessThan(fn.indexOf('When the pairs are right, keep them.'));   // the merge first, stamping last (reworded 2026-11-20)
+    expect(fn).toContain('✏ Change the matching rule</button>');   // owner 2026-11-20: "we do have to still offer changing the matching key"
+    expect(fn).toContain('<i>Do this last</i>: while copies are still mixed up, it would fix the wrong pairs in place.');
   });
   it('a Synced row opens the live compare, and the compare unfolds when nothing differs', () => {
     expect(DV).toContain('▸ compare</button>');
@@ -366,16 +367,16 @@ describe('2026-09-21 — the duplicate fixes never send the user into an empty d
     globalThis.esc = s => String(s ?? ''); globalThis.orgLabel = u => String(u); globalThis.sftkMatchKeyLabel = k => String(k);
     return dups({ dupKeys: { rows: 2, keys: ['Acme'], examples: [{ key: 'Acme', src: ['1', '2'], tgt: ['3', '4'] }] }, ...scan }, { id: 'p', sourceOrg: 'S', targetOrg: 'T' });
   };
-  it('nothing unmatched → no Match review button, and the row says why', () => {
+  it('nothing unmatched → no Match review button and no step for it', () => {
     const html = run({ missingInTarget: [], onlyInTarget: [] });
     expect(html).not.toContain('data-rec-dupfix="review"');
-    expect(html).toContain('Pairing by hand is not possible here');
+    expect(html).not.toContain('Or say which is which by hand.');
     expect(html).toContain('data-rec-dupfix="stamp"');
   });
   it('unmatched rows on BOTH sides → the button, with both counts', () => {
     const html = run({ missingInTarget: [{}, {}], onlyInTarget: [{}] });
     expect(html).toContain('data-rec-dupfix="review"');
-    expect(html).toContain('2 unmatched source record(s) with the 1 unmatched target record(s)');
+    expect(html).toContain('pairs the 2 unmatched source records with the 1 unmatched target record.');
   });
   it('unmatched on one side only is still nothing to pair', () => {
     expect(run({ missingInTarget: [{}], onlyInTarget: [] })).not.toContain('data-rec-dupfix="review"');

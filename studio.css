@@ -7009,3 +7009,14 @@ details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
 .ds-mq-more-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 7px; }
 .ds-mq-pertgt span { white-space: nowrap; }
 .ds-mq-foot { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ⚠ Needs a decision · names only one org holds, more than once (owner 2026-11-20) */
+.ds-amb-onesided { margin-top: 14px; }
+.ds-amb-one { padding: 9px 12px; }
+.ds-amb-one-head { font-size: 12.5px; color: var(--text); line-height: 1.5; }
+.ds-amb-one-name { font-weight: 700; }
+.ds-amb-one-copies { margin-top: 5px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+
+/* ⚠ Needs a decision: record links follow the theme (they were the browser's default blue, unreadable in dark) */
+a.ds-dep-open { color: var(--brand); text-decoration: none; }
+a.ds-dep-open:hover { text-decoration: underline; }

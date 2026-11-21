@@ -5231,6 +5231,7 @@ function sftkCapFailedIds(list, richCap, idCap) {
 // can suggest in order to fix"). Shared by ⚖ Transfer and the Deploy view.
 // Buttons carry data-rec-dupfix; each page wires them (sftkRecWireDupFix).
 function sftkRecDupsHtml(scan, p, objLabel) {
+  const child = !!objLabel;   // a child object's card: the merge tab, Match review and Stamp identity act on the root object only
   const ex = (scan && scan.dupKeys && scan.dupKeys.examples) || [];
   if (!scan || !scan.dupKeys || !scan.dupKeys.rows) return '';
   const key = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
@@ -5255,14 +5256,14 @@ function sftkRecDupsHtml(scan, p, objLabel) {
       <div class="ds-rec-dup-head">⚠ <b>${objLabel ? `${esc(objLabel)}: ` : ''}${n} name${n === '1' ? '' : 's'} used by more than one record</b> — the scan never guesses which copy is which.</div>
       <details class="ds-rec-dup-more"><summary>the copies, and what to do</summary>
       <div class="ds-rec-dup-rows">${rows}</div>${more}
-      <div class="ds-rec-dup-fix"><b>What to do, safest first</b>
+      <div class="ds-rec-dup-fix"><b>What to do</b>
         <ol>
-          <li><b>Copies of the same record? 🔀 Merge them.</b> ${nAmb ? `A name that BOTH orgs hold is listed under ⚠ Needs a decision below, with a merge for the copies in ${esc(orgLabel(p.sourceOrg))}, in ${esc(orgLabel(p.targetOrg))}, or both — you choose the record that stays and the values it keeps.` : 'None of these names is held by both orgs, so ⚠ Needs a decision has nothing to ask.'}${oneSided ? ` A name that only one org holds is not listed there: there is no record on the other side to choose between, and a run creates every copy as its own record. Merge or delete those copies in Salesforce (the links above open each one), then 🔄 Refresh state.` : ''} One of them junk? Delete or rename it, then 🔄 Refresh state.</li>
-          <li><b>Different records that share a name? Make the key tell them apart.</b> Add a field to the key — most specific first matches each record by the fields it has (Name + account number, Name + billing city). ${saved ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(p.id)}" title="Opens this deployment in the builder — Pick Records → Matching">✏ Change the match key</button>` : '<span class="ds-lkp-hint">Save this pair as a deployment to change its match key.</span>'}</li>
-          ${unS && unT
-            ? `<li><b>Or pair them by hand.</b> <button class="ds-btn ds-btn-xs" data-rec-dupfix="review" title="Pick, for each unmatched source record, the target record it really is — remembered for this org pair">🔗 Match review</button> pairs the ${unS.toLocaleString('en-US')} unmatched source record(s) with the ${unT.toLocaleString('en-US')} unmatched target record(s) — you say which is which.</li>`
-            : `<li><b>Pairing by hand is not possible here:</b> every copy already got a partner by name, in whatever order Salesforce returned them — the coin flip itself. Use step 1 or 2.</li>`}
-          <li><b>Then make it stick.</b> Once the pairs are right, <button class="ds-btn ds-btn-xs" data-rec-dupfix="stamp" title="Writes each source record's Id into SFTK_ID__c on its matched target record — future scans match on that, whatever the names are">🪪 Stamp identity</button> writes each source record’s Id onto its target record, so later scans match on that and never on the name again. <i>Do this last</i> — stamping while copies are still ambiguous would cement a coin flip.</li>
+          <li><b>The same record, entered more than once? Merge the copies.</b> ${child
+            ? 'Merge them in Salesforce (the links above open each copy), then 🔄 Refresh state.'
+            : `<button class="ds-btn ds-btn-xs" data-dep-tab-go="amb" title="Opens the ⚠ Needs a decision tab of the Deploy page">🔀 Show them with their merge</button> You choose the record that stays and the values it keeps.${nAmb && oneSided ? ' Names both orgs hold come first, as questions; names only one org holds are listed under them.' : ''}`}</li>
+          <li><b>Different records with the same name? Add a field to the matching rule</b>, so they can be told apart — Name and Email, Name and billing city. ${saved ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(p.id)}" title="Opens this deployment in the builder — Pick Records, the matching rule">✏ Change the matching rule</button>` : '<span class="ds-lkp-hint">Save this pair as a deployment to change its matching rule.</span>'}</li>
+          ${!child && unS && unT ? `<li><b>Or say which is which by hand.</b> <button class="ds-btn ds-btn-xs" data-rec-dupfix="review" title="Pick, for each unmatched source record, the target record it really is — remembered for this org pair">🔗 Match review</button> pairs the ${unS.toLocaleString('en-US')} unmatched source record${unS === 1 ? '' : 's'} with the ${unT.toLocaleString('en-US')} unmatched target record${unT === 1 ? '' : 's'}.</li>` : ''}
+          ${!child ? `<li><b>When the pairs are right, keep them.</b> <button class="ds-btn ds-btn-xs" data-rec-dupfix="stamp" title="Writes each source record's Id into SFTK_ID__c on its matched target record — future scans match on that, whatever the names are">🪪 Stamp identity</button> writes each source record’s Id onto its target record, so later scans match on that and not on the name. <i>Do this last</i>: while copies are still mixed up, it would fix the wrong pairs in place.</li>` : ''}
         </ol>
       </div>
       </details>

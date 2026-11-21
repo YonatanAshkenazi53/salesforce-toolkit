@@ -1484,6 +1484,57 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
   return html;
 }
 
+// PURE. Names that only ONE org holds, more than once (owner 2026-11-20: "why we dont see this in needs a decision?
+// shouldn't they be merged?"). They are not a question — there is no record on the other side to choose between —
+// so the scan files every copy under 🔴 Missing (a run creates each) or 🔵 Only in the target. Here they are read
+// back out of those two lists, grouped by name, so the tab can show them and offer the merge.
+// → [{ name, side: 'src' | 'tgt', ids }] — source names first, each in the order the scan listed it
+function sftkDepOneSidedDups(scan, keyOf) {
+  const out = [];
+  const collect = (rows, side, idOf) => {
+    const groups = new Map();
+    for (const r of (rows || [])) {
+      const id = idOf(r); if (!id || r.forcedNew) continue;
+      const k = keyOf(r); if (!groups.has(k)) groups.set(k, []);
+      if (!groups.get(k).includes(id)) groups.get(k).push(id);
+    }
+    for (const [name, ids] of groups) if (ids.length > 1) out.push({ name, side, ids });
+  };
+  collect(scan && scan.missingInTarget, 'src', r => r.sourceId);
+  collect(scan && scan.onlyInTarget, 'tgt', r => r.targetId);
+  return out;
+}
+// The same groups, drawn: the name, its copies as links, what a run does with them, and the merge.
+function _depOneSidedHtml(p, groups, total) {
+  if (!groups.length) return '';
+  const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
+  const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+  const mergeTitle = 'Merge these records into one: you choose which one stays and which values it keeps; the others are merged into it and deleted.';
+  const row = g => {
+    const here = g.side === 'src' ? srcL : tgtL, there = g.side === 'src' ? tgtL : srcL, org = g.side === 'src' ? p.sourceOrg : p.targetOrg;
+    const n = g.ids.length;
+    const what = g.side === 'src'
+      ? `<b>${n} copies in ${here}</b>, none in ${there} — a run creates all ${n} there.`
+      : `<b>${n} copies in ${here}</b>, none in ${there} — a run leaves them as they are.`;
+    return `<div class="ds-amb-group ds-amb-one">
+        <div class="ds-amb-one-head"><span class="ds-amb-one-name">“${esc(g.name)}”</span> <span>${what}</span></div>
+        <div class="ds-amb-one-copies">${g.ids.slice(0, 12).map((id, i) => `<a class="ds-dep-open" href="${url(org, id)}" target="_blank" rel="noopener" title="${esc(id)}">copy ${i + 1} ↗</a>`).join('')}${n > 12 ? `<span class="ds-dep-muted">and ${n - 12} more</span>` : ''}
+          <span class="ds-dep-sp"></span><button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-dup-merge="${g.side}" data-dep-dup-key="${esc(g.name)}" title="${mergeTitle}">🔀 Merge the ${n} copies in ${here}</button></div>
+      </div>`;
+  };
+  return `<div class="ds-amb-onesided">
+      <div class="ds-dep-note ds-dep-amb-intro">
+        <div class="ds-amb-intro-head"><b>${total.toLocaleString('en-US')} name${total === 1 ? '' : 's'} that only one org holds, more than once.</b> There is nothing to decide here: the other org has no record of the name. They are listed so you can merge copies of the same record before a run creates every one of them.</div>
+        <ul class="ds-amb-intro-ways">
+          <li>🔀 <b>Copies of the same record?</b> Merge them here; both orgs are read again afterwards.</li>
+          <li>✏ <b>Different records that share a name?</b> Leave them: each is deployed as its own record. To tell them apart on the next run, add a field to the matching rule.</li>
+        </ul>
+      </div>
+      ${groups.map(row).join('')}
+      ${total > groups.length ? `<div class="ds-dep-note">Showing ${groups.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} names — narrow with the filter above.</div>` : ''}
+    </div>`;
+}
+
 // PURE. The merge walk's plan (user 2026-10-27: "an option of merge all that can merge a lot of
 // pairs one by one"): every name on the tab whose side holds more than one copy, source side
 // first, in the order shown. [{ name, side, ids }]
@@ -1838,6 +1889,8 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const ambMem = r => { const v = ambMemNow()[r.sourceId]; return v === SFTK_MEM_NEW ? '__new__' : (v && (r.candidates || []).includes(v) ? v : ''); };
   const ambPick = r => _depAmbPick.has(r.sourceId) ? _depAmbPick.get(r.sourceId) : (ambMem(r) || r.suggest || '');
   const ambRoot = tabDef.k === 'amb' && isRoot;
+  const oneSidedAll = ambRoot ? sftkDepOneSidedDups(s, key).filter(g => !q || g.name.toLowerCase().includes(q)) : [];
+  const oneSided = oneSidedAll.slice(0, 50);
   if (wkey !== _depWindowKey) { _depWindowKey = wkey; _depWindow = SFTK_DEPLOY_WINDOW; }
   const shown = rows.slice(0, _depWindow);
   const recUrl = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
@@ -1931,7 +1984,8 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     ${!isRoot && s.personContacts ? `<div class="ds-dep-note">${esc(sftkPaContactsLine(s.personContacts, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}</div>` : ''}
     ${!isRoot ? (s.warnings || []).map(w => `<div class="ds-dep-note">⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}</div>`).join('') : ''}
     ${tabDef.k === 'amb' && rows.length ? _depAmbIntro(p, isRoot, s) : ''}
-    <div class="ds-dep-list">${shown.length ? (ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key, ambMem) : shown.map(rowHtml).join('')) : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`}</div>
+    <div class="ds-dep-list">${shown.length ? (ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key, ambMem) : shown.map(rowHtml).join('')) : (oneSided.length ? '' : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`)}</div>
+    ${_depOneSidedHtml(p, oneSided, oneSidedAll.length)}
     ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString('en-US')} of ${rows.length.toLocaleString('en-US')}
       <button class="ds-btn ds-btn-xs" data-dep-more="step">Show ${Math.min(SFTK_DEPLOY_WINDOW, rows.length - shown.length).toLocaleString('en-US')} more</button>
       <button class="ds-btn ds-btn-xs" data-dep-more="all">Show all ${rows.length.toLocaleString('en-US')}</button></div>` : ''}`;
@@ -2016,6 +2070,10 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     if (done || failed) { showToast(`Merge all: ${done} merged${failed ? `, ${failed} failed` : ''} — reading both orgs again…`, failed ? 'warning' : 'success', 6000); await _depRescan(p); }
   });
   // 🔀 the copies of one name, on the side that holds more than one, merged into one record
+  host.querySelectorAll('[data-dep-dup-merge]').forEach(b => b.addEventListener('click', () => {
+    const g = oneSidedAll.find(x => x.side === b.dataset.depDupMerge && x.name === b.dataset.depDupKey);
+    if (g) _depMergeCopies(p, g.side, g.name, g.ids);   // its own picker and confirmation; both orgs are read again after it
+  }));
   host.querySelectorAll('[data-dep-amb-merge]').forEach(b => b.addEventListener('click', async () => {
     const side = b.dataset.depAmbMerge, name = b.dataset.depAmbKey;
     const rs = all.filter(r => key(r) === name);
