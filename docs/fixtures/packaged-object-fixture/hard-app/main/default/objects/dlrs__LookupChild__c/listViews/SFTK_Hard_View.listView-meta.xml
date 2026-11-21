@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ListView xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_Hard_View</fullName>
+    <columns>NAME</columns>
+    <columns>SFTK_Pkg_Tag__c</columns>
+    <columns>CREATED_DATE</columns>
+    <filterScope>Everything</filterScope>
+    <filters>
+        <field>SFTK_Pkg_Tag__c</field>
+        <operation>contains</operation>
+        <value>demo</value>
+    </filters>
+    <filters>
+        <field>NAME</field>
+        <operation>notEqual</operation>
+        <value>SFTK never</value>
+    </filters>
+    <filters>
+        <field>SFTK_Pkg_Tag__c</field>
+        <operation>notEqual</operation>
+        <value>skip</value>
+    </filters>
+    <label>SFTK Hard View</label>
+</ListView>

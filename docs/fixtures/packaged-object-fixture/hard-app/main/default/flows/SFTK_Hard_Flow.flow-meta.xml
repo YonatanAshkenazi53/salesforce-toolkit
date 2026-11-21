@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>63.0</apiVersion>
+    <assignments>
+        <name>Set_Tag</name><label>Set Tag</label><locationX>50</locationX><locationY>350</locationY>
+        <assignmentItems><assignToReference>Find_Child.SFTK_Pkg_Tag__c</assignToReference><operator>Assign</operator><value><elementReference>TagUpper</elementReference></value></assignmentItems>
+        <assignmentItems><assignToReference>Note</assignToReference><operator>Assign</operator><value><stringValue>kept</stringValue></value></assignmentItems>
+    </assignments>
+    <decisions>
+        <name>Has_Tag</name><label>Has Tag</label><locationX>176</locationX><locationY>242</locationY>
+        <defaultConnectorLabel>No</defaultConnectorLabel>
+        <rules>
+            <name>Tagged</name><conditionLogic>and</conditionLogic>
+            <conditions><leftValueReference>Find_Child.SFTK_Pkg_Tag__c</leftValueReference><operator>IsNull</operator><rightValue><booleanValue>false</booleanValue></rightValue></conditions>
+            <conditions><leftValueReference>Find_Child.Name</leftValueReference><operator>NotEqualTo</operator><rightValue><stringValue>SFTK never</stringValue></rightValue></conditions>
+            <connector><targetReference>Set_Tag</targetReference></connector>
+            <label>Tagged</label>
+        </rules>
+    </decisions>
+    <description>Admin Toolkit HARD fixture: one flow that uses SFTK_Pkg_Tag__c in a Get Records filter, a decision, an assignment and a formula at once. Nothing calls it. Safe to delete.</description>
+    <formulas>
+        <name>TagUpper</name><dataType>String</dataType>
+        <expression>UPPER({!Find_Child.SFTK_Pkg_Tag__c}) &amp; &quot;-&quot; &amp; {!Find_Child.Name}</expression>
+    </formulas>
+    <interviewLabel>SFTK Hard Flow {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Hard Flow</label>
+    <processMetadataValues><name>BuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>CanvasMode</name><value><stringValue>AUTO_LAYOUT_CANVAS</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>OriginBuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processType>AutoLaunchedFlow</processType>
+    <recordLookups>
+        <name>Find_Child</name><label>Find Child</label><locationX>176</locationX><locationY>134</locationY>
+        <assignNullValuesIfNoRecordsFound>false</assignNullValuesIfNoRecordsFound>
+        <connector><targetReference>Has_Tag</targetReference></connector>
+        <filterLogic>and</filterLogic>
+        <filters><field>Name</field><operator>StartsWith</operator><value><stringValue>SFTK Hard</stringValue></value></filters>
+        <filters><field>SFTK_Pkg_Tag__c</field><operator>EqualTo</operator><value><stringValue>demo</stringValue></value></filters>
+        <getFirstRecordOnly>true</getFirstRecordOnly>
+        <object>dlrs__LookupChild__c</object>
+        <storeOutputAutomatically>true</storeOutputAutomatically>
+    </recordLookups>
+    <start><locationX>50</locationX><locationY>0</locationY><connector><targetReference>Find_Child</targetReference></connector></start>
+    <status>Active</status>
+    <variables><name>Note</name><dataType>String</dataType><isCollection>false</isCollection><isInput>false</isInput><isOutput>false</isOutput></variables>
+</Flow>

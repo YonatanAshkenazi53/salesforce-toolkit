@@ -1,1 +1,24 @@
-{"packageDirectories":[{"path":"force-app","default":true},{"path":"fc-app"},{"path":"more-app"},{"path":"target-app"},{"path":"all-app"}],"sourceApiVersion":"64.0"}
+{
+  "packageDirectories": [
+    {
+      "path": "force-app",
+      "default": true
+    },
+    {
+      "path": "fc-app"
+    },
+    {
+      "path": "more-app"
+    },
+    {
+      "path": "target-app"
+    },
+    {
+      "path": "all-app"
+    },
+    {
+      "path": "hard-app"
+    }
+  ],
+  "sourceApiVersion": "64.0"
+}

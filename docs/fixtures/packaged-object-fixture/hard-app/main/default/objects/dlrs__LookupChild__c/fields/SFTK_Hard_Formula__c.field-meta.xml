@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_Hard_Formula__c</fullName>
+    <description>Admin Toolkit HARD fixture: a formula that uses SFTK_Pkg_Tag__c three ways. Safe to delete.</description>
+    <externalId>false</externalId>
+    <formula>IF( ISBLANK(SFTK_Pkg_Tag__c), &quot;none&quot;, UPPER(SFTK_Pkg_Tag__c) &amp; &quot;-&quot; &amp; TEXT(LEN(SFTK_Pkg_Tag__c)) )</formula>
+    <label>SFTK Hard Formula</label>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>
