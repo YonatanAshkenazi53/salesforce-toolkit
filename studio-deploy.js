@@ -149,6 +149,39 @@ function sftkDeploySelection(recSel, recChildSel, rootObj, objByPath) {
   return { parts, total };
 }
 
+// PURE. The records a PII treatment is chosen from: every selected record the run writes INTO THE TARGET with the
+// source's values — the inserts and the "source wins" updates, of the root and of every child. A relink writes a
+// lookup only, a delete writes nothing, and ← / pull write into the source: none of them is in it.
+// → { byObj: { Object: [source ids] }, total, objects }
+function sftkDeployPiiScope(recSel, recChildSel, rootObj, objByPath) {
+  const sets = {};
+  const take = (obj, set) => {
+    if (!obj || !set || typeof set.forEach !== 'function') return;
+    set.forEach(id => { if (id) (sets[obj] || (sets[obj] = new Set())).add(String(id)); });
+  };
+  const r = recSel || {};
+  take(rootObj, r.push); take(rootObj, r.overwrite);
+  for (const [k, s] of Object.entries(recChildSel || {})) {
+    const o = objByPath && objByPath[k];
+    if (!o || !s) continue;
+    take(o, s.push); take(o, s.overwrite);
+  }
+  const byObj = {};
+  let total = 0;
+  for (const [o, set] of Object.entries(sets)) if (set.size) { byObj[o] = [...set]; total += set.size; }
+  return { byObj, total, objects: Object.keys(byObj).length };
+}
+// PURE. How many fields of these objects the policy already disguises.
+function sftkDeployPiiCovered(policy, objects) {
+  const want = new Set((objects || []).map(o => String(o).toLowerCase()));
+  let n = 0;
+  for (const [k, rule] of Object.entries(policy || {})) {
+    const dot = k.indexOf('.');
+    if (rule && dot > 0 && want.has(k.slice(0, dot).toLowerCase())) n++;
+  }
+  return n;
+}
+
 // PURE. The deployment as a nested tree (root → children → grandchildren).
 function sftkDeployTreeNodes(tree) {
   return (function walk(node, path, depth) {
@@ -658,6 +691,7 @@ async function renderDeploy() {
     <div class="ds-dep-actionbar">
       <div class="ds-dep-ab-row ds-dep-ab-top">
         <div class="ds-dep-summary" id="dsDepSummary"></div>
+        <button class="ds-btn ds-btn-lg" id="dsDepPiiSel" disabled title="Reads every record you selected for an insert or an update, in every object, and suggests which fields to disguise — each with a real example. One Apply covers them all. Nothing is written to an org.">🎭 Disguise</button>
         <button class="ds-btn ds-btn-lg" id="dsRecProbeBtn" disabled title="A real write that Salesforce rolls back: the selected inserts go to the target in one transaction together with a record that always fails, so every validation rule, trigger, flow and duplicate rule runs on your real records — and nothing is kept. The first 200 records of each object. Deletes, updates and relinks are not part of it.">🧪 Dry run</button>
         <button class="ds-btn ds-btn-lg ds-btn-primary" id="dsRecRunBtn" disabled>▶ Deploy</button>
       </div>
@@ -731,6 +765,12 @@ async function renderDeploy() {
     const byObj = {};
     for (const [k, ids] of Object.entries(sftkDeployEveryInsert(scan))) { const o = _depObjName(p, k); byObj[o] = [...new Set([...(byObj[o] || []), ...ids])]; }
     _depPiiSuggest(p, byObj, `the ${every.found.toLocaleString('en-US')} record${every.found === 1 ? '' : 's'} this deployment inserts`);
+  });
+  // 🎭 the selected records, every object in one window (owner 2026-11-13)
+  eid('dsDepPiiSel')?.addEventListener('click', () => {
+    const sc = sftkDeployPiiScope(_recSel, _recChildSel, p.tree?.objectType || p.tree?.childSObject, Object.fromEntries(sftkDeployObjects(p.tree).map(o => [o.pathKey, o.obj])));
+    if (!sc.total) return;
+    _depPiiSuggest(p, sc.byObj, `the ${sc.total.toLocaleString('en-US')} record${sc.total === 1 ? '' : 's'} you selected`, { selected: true });
   });
   // ✓ every insert in one press — the same sets the per-tab "All" buttons fill, object by object
   eid('dsDepTickAll')?.addEventListener('click', () => {
@@ -1328,14 +1368,14 @@ async function _depParentMatchEdit(p, scan, step) {
 // records with a good example per field, show which record the example comes from … offer the suggestion in mass or
 // for one record from its editor"): the builder's suggestion window, fed the records this deployment inserts (or the
 // one record), its examples named by record; the rules land on this deployment, which is saved.
-async function _depPiiSuggest(p, recordsByObj, scope) {
+async function _depPiiSuggest(p, recordsByObj, scope, more) {
   if (!p || typeof bldOpenPiiSuggestModal !== 'function') return;
   if (p.ephemeral) return showToast('Save this deployment first — the PII policy is part of it.', 'info', 5000);
   if (typeof attachMeta === 'function') attachMeta(p.tree);
   const before = JSON.stringify(p.piiPolicy || {});
   const prevEditing = _editingProfile;
   _editingProfile = p;
-  try { await bldOpenPiiSuggestModal({ recordsByObj, scope }); } catch (e) { _editingProfile = prevEditing; return showToast(`The suggestions could not open: ${e?.message || e}`, 'error', 6000); }
+  try { await bldOpenPiiSuggestModal({ recordsByObj, scope, saved: true, ...(more || {}) }); } catch (e) { _editingProfile = prevEditing; return showToast(`The suggestions could not open: ${e?.message || e}`, 'error', 6000); }
   await new Promise(res => { const t = setInterval(() => { const ov = eid('dsModal'); if (!ov || ov.style.display === 'none' || !document.querySelector('#dsModalBox #dsPiiSugApply')) { clearInterval(t); res(); } }, 400); });
   _editingProfile = prevEditing;
   if (JSON.stringify(p.piiPolicy || {}) === before) return;
@@ -2703,4 +2743,14 @@ function _depSummary(p, objTypeOrNull, objByPathOrNull) {
   if (el) el.innerHTML = s.total ? s.parts.map(x => `<span class="ds-diff-chip">${esc(x)}</span>`).join(' ') + probeHint : '<span class="ds-dep-muted">Nothing selected — tick records above. ▶ Deploy writes only what you select.</span>';
   if (run) { run.disabled = !s.total || !!window._sftkRunActive; run.textContent = s.total ? `▶ Deploy ${s.total.toLocaleString('en-US')} selected into ${orgLabel(p.targetOrg)}` : '▶ Deploy'; }
   const probe = eid('dsRecProbeBtn'); if (probe) probe.disabled = !s.total || !!window._sftkRunActive;
+  // 🎭 one action for every selected record of every object (owner 2026-11-13). The button speaks for the records
+  // the run writes into the target; the chip says what the policy already does to their objects.
+  const piiBtn = eid('dsDepPiiSel');
+  if (piiBtn) {
+    const sc = sftkDeployPiiScope(_recSel, _recChildSel, objType, objByPath);
+    const covered = sc.total ? sftkDeployPiiCovered(p.piiPolicy, Object.keys(sc.byObj)) : 0;
+    piiBtn.disabled = !sc.total || !!window._sftkRunActive || !!p.ephemeral;
+    piiBtn.textContent = sc.total ? `🎭 Disguise the ${sc.total.toLocaleString('en-US')} selected` : '🎭 Disguise';
+    if (el && sc.total && covered) el.insertAdjacentHTML('beforeend', ` <span class="ds-rec-tag ds-dep-pii-chip" title="Fields of the selected objects that are never written as they are — the target gets a look-alike fake. 🎭 Disguise shows and changes them.">🎭 ${covered} field${covered === 1 ? '' : 's'} disguised</span>`);
+  }
 }

@@ -716,6 +716,34 @@ function sftkFileDriftCompare(pairs, srcFilesByRec, tgtFilesByRec) {
   return { rows, records: rows.length, missingFiles, extraFiles, extraRecords };
 }
 
+// PURE. Which fields this deployment's PII policy disguises that the scan needs raw to recognise a record in the
+// target: components of the match key, and fields the record filter names. → { keys: [field], filter: [field] }
+function sftkScanPiiBlind(policy, objType, keyFields, where) {
+  const out = { keys: [], filter: [] };
+  const obj = String(objType || '').toLowerCase();
+  const covered = [];
+  for (const [k, rule] of Object.entries(policy || {})) {
+    const dot = k.indexOf('.');
+    if (rule && dot > 0 && k.slice(0, dot).toLowerCase() === obj) covered.push(k.slice(dot + 1));
+  }
+  if (!covered.length) return out;
+  const low = new Set(covered.map(c => c.toLowerCase()));
+  for (const kf of (keyFields || [])) if (kf && low.has(String(kf).toLowerCase())) out.keys.push(String(kf));
+  // text inside quotes is a value, not a field name
+  const bare = String(where || '').replace(/'(?:[^'\\]|\\.)*'/g, "''");
+  for (const c of covered) if (new RegExp('(^|[^A-Za-z0-9_.])' + c.replace(/[^A-Za-z0-9_]/g, '') + '($|[^A-Za-z0-9_])', 'i').test(bare)) out.filter.push(c);
+  return out;
+}
+function sftkScanPiiBlindKeysMatter(blind, missingInTarget, onlyInTarget) {
+  return !!(blind && blind.keys && blind.keys.length && missingInTarget > 0 && onlyInTarget > 0);
+}
+function sftkScanPiiBlindLine(objType, blind) {
+  if (!blind || (!blind.keys.length && !blind.filter.length)) return '';
+  const parts = [];
+  if (blind.keys.length) parts.push(`${blind.keys.join(', ')} — the field${blind.keys.length === 1 ? '' : 's'} ${objType} records are matched by`);
+  if (blind.filter.length) parts.push(`${blind.filter.join(', ')} — named in the record filter`);
+  return `🎭 the PII policy disguises ${parts.join('; and ')}. ${blind.filter.length ? 'A record this deployment already wrote to the target is held there under its fabricated value, so the filter cannot find it' : 'Some records are left over in both orgs. If those in the target are ones this deployment wrote before, they are held under their fabricated value and this scan cannot recognise them'}: ${blind.filter.length ? 'it is' : 'they are'} listed under Insert again, and deploying ${blind.filter.length ? 'it' : 'them'} again creates ${blind.filter.length ? 'a duplicate' : 'duplicates'}. ${blind.keys.length ? 'Create the 🪪 identity field (Identity… on the Deploy page) and stamp after deploying, or match by a field the policy leaves alone. ' : ''}${blind.filter.length ? 'Filter by a field the policy leaves alone.' : ''}`.trim();
+}
 async function runDiffScan(profile, node = null, scope = null) {
   if (!profile)                  return { error: 'no profile' };
   if (!profile.sourceOrg)        return { error: 'profile has no source org set' };
@@ -1290,6 +1318,15 @@ async function runDiffScan(profile, node = null, scope = null) {
       memWarnings.push(`match key ${_autoKeys.join(', ')} is an AUTONUMBER field — its values are org-generated sequence numbers, so the two orgs can never agree on them: a record deployed once shows as missing again on the next scan and would be inserted a second time (live run 2026-09-22: Contract and Order doubled). Create the 🪪 identity field (Identity… on the Deploy page) and stamp after deploying, or match by a field you control (🎯 Pick Records → Matching).`);
     }
   } catch (_) { /* advisory only */ }
+  // 🎭 A policy that disguises a field the record filter names (live 2026-11-21: six Leads written disguised were
+  // listed under Insert again on the next scan — the filter, on LastName, could not find them under their
+  // fabricated names). The match key is asked about at the end, when the buckets say whether it matters.
+  let _piiBlind = { keys: [], filter: [] };
+  try {
+    _piiBlind = sftkScanPiiBlind(profile.piiPolicy, objType, srcKeyFields, where);
+    const line = sftkScanPiiBlindLine(objType, { keys: [], filter: _piiBlind.filter });
+    if (line) memWarnings.push(line);
+  } catch (_) { /* advisory only */ }
   if (isRootScan) {
     try {
       const mem = (profile.matchMemory && typeof profile.matchMemory === 'object'
@@ -1793,6 +1830,10 @@ async function runDiffScan(profile, node = null, scope = null) {
     // are absent when memory is empty/unused (legacy shape unchanged).
     ...(memoryMatched ? { memoryMatched } : {}),
     ...(learnedPairs.length ? { learnedPairs } : {}),
+    // 🎭 a disguised match key matters only where records are left over on BOTH sides: a record this deployment
+    // wrote is recognised from its own record of the run (match memory, root objects); one it does not remember —
+    // a child, another PC, a cleared memory — cannot be told from a new one. (Evaluated before the line below.)
+    ...((typeof sftkScanPiiBlindKeysMatter === 'function' && sftkScanPiiBlindKeysMatter(_piiBlind, missingInTarget.length, onlyInTarget.length)) ? (memWarnings.push(sftkScanPiiBlindLine(objType, { keys: _piiBlind.keys, filter: [] })), {}) : {}),
     ...(memWarnings.length ? { warnings: memWarnings.slice(0, 10) } : {}),
     // 📎 file comparison result (only when the node's Files toggle is ON):
     // records whose source files are absent from the paired target record.

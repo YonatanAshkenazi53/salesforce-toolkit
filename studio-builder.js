@@ -2643,6 +2643,18 @@ async function bldPiiFillPreviews(profile, sections) {
   }
 }
 
+// How many of an object's records the suggestion window reads (200 ids a call).
+const BLD_PII_READ_MAX = 2000;
+function bldPiiIdChunks(ids, size) {
+  const out = [], n = Math.max(1, size | 0);
+  for (let i = 0; i < (ids || []).length; i += n) out.push(ids.slice(i, i + n));
+  return out;
+}
+// "40 records read" · "2,000 of 5,300 records read" — never a count that reads as all of them when it is not
+function bldPiiReadWords(sampled, asked) {
+  const f = n => Number(n || 0).toLocaleString('en-US');
+  return asked > sampled ? `${f(sampled)} of ${f(asked)} records read` : `${f(sampled)} record${sampled === 1 ? '' : 's'} read`;
+}
 // opts.recordsByObj { obj: [source ids] } (the Deploy page, user 2026-11-07: "suggest the policy for ALL inserted
 // records with a good example per field, show which record the example comes from"): the values are read from THOSE
 // records (up to 200 per object), not the newest rows; opts.scope words the header ("the 32 records this deployment
@@ -2666,7 +2678,7 @@ async function bldOpenPiiSuggestModal(opts) {
     const d = await describe(obj);
     if (!d || !Array.isArray(d.fields)) { sections.push({ obj, error: 'describe unavailable — no suggestions for this object' }); continue; }
     const complianceByField = {};
-    let records = null, samplesByField = null;
+    let records = null, samplesByField = null, asked = 0;
     if (sess.orgUrl && sess.sid) {
       const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
         query: `SELECT QualifiedApiName, ComplianceGroup, SecurityClassification FROM FieldDefinition WHERE EntityDefinitionId = ${soqlStrLit(obj)}` });
@@ -2674,13 +2686,22 @@ async function bldOpenPiiSuggestModal(opts) {
       // v2 — the VALUES: 200 recent rows of every text-like field (the strongest signal there is)
       const sampleFields = d.fields.filter(f => f && f.name && SAMPLE_TYPES.has(f.type) && !f.calculated && f.name !== 'Id').map(f => f.name).slice(0, 60);
       const personaFields = ['Id', ...bldPiiPersonaCols(() => true, '')].filter(n => d.fields.some(f => f.name === n) && !sampleFields.includes(n));
-      const only = byObj ? (byObj[obj] || []).filter(x => /^[A-Za-z0-9]{15,18}$/.test(String(x))).slice(0, 200) : null;
+      const wanted = byObj ? (byObj[obj] || []).filter(x => /^[A-Za-z0-9]{15,18}$/.test(String(x))) : null;
+      const only = wanted ? wanted.slice(0, BLD_PII_READ_MAX) : null;
+      asked = wanted ? wanted.length : 0;
       if (sampleFields.length && (!only || only.length)) {
-        const q2 = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
-          query: only ? `SELECT ${[...sampleFields, ...personaFields].join(', ')} FROM ${obj} WHERE Id IN (${only.map(x => soqlStrLit(x)).join(',')})`
-            : `SELECT ${[...sampleFields, ...personaFields].join(', ')} FROM ${obj} ORDER BY LastModifiedDate DESC LIMIT 200` });
-        if (!q2?.error && Array.isArray(q2.records)) {
-          records = q2.records; samplesByField = {};
+        const cols = [...sampleFields, ...personaFields].join(', ');
+        const got = [];
+        let failed = false;
+        for (const part of (only ? bldPiiIdChunks(only, 200) : [null])) {
+          const q2 = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
+            query: part ? `SELECT ${cols} FROM ${obj} WHERE Id IN (${part.map(x => soqlStrLit(x)).join(',')})`
+              : `SELECT ${cols} FROM ${obj} ORDER BY LastModifiedDate DESC LIMIT 200` });
+          if (q2?.error || !Array.isArray(q2?.records)) { failed = true; break; }
+          got.push(...q2.records);
+        }
+        if (!failed || got.length) {
+          records = got; samplesByField = {};
           for (const f of sampleFields) samplesByField[f] = records.map(r => r[f]);
           if (records.length) anySamples = true;
         }
@@ -2691,12 +2712,12 @@ async function bldOpenPiiSuggestModal(opts) {
     for (const f of d.fields) { typeByField[f.name] = f.type; descByField[f.name] = f; }
     // only fields a payload can send — a compound Name or Address is never written (its parts are)
     const writable = d.fields.filter(f => f && f.createable);
-    sections.push({ obj, sugg: sftkPiiSuggest(obj, writable, complianceByField, samplesByField), typeByField, descByField, records, sampled: records ? records.length : 0 });
+    sections.push({ obj, sugg: sftkPiiSuggest(obj, writable, complianceByField, samplesByField), typeByField, descByField, records, sampled: records ? records.length : 0, asked });
   }
 
   const secHtml = sections.map(sec => {
     if (sec.error) return `<div class="ds-pii-sug-obj"><div class="ds-pii-sug-obj-hd">${esc(sec.obj)}</div><div class="ds-pii-sug-empty">⚠ ${esc(sec.error)}</div></div>`;
-    const head = `<div class="ds-pii-sug-obj-hd"><span class="ds-pii-sug-obj-name">${esc(sec.obj)}</span><span class="ds-pii-sug-count">${sec.sugg.length} field${sec.sugg.length === 1 ? '' : 's'}${sec.sampled ? ` · ${sec.sampled.toLocaleString('en-US')} record${sec.sampled === 1 ? '' : 's'} read` : ' · no records read'}</span>${sec.sugg.length > 1 ? `<span class="ds-pii-sug-objpick"><button class="ds-linkbtn" data-pii-objall="${esc(sec.obj)}" title="Tick every field of ${esc(sec.obj)}">all</button> · <button class="ds-linkbtn" data-pii-objnone="${esc(sec.obj)}" title="Untick every field of ${esc(sec.obj)}">none</button></span>` : ''}</div>`;
+    const head = `<div class="ds-pii-sug-obj-hd"><span class="ds-pii-sug-obj-name">${esc(sec.obj)}</span><span class="ds-pii-sug-count">${sec.sugg.length} field${sec.sugg.length === 1 ? '' : 's'}${sec.sampled ? ` · ${bldPiiReadWords(sec.sampled, sec.asked)}` : ' · no records read'}</span>${sec.sugg.length > 1 ? `<span class="ds-pii-sug-objpick"><button class="ds-linkbtn" data-pii-objall="${esc(sec.obj)}" title="Tick every field of ${esc(sec.obj)}">all</button> · <button class="ds-linkbtn" data-pii-objnone="${esc(sec.obj)}" title="Untick every field of ${esc(sec.obj)}">none</button></span>` : ''}</div>`;
     if (!sec.sugg.length) return `<div class="ds-pii-sug-obj">${head}<div class="ds-pii-sug-empty">no likely-PII fields found${sec.sampled ? ' in the field names or the values' : ''}</div></div>`;
     return `<div class="ds-pii-sug-obj">${head}
       ${sec.sugg.map(s => {
@@ -2725,7 +2746,7 @@ async function bldOpenPiiSuggestModal(opts) {
     <div class="ds-modal-header">🎭 Suggest PII treatments — ${esc(o.scope || p.name)}</div>
     <div class="ds-modal-body ds-pii-sug-body">
       <div class="ds-pii-sug-top">
-        <div class="ds-pii-sug-lead"><strong>Tick the fields to disguise.</strong> A ticked field is never written as it is — the target gets a look-alike fake.</div>
+        <div class="ds-pii-sug-lead"><strong>Tick the fields to disguise.</strong> A ticked field is never written as it is — the target gets a look-alike fake.${o.selected ? ' A treatment belongs to the field: it covers every record this deployment writes — the ones you selected and any you select later.' : ''}</div>
         <details class="ds-pii-sug-more"><summary>How the fakes are made</summary>
           <div class="ds-pii-sug-honesty"><strong>Fabricated, not erased.</strong> Every treatment derives from a hash of the real value with a key kept on this PC: the same value always becomes the same fake (joins, match keys and re-seeds survive), a record's name parts and e-mail agree, the Contacts of one Account share a domain. E-mails land on <code>.invalid</code> domains that cannot receive mail. A fake that is shape-valid can still coincide with someone's real number where a country reserves no test range — each treatment's hover text says so.</div>
           <div class="ds-pii-sug-note-line">Pre-ticked = a strong signal: the values themselves, the field type, a name part, the label or a compliance group. Each field shows two real values and what they become.</div>
@@ -2783,7 +2804,7 @@ async function bldOpenPiiSuggestModal(opts) {
     refreshTree();   // paint the "N masked" chips
     const n = res.added + res.changed;
     showToast(n
-      ? `${n} field(s) will be fabricated or masked at write time — never the raw value${res.changed ? ` (${res.changed} treatment(s) changed)` : ''}. Save the deployment to keep the rules.`
+      ? `${n} field(s) will be fabricated or masked at write time — never the raw value${res.changed ? ` (${res.changed} treatment(s) changed)` : ''}. ${o.saved ? 'Saved on this deployment.' : 'Save the deployment to keep the rules.'}`
       : 'No change — nothing ticked, or everything ticked already had this treatment.', n ? 'success' : 'info', 5500);
   });
 }

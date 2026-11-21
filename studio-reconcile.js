@@ -3779,6 +3779,11 @@ async function runReconcile(profile, objType, buckets, opts) {
         if (t === null) invFm[s] = null;       // keep exclusions on inversion
         else if (t) invFm[t] = s;
       }
+      // The target's value of a field under the PII policy is a fake this tool wrote: it is never copied back over
+      // the source's real one (review 2026-11-13). Those fields are left out of this step, and the policy with them.
+      const kept = sftkRecSrcUpdatePiiGuard(invFm, fm, profile.piiPolicy, objType);
+      delete invProfile.piiPolicy;
+      if (kept.length) log('🎭', `${kept.length} field(s) under the PII policy are not written back to the source — the target holds their disguised values: ${kept.join(', ')}`, 'ds-prog-warn');
       invProfile.tree.fieldMappings = invFm;
       invProfile.sourceOrg = profile.targetOrg;
       invProfile.targetOrg = profile.sourceOrg;
@@ -4513,6 +4518,27 @@ function sftkRecDupFields(profile, dp) {
 // dupFields: sftkRecDupFields(...) for a write into the run's TARGET; absent
 // for the reverse-drift write into the source (the bypass is confirmed for the
 // target only).
+// PURE. An update writes an explicit empty for a field under the PII policy that the source holds empty.
+function sftkRecPiiEmptyWrites(piiActive, piiRules, srcField) {
+  return !!(piiActive && srcField !== 'RecordTypeId' && piiRules && piiRules[String(srcField).toLowerCase()]);
+}
+// PURE. The ← step (target → source) under a PII policy: every covered field of this object is excluded from the
+// inverted mapping (invFm, keyed by the TARGET's field name — the side that step reads). Mutates invFm; returns the
+// excluded field names. fm is the deployment's own mapping (source name → target name | null).
+function sftkRecSrcUpdatePiiGuard(invFm, fm, policy, objType) {
+  const out = [];
+  for (const [k, rule] of Object.entries(policy || {})) {
+    const dot = k.indexOf('.');
+    if (!rule || dot <= 0 || k.slice(0, dot).toLowerCase() !== String(objType).toLowerCase()) continue;
+    const sf = k.slice(dot + 1);
+    const fmKey = Object.keys(fm || {}).find(x => x.toLowerCase() === sf.toLowerCase());
+    if (fmKey && fm[fmKey] === null) continue;            // not deployed at all
+    const tf = (fmKey && fm[fmKey]) || sf;
+    invFm[tf] = null;
+    out.push(tf);
+  }
+  return out;
+}
 async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcSess, tgtSess, dupFields) {
   // Map sourceId → targetId from the drift bucket.
   const srcToTgt = new Map();
@@ -4843,7 +4869,12 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       // name; a non-empty mapping renames, exactly like the run engine.
       const tf = (fm[sf] && fm[sf] !== null) ? fm[sf] : sf;
       let v    = sr[sf];
-      if (v == null) continue;
+      if (v == null) {
+        // A field under the PII policy that the source holds empty is written EMPTY: skipping it would leave what
+        // the target has — possibly a real value an earlier, unmasked run planted (review 2026-11-13).
+        if (sftkRecPiiEmptyWrites(piiActive, piiRules, sf)) { piiTgtFields.add(tf); p[tf] = null; piiCounts.emptied = (piiCounts.emptied || 0) + 1; }
+        continue;
+      }
       // Remap RecordTypeId by DeveloperName; drop it if there's no target
       // match so we don't PATCH an invalid Id (which would fail the row).
       if (sf === 'RecordTypeId' && rtRemap) {
@@ -4909,7 +4940,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   }
 
   if (piiActive) {
-    warnings.push(`🔒 PII: ${piiCounts.hashed + piiCounts.nulled + piiCounts.fixed} value(s) masked before writing (${piiCounts.hashed} hashed, ${piiCounts.nulled} nulled${piiCounts.fixed ? `, ${piiCounts.fixed} fixed` : ''})`);
+    warnings.push(`🔒 PII: ${piiCounts.hashed + piiCounts.nulled + piiCounts.fixed} value(s) masked before writing (${piiCounts.hashed} hashed, ${piiCounts.nulled} nulled${piiCounts.fixed ? `, ${piiCounts.fixed} fixed` : ''})${piiCounts.emptied ? ` · ${piiCounts.emptied} covered field(s) the source holds empty were written empty` : ''}`);
   }
   if (ownerFellBack) warnings.push(`⚠ owners: ${ownerFellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
   if (ownerKept)     warnings.push(`⚠ owners: ${ownerKept} record(s) kept their current target owner (no name match and no fallback user set)`);

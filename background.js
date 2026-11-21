@@ -2862,7 +2862,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // run reads partial), a clean sample is one honest line.
       if (piiRules && ok > 0 && !PROBE) {
         try {
-          const ids = transferredSourceIds.map(id => idMap[id]).filter(Boolean).slice(0, 200);
+          const written = transferredSourceIds.map(id => idMap[id]).filter(Boolean);
+          const ids = written.slice(0, 2000);   // 200 an object until 2026-11-21 — a run of thousands was audited on its first page only
+          const ofAll = written.length > ids.length ? ` of the ${written.length.toLocaleString('en-US')} written` : '';
           const textTypes = new Set(['string', 'textarea', 'email', 'phone', 'url']);
           const cols = [...new Set([...Object.keys(piiRules).map(fn => (node.fieldMappings && node.fieldMappings[fn]) || fn),
             ...tgtDescFields.filter(f => f && textTypes.has(f.type) && !f.calculated).map(f => f.name)])]
@@ -2881,8 +2883,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             const line = o => Object.entries(o).map(([k, h]) => `${h.n} × ${k} in ${h.fields.join(', ')}`);
             const hitLines = line(audit.hits), expLines = line(audit.expected);
             const expNote = expLines.length ? ` Fabricated by the policy, as expected: ${expLines.join('; ')}.` : '';
-            if (hitLines.length) errors.push(`🔎 ${objType}: PII audit after the write — ${ids.length} record(s) read back, ${audit.sampled} value(s) in ${cols.length} field(s): ${hitLines.join('; ')} in field(s) the policy does not cover. Something readable landed — roll the run back from History and widen the policy.${expNote}`);
-            else diagnostics.push(`🔎 ${objType}: PII audit after the write — ${ids.length} record(s) read back, ${audit.sampled} value(s) in ${cols.length} text field(s): nothing that looks like an e-mail, a phone, a card, an IBAN, an SSN or an Israeli ID outside the fields the policy fabricates.${expNote}`);
+            if (hitLines.length) errors.push(`🔎 ${objType}: PII audit after the write — ${ids.length} record(s)${ofAll} read back, ${audit.sampled} value(s) in ${cols.length} field(s): ${hitLines.join('; ')} in field(s) the policy does not cover. Something readable landed — roll the run back from History and widen the policy.${expNote}`);
+            else diagnostics.push(`🔎 ${objType}: PII audit after the write — ${ids.length} record(s)${ofAll} read back, ${audit.sampled} value(s) in ${cols.length} text field(s): nothing that looks like an e-mail, a phone, a card, an IBAN, an SSN or an Israeli ID outside the fields the policy fabricates.${expNote}`);
             summary[objType].piiAudit = { records: ids.length, sampled: audit.sampled, fields: cols.length, hits: audit.hits, expected: audit.expected };
           }
         } catch (e) { diagnostics.push(`🔎 ${objType}: the PII audit could not read the written records back (${(e && e.message) || e}) — the masking counts above are the engine's own.`); }

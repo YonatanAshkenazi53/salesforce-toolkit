@@ -17,8 +17,8 @@ const H = extractFunctions('studio-builder.js', ['bldPiiPreviewHtml']);
 describe('the suggestions: the records the deployment inserts, each example named by its record', () => {
   it('the window takes the records (≤200 per object) and reads THOSE, not the newest rows', () => {
     expect(BL).toContain('async function bldOpenPiiSuggestModal(opts) {');
-    expect(BL).toContain("const only = byObj ? (byObj[obj] || []).filter(x => /^[A-Za-z0-9]{15,18}$/.test(String(x))).slice(0, 200) : null;");
-    expect(BL).toContain('FROM ${obj} WHERE Id IN (${only.map(x => soqlStrLit(x)).join(\',\')})');
+    expect(BL).toContain("const wanted = byObj ? (byObj[obj] || []).filter(x => /^[A-Za-z0-9]{15,18}$/.test(String(x))) : null;");
+    expect(BL).toContain('FROM ${obj} WHERE Id IN (${part.map(x => soqlStrLit(x)).join(\',\')})');
   });
   it('an example says which record it comes from', () => {
     const html = H.bldPiiPreviewHtml([{ from: 'Omer', to: 'Lior', rec: 'Omer SFTK CX Lead One' }]);
@@ -28,7 +28,7 @@ describe('the suggestions: the records the deployment inserts, each example name
   it('the Deploy page: 🎭 for all to insert; the rules land on the deployment, which is saved', () => {
     expect(DV).toContain('id="dsDepPiiAll"');
     expect(DV).toContain('for (const [k, ids] of Object.entries(sftkDeployEveryInsert(scan))) { const o = _depObjName(p, k); byObj[o] = [...new Set([...(byObj[o] || []), ...ids])]; }');
-    expect(DV).toContain('try { await bldOpenPiiSuggestModal({ recordsByObj, scope }); }');
+    expect(DV).toContain('try { await bldOpenPiiSuggestModal({ recordsByObj, scope, saved: true, ...(more || {}) }); }');
     expect(DV).toContain("if (p.ephemeral) return showToast('Save this deployment first — the PII policy is part of it.', 'info', 5000);");
   });
 });
