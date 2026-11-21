@@ -9440,7 +9440,7 @@ const FieldCleaner = (() => {
       const text = ta.value, pre = _xmlEdPrecheck(ctx, text);
       if (pre) { out.innerHTML = `<div class="fc-xml-ed-err">❌ Not checked — ${pre}.</div>`; return; }
       val.disabled = go.disabled = true;
-      await _edValidate(sftkMdPackageFiles(ctx.type === 'LookupFilter' ? 'CustomField' : ctx.type, ctx.fullName, text), out);
+      await _edValidate(sftkMdEditFiles(ctx.type, ctx.fullName, text), out);
       if (ta.value !== text) out.innerHTML = '';   // edited while Salesforce was checking: the verdict is of an older text
       sync();
     });
@@ -9456,11 +9456,13 @@ const FieldCleaner = (() => {
       sync();
     });
     reset.addEventListener('click', () => { ta.value = orig; out.innerHTML = ''; sync(); });
-    box.querySelector('.fc-xml-ed-cancel').addEventListener('click', () => { _xmlInspectMd(ctx.type, ctx.componentId, ctx.componentName, panel, ctx.inspBtn); });
+    box.querySelector('.fc-xml-ed-cancel').addEventListener('click', () => { if (ctx.back) ctx.back(''); else _xmlInspectMd(ctx.type, ctx.componentId, ctx.componentName, panel, ctx.inspBtn); });
     go.addEventListener('click', async () => {
       go.disabled = true;
       const r = await _xmlEditorDeploy(ctx, ta.value, out);
-      if (r === 'deployed') await _xmlInspectMd(ctx.type, ctx.componentId, ctx.componentName, panel, ctx.inspBtn, '✅ Deployed — every line you changed is in the org, verified by re-reading it. Below is what the org holds now; ↩ Undo in Activity puts the previous XML back.');
+      const doneNote = '✅ Deployed — every line you changed is in the org, verified by re-reading it. Below is what the org holds now; ↩ Undo in Activity puts the previous XML back.';
+      if (r === 'deployed' && ctx.back) await ctx.back(doneNote);
+      else if (r === 'deployed') await _xmlInspectMd(ctx.type, ctx.componentId, ctx.componentName, panel, ctx.inspBtn, doneNote);
       else sync();
     });
     ta.focus();
@@ -9474,8 +9476,7 @@ const FieldCleaner = (() => {
     const wantName = inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName;
     const gotName = sftkMdChildText(text, 'fullName');
     if (gotName !== wantName) { say('fc-xml-ed-err', `❌ Not deployed — the <code>&lt;fullName&gt;</code> must stay “${esc(wantName)}” (it names the ${esc(spec.what)}; renaming is not done here).`); return 'bad'; }
-    const pkgType = type === 'LookupFilter' ? 'CustomField' : type;
-    const files = sftkMdPackageFiles(pkgType, fullName, ctx.xml), deployFiles = sftkMdPackageFiles(pkgType, fullName, text);
+    const files = sftkMdEditFiles(type, fullName, ctx.xml), deployFiles = sftkMdEditFiles(type, fullName, text);
     const diff = sftkMdLineDiff(sftkMdPretty(ctx.xml), sftkMdPretty(text));
     const added = diff.filter(x => x.op === '+').map(x => x.line.trim()).filter(Boolean);
     const firstOld = (diff.find(x => x.op === '-') || {}).line;
@@ -9535,6 +9536,30 @@ const FieldCleaner = (() => {
           }] }
         : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
     }
+  }
+  // ✎ Edit XML for the two kinds the 🔍 shows as Tooling JSON (sftkMdJsonKindEditSpec). The panel becomes the
+  // editor; Cancel and a finished deploy open the 🔍 again, read fresh from the org.
+  async function _jsonKindEditorOpen(type, componentId, componentName, fieldId, fullName, panel, inspBtn) {
+    const spec = sftkMdJsonKindEditSpec(type);
+    if (!spec) throw new Error('this kind is not edited as XML here');
+    if (!fullName) throw new Error('Salesforce gave no full name for it — re-scan');
+    const rd = await _mdReadOne(type, fullName, spec.mdType);
+    if (rd.error) throw new Error(rd.error);
+    if (!rd.rec) throw new Error('it was not found in the org — re-scan');
+    const back = async note => {
+      panel.style.display = 'none';
+      if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
+      await toggleXmlInspector(type, componentId, componentName, fieldId);
+      if (note) panel.querySelector('.fc-xml-hdr')?.insertAdjacentHTML('afterend', `<div class="fc-xml-ed-ok fc-xml-ed-done">${esc(note)}</div>`);
+    };
+    panel.innerHTML = `
+      <div class="fc-xml-hdr">
+        <span class="fc-xml-hdr-name">${esc(componentName)} <small class="fc-xml-src">· ${esc(spec.mdType)} ${esc(fullName)} · Metadata API</small></span>
+        <span class="fc-xml-hdr-actions"><button class="fc-xml-close" data-panelid="${esc(componentId)}">✕</button></span>
+      </div>
+      <div class="fc-xml-body"></div>`;
+    panel.querySelector('.fc-xml-close')?.addEventListener('click', () => { panel.style.display = 'none'; if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open'); });
+    _xmlEditorOpen(panel, { type, componentId, componentName, fullName, spec, xml: rd.rec.innerXml, inspBtn, back });
   }
   async function _xmlInspectMd(type, componentId, componentName, panel, inspBtn, note) {
     const spec = type === 'LookupFilter' ? { type, mdType: 'CustomField', what: 'lookup filter', special: 'lookupFilter' } : sftkMdDeleteSpec(type);
@@ -10126,11 +10151,20 @@ const FieldCleaner = (() => {
                            data-id="${esc(componentId)}" data-name="${esc(componentName)}"
                            data-type="${esc(type)}">✂ Remove</button>`
                 : ''}
+            ${sftkMdJsonKindEditSpec(type) ? `<button class="btn btn-secondary btn-sm fc-xml-edit-btn" title="Edit this ${esc(sftkMdJsonKindEditSpec(type).what)}’s XML and deploy it back — like an editor; a restore point is kept">✎ Edit XML</button>` : ''}
             <button class="fc-xml-close" data-panelid="${esc(componentId)}">✕</button>
           </span>
         </div>
         ${hintHtml}
         ${bodyHtml}`;
+      // ✎ a layout / a Lightning page: its XML, read through the Metadata API (what a deploy takes back as it is —
+      // the Tooling JSON of a layout needs sanitizing and retries to be written), in the same editor as every other
+      // kind: well-formed or nothing is sent, ✓ Validate, the diff confirmed, a restore point, ↩ Undo.
+      panel.querySelector('.fc-xml-edit-btn')?.addEventListener('click', async ev => {
+        const b = ev.currentTarget; b.disabled = true;
+        try { await _jsonKindEditorOpen(type, componentId, componentName, fieldId, res.FullName || res.fullName, panel, inspBtn); }
+        catch (e) { b.disabled = false; appendInlineError(componentId, `✎ Edit XML could not open “${componentName}”: ${_feText(e && e.message || e)}`); }
+      });
 
       // Wire close button
       panel.querySelector('.fc-xml-close')?.addEventListener('click', () => {

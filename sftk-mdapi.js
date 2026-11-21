@@ -678,6 +678,22 @@ function sftkMdPackageFiles(type, fullName, innerXml) {
   }
   return [{ name: 'package.xml', text: _sftkPkgXml([[mdType, fullName]]) }, { name: `${s.folder}/${fullName}.${s.suffix}`, text: sftkMdRecordFileXml(mdType, innerXml) }];
 }
+// ✎ Edit XML on a page layout or a Lightning page (2026-11-21). The two are read and fixed as Tooling JSON, so they
+// are not in the delete table; the editor works on the XML readMetadata hands back and deploys that file.
+//   → { type, mdType, what, folder, suffix } or null (a flow is not here: a flow deploy makes or overwrites a
+//     VERSION, and needs the version plan the ✂ fix has — it is edited in Flow Builder)
+function sftkMdJsonKindEditSpec(type) {
+  if (type === 'Layout') return { type, mdType: 'Layout', what: 'page layout', folder: 'layouts', suffix: 'layout' };
+  if (type === 'FlexiPage') return { type, mdType: 'FlexiPage', what: 'Lightning page', folder: 'flexipages', suffix: 'flexipage' };
+  return null;
+}
+// The two files of an edit's deploy, for every kind the XML editor opens: the delete table's own builder, or — for
+// the kinds of sftkMdJsonKindEditSpec — package.xml and the record's file.
+function sftkMdEditFiles(type, fullName, innerXml) {
+  const j = sftkMdJsonKindEditSpec(type);
+  if (!j) return sftkMdPackageFiles(type === 'LookupFilter' ? 'CustomField' : type, fullName, innerXml);
+  return [{ name: 'package.xml', text: _sftkPkgXml([[j.mdType, fullName]]) }, { name: `${j.folder}/${fullName}.${j.suffix}`, text: sftkMdRecordFileXml(j.mdType, innerXml) }];
+}
 // The Metadata API wants a decimal api version ("62.0", never "62" — a Tooling record says 62).
 function _sftkApiVer(v) {
   const n = Number(v);
