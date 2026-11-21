@@ -1627,7 +1627,7 @@ async function openRecordPickerModal(pathStr) {
           const weak = [];
           if (s.tiered) for (const side of [res.src, res.tgt, ...extras.map(x => x.counts)]) {
             if (!side || !side.tiers || !side.tiers.total) continue;
-            side.tiers.levels.slice(1).forEach(l => { if (l.populated < side.tiers.total * 0.1 && !weak.some(w => w.field === l.field)) weak.push({ field: l.field, populated: l.populated, total: side.tiers.total }); });
+            side.tiers.levels.slice(1).forEach(l => { const held = typeof l.own === 'number' ? l.own : l.populated; if (held < side.tiers.total * 0.1 && !weak.some(w => w.field === l.field)) weak.push({ field: l.field, populated: held, total: side.tiers.total }); });   // the field's OWN count: a filled field after an empty one is not weak
           }
           if (weak.length && typeof s.score === 'number') s.score = Math.max(0, s.score - 30 * weak.length);
           let html = _matchAnalysisHtml(res, clone, true, extras);

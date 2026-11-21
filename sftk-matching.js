@@ -660,14 +660,17 @@ function sftkMatchingReadsAs(labels, tiered) {
 
 // How many records hold the key up to each field (user 2026-10-23: "when its only 1 field we just
 // show how many records have value for the one matching field in both orgs"): levels[k-1] counts
-// the records whose first k components are all present. PURE.
+// the records whose first k components are all present; own counts the records that hold THAT field, whatever the
+// fields before it hold (2026-11-21: a field after an empty one read "held by 0" though most records hold it —
+// populated is the count up to the field, and it was shown as the field's own). PURE.
 function sftkTierCoverage(records, matching) {
   const fields = (matching && Array.isArray(matching.fields) ? matching.fields : []).filter(Boolean);
-  const levels = fields.map((f, i) => ({ n: i + 1, field: f, populated: 0 }));
+  const levels = fields.map((f, i) => ({ n: i + 1, field: f, populated: 0, own: 0 }));
   let total = 0;
   for (const r of (records || [])) {
     total++;
     const parts = sftkMatchParts(r, matching);
+    for (let k = 0; k < parts.length && k < levels.length; k++) if (parts[k] !== '') levels[k].own++;
     for (let k = 0; k < parts.length; k++) { if (parts[k] === '') break; levels[k].populated++; }
   }
   return { total, levels };

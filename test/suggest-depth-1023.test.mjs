@@ -63,6 +63,9 @@ describe('what the grades say', () => {
     const cov = sftkTierCoverage(recs, { fields: ['Name', 'Id_Number__c', 'Email'], normalize: {} });
     expect(cov.total).toBe(4);
     expect(cov.levels.map(l => `${l.field}:${l.populated}`)).toEqual(['Name:3', 'Id_Number__c:2', 'Email:1']);
+    // 2026-11-21: each field's own count beside the count up to it — a filled field after an empty one is not "held by 0"
+    const gap = sftkTierCoverage([{ Name: 'A', Blk__c: null, Phone: '1' }, { Name: 'B', Blk__c: null, Phone: '2' }, { Name: 'C', Blk__c: null, Phone: null }], { fields: ['Name', 'Blk__c', 'Phone'], normalize: {} });
+    expect(gap.levels.map(l => `${l.field}:${l.populated}/${l.own}`)).toEqual(['Name:3/3', 'Blk__c:0/0', 'Phone:0/2']);
   });
   it('the tiered cross-org preview counts the pairing the scan would make', () => {
     const src = [['acme', '1'], ['beta', ''], ['gamma', '3'], ['', '4'], ['dup', ''], ['dup', '']];
