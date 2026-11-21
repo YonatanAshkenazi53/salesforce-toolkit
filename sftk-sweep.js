@@ -301,6 +301,13 @@ function sftkSweepKindTable() {
   Scontrol:               { label: 'S-controls', sev: 'mention', why: 'the s-control’s code names the field as text — it breaks where it reads it' },
   ExperienceBundle:       { label: 'Experience Cloud pages', sev: 'mention', why: 'the page or component names the field as text — it breaks where it reads it' },
   CustomLabel:            { label: 'Custom Labels', sev: 'mention', why: 'a label’s text holds the field’s name — nothing stops the delete' },
+  // Agentforce, 2026-11-21. A field's name stands in these as prose only — an action's description and the
+  // descriptions inside its schema.json, a topic's scope and instructions. None was put to a delete live: npc2
+  // refuses the deploy of an action ("An unexpected error occurred"), so no fixture exists.
+  GenAiFunction:          { label: 'Agentforce actions', sev: 'mention', why: 'the action’s description or its input / output schema names the field as text — nothing stops the delete; the agent is then told about a field that is gone' },
+  GenAiPlugin:            { label: 'Agentforce topics', sev: 'mention', why: 'the topic’s scope or instructions name the field as text — nothing stops the delete; the agent is then told about a field that is gone' },
+  GenAiPlannerBundle:     { label: 'Agentforce agents', sev: 'mention', why: 'the agent’s plan names the field as text — nothing stops the delete' },
+  Bot:                    { label: 'Bots', sev: 'mention', why: 'a dialog, a variable or a message of the bot names the field — it breaks where it reads it' },
   DocText:                { label: 'Named only in descriptive text', sev: 'mention', why: 'the name stands only in a description, help text, label or message of the component, or in a comment of its code — plain text Salesforce does not read as a reference; nothing stops the delete and nothing breaks, the text just goes stale' },
   SameNameOtherObject:    { label: 'Same name, another object', sev: 'mention', why: 'a component of another object holds a field of the same API name by its bare name or under that object’s own name, or code that names this object nowhere in its file (a file-level test) holds it — most likely that object’s own field, not this one; it does not join the list, and Salesforce’s own delete check decides' },
   Other:                  { label: 'Other components', sev: 'mention', why: 'the component names the field — the delete goes through; what reads it may break' },
@@ -487,11 +494,21 @@ function sftkSweepKind(path, text, hit, forms) {
     case 'homePageComponents': return K('HomePageComponent', base);
     case 'scontrols': return K('Scontrol', base);
     case 'platformEventChannelMembers': return K('PlatformEventChannelMember', base);
+    // Agentforce (owner 2026-11-19: "what about agentforce components like … actions"). An action is a folder
+    // (its -meta.xml and the input / output schema.json), so is an agent's plan and a bot; a topic is one file.
+    // File shapes read 2026-11-21 from Salesforce's public sample app (trailheadapps/coral-cloud).
+    case 'genAiFunctions': return K('GenAiFunction', seg[1] || base, seg.slice(2).join('/'));
+    case 'genAiPlugins': return K('GenAiPlugin', base);
+    case 'genAiPlannerBundles': return K('GenAiPlannerBundle', seg[1] || base, seg.slice(2).join('/'));
+    case 'bots': return K('Bot', seg[1] || base, seg.slice(2).join('/'));
     default: return K('Other', `${dir} › ${base}`);
   }
   };
   const k = raw();
   if (!k) return k;   // the field's own definition is no use of it, whatever the line
+  // An agent ACTS on the text of its action, topic and plan: the description is what the planner reads to choose and
+  // fill the action. A field named there is not "descriptive text nothing reads" (2026-11-21).
+  if (k.type === 'GenAiFunction' || k.type === 'GenAiPlugin' || k.type === 'GenAiPlannerBundle') return k;
   const doc = docOnly();
   if (!doc) return k;
   const D = T.DocText;
