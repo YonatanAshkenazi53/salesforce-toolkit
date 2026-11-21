@@ -99,6 +99,17 @@ function sftkOhObjectName(input) {
 
 // PURE. A failed/incomplete read of a list → the error text to throw, else ''.
 // `incomplete` is background.js's own "the pager lost rows" marker.
+// What a failed check says on its card (2026-11-21, limit-sim.mjs: the card showed Salesforce's raw answer —
+// HTTP 403: [{"message":"TotalRequests Limit exceeded."…}]). A failure of the ORG — its API allowance, too many
+// requests at once, a dropped network, an expired session — is said in words, with what to do; anything else stays
+// as Salesforce said it, because that text is the diagnosis. friendly = sftkFriendlyError (passed in: pure here).
+function sftkOhErrorWords(error, friendly) {
+  const raw = String(error == null ? '' : error);
+  let fe = null;
+  try { fe = typeof friendly === 'function' ? friendly(raw) : null; } catch (_) { fe = null; }
+  if (fe && ['api-limit', 'api-busy', 'network', 'session'].includes(fe.type)) return `${fe.message}${fe.hint ? ` — ${fe.hint}` : ''}`;
+  return raw;
+}
 function sftkOhReadProblem(r) {
   if (!r) return 'no answer';
   if (r.error) return String(r.error);
@@ -719,7 +730,7 @@ function _ohCardHtml(card, res, ctx) {
   const input = card.input ? `<div class="ds-rec-card-line"><label>${esc(card.input.label)} <input class="ds-input ds-input-sm" data-oh-input="${esc(card.id)}" value="${esc(ctx.input)}" placeholder="${esc(card.input.placeholder || '')}" style="max-width:220px"></label></div>` : '';
   const lines = res ? (res.lines || []) : [];
   const body = !res ? '<div class="ds-rec-card-line ds-subtext">Not checked yet for this org — press Check.</div>'
-    : `<div class="ds-rec-card-line"><b>${esc(res.error ? `Could not be checked — ${res.error}` : res.headline)}</b></div>
+    : `<div class="ds-rec-card-line"${res.error ? ` title="${esc(String(res.error))}"` : ''}><b>${esc(res.error ? `Could not be checked — ${sftkOhErrorWords(res.error, typeof sftkFriendlyError === 'function' ? sftkFriendlyError : null)}` : res.headline)}</b></div>
        ${lines.slice(0, OH_MAX_LINES).map(l => `<div class="ds-rec-card-line">· ${esc(l)}</div>`).join('')}
        ${lines.length > OH_MAX_LINES ? `<div class="ds-rec-card-line ds-subtext">… and ${lines.length - OH_MAX_LINES} more</div>` : ''}
        <div class="ds-rec-card-line ds-subtext">Checked ${esc(timeAgo(res.at))}${res.error ? ' — this is NOT an all-clear' : ''}</div>`;

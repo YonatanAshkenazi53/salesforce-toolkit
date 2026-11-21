@@ -2022,6 +2022,19 @@ function sftkScanSyncVerdict(res) {
   return { missing: n('missingInTarget'), changed: n('changed'), extra: n('onlyInTarget'), ambiguous: n('ambiguous'), at: res && res.runAt };
 }
 
+// PURE. The sentence a failed read leaves on the Deploy page: the toast's words without its "Diff scan:" label, and
+// the org that refused named in front when Salesforce's answer said which side it was.
+function sftkScanFailWords(raw, toastMsg, srcLabel, tgtLabel) {
+  const r = String(raw || ''), words = String(toastMsg || r).replace(/^Diff scan:\s*/, '');
+  if (/SESSION_EXPIRED|INVALID_SESSION_ID/i.test(r)) return words;   // that sentence names its org already
+  const side = /^source/i.test(r) ? srcLabel : /^target/i.test(r) ? tgtLabel : '';
+  return side ? `${side} — ${words}` : words;
+}
+// Per deployment, for this window: why its last read did not finish (null = it finished).
+function sftkScanFailRemember(profileId, words) {
+  const m = window._sftkScanFailed || (window._sftkScanFailed = {});
+  if (words) m[profileId] = { words: String(words), at: Date.now() }; else delete m[profileId];
+}
 // Run the diff scan for the given profileId, write the result back to the
 // profile, persist, refresh whatever UI is open. Returns the result object
 // so the caller can show a toast / error / counts inline.
@@ -2048,8 +2061,13 @@ async function refreshProfileDiff(profileId) {
       if (fe && fe.type && fe.type !== 'generic' && fe.message) msg = `Diff scan: ${fe.message}${fe.hint ? ` — ${fe.hint}` : ''}`;
     }
     showToast(msg, 'error', 9000);
+    // the toast goes after nine seconds and the Deploy page then read "Nothing has been read yet", as if no read had
+    // been tried (limit-sim.mjs, 2026-11-21): the reason stays on the page until a read succeeds
+    sftkScanFailRemember(profile.id, sftkScanFailWords(raw, msg, orgLabel(profile.sourceOrg), orgLabel(profile.targetOrg)));
+    if (typeof _depPaintReadFail === 'function') _depPaintReadFail(profile);
     return res;
   }
+  sftkScanFailRemember(profile.id, null);
   // M3c — AUTO-LEARN: merge this scan's confirmed 1:1 pairs into the real
   // profile's match memory (skipped for ephemeral profiles — e.g. ring
   // reconcile clones, whose sourceOrg may be overridden). The raw pair list

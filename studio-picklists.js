@@ -628,7 +628,7 @@ async function _pkCmpLoadObjects() {
   if (!_pkObjCache[key]) {
     const res = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
       path: 'services/data/v62.0/sobjects' });
-    if (res.error) { sel.innerHTML = `<option value="">${esc(res.error).slice(0, 60)}</option>`; return; }
+    if (res.error) { const fe = typeof sftkFriendlyError === 'function' ? sftkFriendlyError(res.error) : null; sel.innerHTML = `<option value="">${esc(fe && fe.type !== 'generic' ? fe.message : String(res.error).slice(0, 60))}</option>`; sel.title = String(res.error); return; }
     _pkObjCache[key] = (res.sobjects || [])
       .filter(o => o.queryable && o.updateable && !o.customSetting && !/^(.*__(Tag|Share|History|Feed|ChangeEvent))$/.test(o.name))
       .map(o => ({ name: o.name, label: o.label }));
@@ -736,7 +736,7 @@ async function _pkLoadObjects() {
     if (!sess) { sel.innerHTML = '<option value="">Org not open in a tab — open it and retry</option>'; return; }
     const res = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
       path: 'services/data/v62.0/sobjects' });
-    if (res.error) { sel.innerHTML = `<option value="">${esc(res.error).slice(0, 60)}</option>`; return; }
+    if (res.error) { const fe = typeof sftkFriendlyError === 'function' ? sftkFriendlyError(res.error) : null; sel.innerHTML = `<option value="">${esc(fe && fe.type !== 'generic' ? fe.message : String(res.error).slice(0, 60))}</option>`; sel.title = String(res.error); return; }
     _pkObjCache[key] = (res.sobjects || [])
       .filter(o => o.queryable && o.updateable && !o.customSetting && !/^(.*__(Tag|Share|History|Feed|ChangeEvent))$/.test(o.name))
       .map(o => ({ name: o.name, label: o.label }));

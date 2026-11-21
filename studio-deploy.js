@@ -560,8 +560,10 @@ async function renderDeploy() {
       <div class="ds-rec-card ds-rec-card-warn">
         <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🔄</span><span class="ds-rec-card-title">${scan ? 'The last scan does not match this deployment any more' : 'Nothing has been read yet'}</span></div>
         <div class="ds-rec-card-line">This page shows what is in <b>${esc(srcL)}</b>, what is already in <b>${esc(tgtL)}</b>, and what differs. It needs one read of both orgs first. Nothing is written.</div>
+        <div class="ds-rec-card-line ds-dep-readfail" id="dsDepReadFail" role="status" hidden></div>
         <div><button class="ds-btn ds-btn-primary" id="dsDepScan" ${offline.length ? 'disabled title="Open the org(s) named above first"' : ''}>🔄 Read both orgs now</button></div>
       </div>${offlineHtml}</div>`);
+    _depPaintReadFail(p);
     _depWireChrome(p);
     _depWireOrgPicker(p);
     eid('dsDepScan')?.addEventListener('click', () => _depRescan(p));
@@ -1385,6 +1387,16 @@ async function _depPiiSuggest(p, recordsByObj, scope, more) {
   if (_currentView === 'deploy') renderDeploy();
 }
 window._depPiiSuggest = _depPiiSuggest;
+
+// Why the last read of the two orgs did not finish, on the card that offers the read (studio-scan.js remembers it).
+function _depPaintReadFail(p) {
+  const el = eid('dsDepReadFail');
+  if (!el || !p) return;
+  const f = (window._sftkScanFailed || {})[p.id];
+  el.hidden = !f;
+  el.innerHTML = f ? `⚠ <b>The last read did not finish.</b> ${esc(f.words)}` : '';
+}
+window._depPaintReadFail = _depPaintReadFail;
 
 // "matched by …" on a card of This deployment (user 2026-11-07: "here we should also allow to change matching for
 // child's" / "matching by field"): the object's own Matching kit — the Pick Records window of the builder, the same
