@@ -1593,6 +1593,42 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
       for (const [fieldName, res] of Object.entries(node.lookupResolutions)) {
         if (res.strategy !== 'match' || !res.matchField || !res.matchObject) continue;
 
+        // A parent found by SEVERAL fields (res.matchFields, 2026-11-21): the same probe on the whole key — every
+        // field read in both orgs, the target asked by the first, a key counted only when exactly one target holds it.
+        const manyMf = Array.isArray(res.matchFields) ? res.matchFields.filter(Boolean) : [];
+        if (manyMf.length > 1) {
+          const by = manyMf.join(' + ');
+          const keyOf = r => { const parts = []; for (const mf of manyMf) { const v = r[mf]; if (v == null || v === '') return null; parts.push(String(v)); } return parts.join('\u001f'); };
+          if (piiKeys.length && manyMf.some(mf => sftkPiiRuleFor(piiPolicy, res.matchObject, mf))) {
+            logRow('⚠', `  ${fieldName} → ${res.matchObject} by ${by}: the PII policy covers one of these fields — the run skips this lookup (it stays empty) instead of comparing raw values`, 'ds-prog-warn');
+            continue;
+          }
+          const smp = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+            query: `SELECT ${fieldName} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 50` });
+          if (smp.error) { cutShort(obj, `the lookup ${fieldName}`, smp.error); continue; }
+          const ids = [...new Set((smp.records || []).map(r => r[fieldName]).filter(Boolean))];
+          if (!ids.length) continue;
+          const sq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+            query: `SELECT Id, ${manyMf.join(', ')} FROM ${res.matchObject} WHERE Id IN (${ids.map(id => `'${id}'`).join(',')})` });
+          if (sq.error) { cutShort(obj, `the lookup ${fieldName}`, sq.error); continue; }
+          const srcKeys = new Set(), firsts = new Set();
+          let noKey = 0;
+          for (const r of (sq.records || [])) { const k = keyOf(r); if (k == null) { noKey++; continue; } srcKeys.add(k); firsts.add(r[manyMf[0]]); }
+          if (noKey) logRow('⚠', `  ${fieldName} → ${res.matchObject} by ${by}: ${noKey} sampled parent(s) leave one of these fields empty — they have no key and their lookups stay empty`, 'ds-prog-warn');
+          if (!srcKeys.size) continue;
+          const tq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+            query: `SELECT Id, ${manyMf.join(', ')} FROM ${res.matchObject} WHERE ${manyMf[0]} IN (${[...firsts].map(soqlStrLit).join(',')})` });
+          if (tq.error) { logRow('⚠️', `  ${fieldName}: lookup probe failed — ${tq.error}`, 'ds-prog-warn'); issues++; continue; }
+          const tgtCount = new Map();
+          for (const r of (tq.records || [])) { const k = keyOf(r); if (k != null) tgtCount.set(k, (tgtCount.get(k) || 0) + 1); }
+          const one = [...srcKeys].filter(k => tgtCount.get(k) === 1).length, twice = [...srcKeys].filter(k => (tgtCount.get(k) || 0) > 1).length, tot = srcKeys.size;
+          if (twice) logRow('⚠', `  ${fieldName} → ${res.matchObject} by ${by}: ${twice} sampled key(s) are held by more than one ${res.matchObject} in the target — never guessed, those lookups stay empty`, 'ds-prog-warn');
+          if (one === 0) { logRow('❌', `  ${fieldName} → ${res.matchObject} by ${by}: no matches found in target — all will be null`, 'ds-prog-err'); issues++; }
+          else if (one < tot) logRow('⚠️', `  ${fieldName} → ${res.matchObject} by ${by}: ${one}/${tot} sampled keys found in target — some will be null`, 'ds-prog-warn');
+          else logRow('✅', `  ${fieldName} → ${res.matchObject} by ${by}: all ${tot} sampled keys resolve in target ✓`);
+          continue;
+        }
+
         // Grab a 50-record sample from source and check how many AccountId values
         // we can bridge via the chosen anchor field
         const sampleRes = await sendBg({

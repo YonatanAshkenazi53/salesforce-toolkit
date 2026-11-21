@@ -742,7 +742,7 @@ function sftkScanPiiBlindLine(objType, blind) {
   const parts = [];
   if (blind.keys.length) parts.push(`${blind.keys.join(', ')} — the field${blind.keys.length === 1 ? '' : 's'} ${objType} records are matched by`);
   if (blind.filter.length) parts.push(`${blind.filter.join(', ')} — named in the record filter`);
-  return `🎭 the PII policy disguises ${parts.join('; and ')}. ${blind.filter.length ? 'A record this deployment already wrote to the target is held there under its fabricated value, so the filter cannot find it' : 'Some records are left over in both orgs. If those in the target are ones this deployment wrote before, they are held under their fabricated value and this scan cannot recognise them'}: ${blind.filter.length ? 'it is' : 'they are'} listed under Insert again, and deploying ${blind.filter.length ? 'it' : 'them'} again creates ${blind.filter.length ? 'a duplicate' : 'duplicates'}. ${blind.keys.length ? 'Create the 🪪 identity field (Identity… on the Deploy page) and stamp after deploying, or match by a field the policy leaves alone. ' : ''}${blind.filter.length ? 'Filter by a field the policy leaves alone.' : ''}`.trim();
+  return `🎭 the PII policy disguises ${parts.join('; and ')}. ${blind.filter.length ? 'If records listed under Insert are ones this deployment already wrote, the filter may not find them in the target under their fabricated value' : 'Some records are left over in both orgs. If those in the target are ones this deployment wrote before, they are held under their fabricated value and this scan cannot recognise them'}: they are listed under Insert again, and deploying them again creates duplicates. ${blind.keys.length ? 'Create the 🪪 identity field (Identity… on the Deploy page) and stamp after deploying, or match by a field the policy leaves alone. ' : ''}${blind.filter.length ? 'Filter by a field the policy leaves alone.' : ''}`.trim();
 }
 async function runDiffScan(profile, node = null, scope = null) {
   if (!profile)                  return { error: 'no profile' };
@@ -1324,8 +1324,6 @@ async function runDiffScan(profile, node = null, scope = null) {
   let _piiBlind = { keys: [], filter: [] };
   try {
     _piiBlind = sftkScanPiiBlind(profile.piiPolicy, objType, srcKeyFields, where);
-    const line = sftkScanPiiBlindLine(objType, { keys: [], filter: _piiBlind.filter });
-    if (line) memWarnings.push(line);
   } catch (_) { /* advisory only */ }
   if (isRootScan) {
     try {
@@ -1834,6 +1832,9 @@ async function runDiffScan(profile, node = null, scope = null) {
     // wrote is recognised from its own record of the run (match memory, root objects); one it does not remember —
     // a child, another PC, a cleared memory — cannot be told from a new one. (Evaluated before the line below.)
     ...((typeof sftkScanPiiBlindKeysMatter === 'function' && sftkScanPiiBlindKeysMatter(_piiBlind, missingInTarget.length, onlyInTarget.length)) ? (memWarnings.push(sftkScanPiiBlindLine(objType, { keys: _piiBlind.keys, filter: [] })), {}) : {}),
+    // the filter: said only when records ARE listed under Insert, and as what may be (QA 2026-11-21: a filter like
+    // "Email != null" finds a disguised record as well as a real one, and the line claimed a duplicate as fact)
+    ...((typeof sftkScanPiiBlindLine === 'function' && _piiBlind.filter.length && missingInTarget.length) ? (memWarnings.push(sftkScanPiiBlindLine(objType, { keys: [], filter: _piiBlind.filter })), {}) : {}),
     ...(memWarnings.length ? { warnings: memWarnings.slice(0, 10) } : {}),
     // 📎 file comparison result (only when the node's Files toggle is ON):
     // records whose source files are absent from the paired target record.
@@ -2345,10 +2346,15 @@ function buildLookupCompareMap(describe, lookupResolutions) {
     // No relationship to traverse, or polymorphic without an explicit match
     // field (parent name field varies per type) → can't safely resolve a name.
     if (!f.relationshipName || (poly && !cfg?.matchField)) { map[f.name] = { skip: true }; continue; }
-    map[f.name] = { relName: f.relationshipName, matchField: cfg?.matchField || 'Name' };
+    // several fields for a parent outside the deployment (2026-11-21): compared and pushed by all of them together
+    const mfs = (Array.isArray(cfg?.matchFields) && cfg.matchFields.filter(Boolean).length > 1) ? cfg.matchFields.filter(Boolean) : null;
+    map[f.name] = { relName: f.relationshipName, matchField: cfg?.matchField || 'Name', ...(mfs ? { matchFields: mfs } : {}) };
   }
   return map;
 }
+// The field(s) a lookup is resolved by, and the words for them ("Name", "LastName + FirstName").
+function _lookupMatchFields(info) { return (info && Array.isArray(info.matchFields) && info.matchFields.length > 1) ? info.matchFields : [info.matchField]; }
+function _lookupByWords(info) { return _lookupMatchFields(info).join(' + '); }
 
 // Multi-select picklist values compare ORDER-INSENSITIVELY: Salesforce
 // stores 'A;B' semicolon-joined in selection order, but the selection
@@ -2362,14 +2368,21 @@ function sftkMultiSelNorm(v) {
 // "SBQQ__PriceRule2__r.Name". Pulls the related record's match field inline so
 // no extra per-record query is needed.
 function _lookupSelectExpr(fieldName, info) {
-  return `${info.relName}.${info.matchField}`;
+  // self-contained (test sandboxes load this function by name)
+  const mfs = (info && Array.isArray(info.matchFields) && info.matchFields.length > 1) ? info.matchFields : [info.matchField];
+  return mfs.map(mf => `${info.relName}.${mf}`).join(',');
 }
 
 // Read the resolved value out of a record returned by a dot-path SELECT — SOQL
 // nests the parent ("Account.Name" → rec.Account.Name). Null parent → ''.
 function _lookupResolvedVal(rec, info) {
   const parent = rec ? rec[info.relName] : null;
-  return parent == null ? '' : (parent[info.matchField] ?? '');
+  if (parent == null) return '';
+  const mfs = (Array.isArray(info.matchFields) && info.matchFields.length > 1) ? info.matchFields : [info.matchField];   // self-contained, as above
+  if (mfs.length === 1) return parent[mfs[0]] ?? '';
+  // several fields: shown and compared as "A + B"; all empty is empty
+  const parts = mfs.map(mf => (parent[mf] == null ? '' : String(parent[mf])));
+  return parts.some(Boolean) ? parts.join(' + ') : '';
 }
 
 async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields, tgtFields) {
@@ -2525,7 +2538,7 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
       const sStr = (sv == null || sv === '') ? '∅' : String(sv);
       const tStr = (tv == null || tv === '') ? '∅' : String(tv);
       pairs.push({ srcField: sf, tgtField: tf, srcVal: sStr, tgtVal: tStr,
-        differs: sStr !== tStr, note: `lookup · by ${info.matchField}` });
+        differs: sStr !== tStr, note: `lookup · by ${_lookupByWords(info)}` });
       continue;
     }
     const sv = srcRec[sf], tv = tgtRec[tf];
@@ -2602,7 +2615,7 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
         <div class="ds-dc-field">
           <span class="ds-dc-fname" title="${p.srcField !== p.tgtField ? esc(p.srcField + ' → ' + p.tgtField) : esc(p.srcField)}">${esc(p.srcField)}${p.srcField !== p.tgtField ? ` <span class="ds-dc-rename">→ ${esc(p.tgtField)}</span>` : ''}${editable ? ` <button class="ds-dc-edit" data-dc-edit="${esc(p.srcField)}" title="Type the value this field is written with on ▶ Deploy — instead of the source's">✏</button>` : ''}</span>
           <span class="ds-dc-tags">
-            ${info && !info.skip ? tag(`🔗 by ${esc(info.matchField)}`, 'ds-dc-tag-lkp', `Lookup — compared and pushed by the related record's ${info.matchField}, never by the raw Id (Ids differ between orgs).`) : ''}
+            ${info && !info.skip ? tag(`🔗 by ${esc(_lookupByWords(info))}`, 'ds-dc-tag-lkp', `Lookup — compared and pushed by the related record's ${_lookupByWords(info)}, never by the raw Id (Ids differ between orgs).`) : ''}
             ${info && info.skip ? tag('🔗 not compared', 'ds-dc-tag-mute', 'Polymorphic lookup with no match field configured — a raw-Id comparison across orgs would always differ, so it is not counted as drift.') : ''}
             ${p.phantom ? tag('≡ normalized by target', 'ds-dc-tag-phantom', `Both orgs hold the same code (${esc(p.phantomCode || '')}) — the target rewrites this label on every write, so it can never converge and is not drift.`) : ''}
             ${p.subtle ? tag(`≈ ${esc(p.subtle)}`, 'ds-dc-tag-subtle', 'The values differ only subtly — easy to miss by eye.') : ''}
@@ -2686,7 +2699,7 @@ async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
   const sel = new Set(['Id']);
   for (const p of picks) {
     const info = p.lkp ? lkpMap[p.srcField] : null;
-    if (info && !info.skip) sel.add(`${info.relName}.${info.matchField}`);
+    if (info && !info.skip) for (const mf of _lookupMatchFields(info)) sel.add(`${info.relName}.${mf}`);
     else sel.add(p.srcField);
   }
   const sq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
@@ -2713,7 +2726,14 @@ async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
       continue;
     }
     const rel = srcRec[info.relName];
-    const key = rel ? rel[info.matchField] : null;
+    const mfs = _lookupMatchFields(info), by = _lookupByWords(info);
+    const vals = mfs.map(mf => (rel ? rel[mf] : null));
+    // no parent in the source is "empty"; a parent that lacks ONE field of a several-field key cannot be found by it
+    if (rel && mfs.length > 1 && vals.some(v => v == null || v === '') && vals.some(v => v != null && v !== '')) {
+      out.errors.push(`${p.srcField}: the source's ${by} is not complete for this record (one of the fields is empty) — it cannot be found by that key in the target`);
+      continue;
+    }
+    const key = (!rel || vals[0] == null || vals[0] === '') ? null : (mfs.length === 1 ? vals[0] : vals.map(String).join(' + '));
     if (key == null || key === '') {
       // Source lookup is empty — pushing that state IS clearing the target's.
       body[p.tgtField] = null;
@@ -2724,16 +2744,17 @@ async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
     const cfg = (node?.lookupResolutions || {})[p.srcField];
     const parentObj = cfg?.matchObject || (f.referenceTo || [])[0];
     if (!parentObj) { out.errors.push(`${p.srcField}: cannot tell which object this lookup points at`); continue; }
-    if (piiCovered(parentObj, info.matchField)) {
-      out.errors.push(`${p.srcField}: refused — the match field ${parentObj}.${info.matchField} is under this deployment's PII policy, and resolving it would send the raw value to the target org. Match on a field that is not PII.`);
+    const coveredMf = mfs.find(mf => piiCovered(parentObj, mf));
+    if (coveredMf) {
+      out.errors.push(`${p.srcField}: refused — the match field ${parentObj}.${coveredMf} is under this deployment's PII policy, and resolving it would send the raw value to the target org. Match on a field that is not PII.`);
       continue;
     }
-    const lit = String(key).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const litOf = v => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const tq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-      query: `SELECT Id FROM ${parentObj} WHERE ${info.matchField} = '${lit}' LIMIT 2` });
+      query: `SELECT Id FROM ${parentObj} WHERE ${mfs.map((mf, i) => `${mf} = '${litOf(vals[i])}'`).join(' AND ')} LIMIT 2` });
     if (tq?.error) { out.errors.push(`${p.srcField}: target lookup failed — ${tq.error}`); continue; }
     const hits = tq.records || [];
-    if (!hits.length) { out.errors.push(`${p.srcField}: no ${parentObj} with ${info.matchField} “${key}” exists in the target — deploy it first, or pick a different match field`); continue; }
+    if (!hits.length) { out.errors.push(`${p.srcField}: no ${parentObj} with ${by} “${key}” exists in the target — deploy it first, or pick a different match field`); continue; }
     if (hits.length > 1) { out.errors.push(`${p.srcField}: “${key}” matches MORE THAN ONE ${parentObj} in the target — linking to either would be a guess. Deduplicate the target or match on an External ID.`); continue; }
     body[p.tgtField] = hits[0].Id;
     out.applied.push(`${p.tgtField} → ${parentObj} “${key}”`);

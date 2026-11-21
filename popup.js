@@ -1448,6 +1448,10 @@ function sftkFlowKindCounts(rows, trigMap) {
 }
 const SFTK_FLOW_KIND_ICON = { RecordTriggeredFlow: '⚡', Flow: '🖥', AutoLaunchedFlow: '🔄', ScheduledFlow: '📅', PlatformEventFlow: '🔁', Workflow: '🧱' };
 let _flowTypeFilter = 'all';
+// PURE. Does Select All take this flow under the kind tab picked?
+function sftkFlowKindSelectable(filter, row, trigMap) {
+  return !filter || filter === 'all' || sftkFlowKindTab(sftkFlowKindOfRow(row, trigMap)) === filter;
+}
 let _flowDepsFollowT = null;
 // The dependency map in the fold shows the kind picked on the list's tabs (its own tabs are hidden there — one row
 // of tabs for the page). "Other" has no tab in the map: it shows all.
@@ -1843,8 +1847,13 @@ function setupToolbarEvents() {
 
   document.getElementById('selectAllBtn').addEventListener('click', () => {
     const search = document.getElementById('searchInput').value.toLowerCase().trim();
+    // Only what the list is showing: the search box AND the kind tab (QA 2026-11-21 — with the Scheduled tab on,
+    // Select All ticked every flow of the org and Delete then took kinds that were not on screen). A flow of
+    // another kind drawn inside a visible tree stays unticked: the safe side for a delete.
+    const trigMap = (typeof DependencyMap.getDefinitionTriggerMap === 'function' && DependencyMap.getDefinitionTriggerMap()) || {};
     for (const [label, versions] of Object.entries(flowGroups)) {
       if (search && !sftkFlowFilterHit(search, sftkFlowFilterKey(label, (versions[0] || {}).ApiName))) continue;
+      if (!sftkFlowKindSelectable(_flowTypeFilter, { apiName: (versions[0] || {}).ApiName, versions }, trigMap)) continue;
       versions.forEach(v => selectedIds.add(v.Id));
     }
     renderFlowList();

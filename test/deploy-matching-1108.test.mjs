@@ -58,10 +58,12 @@ describe('the Matching kit', () => {
   it('a parent outside the deployment: Single field / External ID, 💡 Suggestions graded live, 🧪 Test this key, source ↔ target; composite said, not hidden', () => {
     expect(DV).toContain('id="dsPmTest"');
     expect(DV).toContain('id="dsPmSug"');
-    expect(DV).toContain("const res = await sftkAnalyzeMatchKey(step.refObj, clone, [field], [field], {}, 'field', false);");
+    expect(DV).toContain("const res = await sftkAnalyzeMatchKey(step.refObj, clone, fields, fields, {}, fields.length > 1 ? 'composite' : 'field', false);");
     expect(DV).toContain("sftkMatchSuggestionsOfDepth(desc.fields, 1, {})");
-    expect(DV).toContain("${radio('composite', 'Composite', true, 'Several fields for a parent OUTSIDE the deployment is not supported yet: the lookup bridge finds a parent by one field.");
-    expect(DV).toContain('if (c && !c.inTgt) return showToast(');
+    // 2026-11-21: Composite is offered for a parent outside the deployment (test/parent-composite-1121)
+    expect(DV).toContain("${radio('composite', 'Composite', false, 'Several fields together are the identity");
+    expect(DV).not.toContain('is not supported yet: the lookup bridge finds a parent by one field');
+    expect(DV).toContain('if (off) return showToast(`${off} is not on ${step.refObj} in ${orgLabel(p.targetOrg)}');   // 2026-11-21: any field of the key
   });
   it('a tree card says its key before it is read, and ✏ matching opens the object\'s own kit (the builder\'s Pick Records window)', () => {
     expect(DV).toContain('data-tree-match="${esc(n.pathKey)}"');

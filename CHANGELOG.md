@@ -15,6 +15,8 @@ extensions containing root files that start with `_`).
 
 ## 1.1.0 — 2026-11-21
 
+- **Deploy: a parent outside the deployment can be found by several fields** (2026-11-21). The parent's matching dialog offers Composite: a second and a third field, tested against both orgs before it is used. A run, an update, the comparison of a lookup and the parents' check all read every field of the key and compare them together. A parent with one of those fields empty is not found by the key, and the run says so.
+- **Flows: Select All takes only the kind on screen** (2026-11-21). With a kind tab picked, Select All ticked every flow of the org; it now ticks the flows of that kind and the search.
 - **Field Cleaner: Agentforce actions, topics, agents and bots have their own groups** (2026-11-21). The full metadata text scan listed them under Other components. A field named in the description of an action or in the instructions of a topic is listed as something that breaks later, since an agent acts on that text.
 - **Matching: a suggested rule no longer blames a filled field** (2026-11-21). In Try another rule, a rule of several fields warned that a field adds almost nothing when it was the field before it that was empty, and took points off the rule for both. Each field is now counted on its own.
 - **When the org is out of API calls** (2026-11-21). Every tool was checked against the answer Salesforce gives at the daily limit. Three places said it badly and now say it in words: Org health showed Salesforce's raw answer on each card; the Deploy page showed a message for nine seconds and then read as if no read had been tried, and now keeps the reason on the page, naming the org, until a read finishes; Picklist Manager showed the raw answer in its object list.

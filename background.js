@@ -2078,6 +2078,17 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         for (const [fieldName, res] of Object.entries(effLkp)) {
           if (res.strategy !== 'match') continue;
           if (!res.matchField || !res.matchObject) continue;
+          // A parent found by SEVERAL fields (res.matchFields — 2026-11-21, "a composite key for a parent outside
+          // the deployment"): every field is read in both orgs and the key is all of them together; a parent with
+          // one of them empty has no key and is not linked by it. One field: the value itself, exactly as before.
+          const mFields = (Array.isArray(res.matchFields) && res.matchFields.filter(Boolean).length > 1) ? res.matchFields.filter(Boolean) : [res.matchField];
+          const mLabel = mFields.join(' + ');
+          const mKeyOf = r => {
+            if (mFields.length === 1) return r[mFields[0]];
+            const parts = [];
+            for (const f of mFields) { const v = r[f]; if (v == null || v === '') return null; parts.push(String(v)); }
+            return parts.join('\u001f');
+          };
 
           // 1. Collect unique source record IDs for this lookup field
           const srcIds = [...new Set(
@@ -2088,6 +2099,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           // 2. Query SOURCE for anchor values: srcId → anchorValue
           const CHUNK = 200;
           const srcAnchorMap = new Map();
+          const srcFirstVals = new Set();   // several fields: the target is asked by the FIRST field, the rest is compared here
           // A bridge that cannot be read (no such column, no access) is a NOTE
           // about that one lookup — it used to throw and take the whole object
           // down with it (live run 2026-09-22: OpportunityHistory has no Name).
@@ -2095,15 +2107,16 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           for (let ci = 0; ci < srcIds.length && !bridgeErr; ci += CHUNK) {
             const idList = srcIds.slice(ci, ci + CHUNK).map(id => `'${id}'`).join(',');
             let srcQ;
-            try { srcQ = await sfQueryAll(srcOrgUrl, srcSid, `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE Id IN (${idList})`, false); }
+            try { srcQ = await sfQueryAll(srcOrgUrl, srcSid, `SELECT Id, ${mFields.join(', ')} FROM ${res.matchObject} WHERE Id IN (${idList})`, false); }
             catch (e) { srcQ = { error: e && e.message ? e.message : String(e) }; }
             if (srcQ && srcQ.error) { bridgeErr = `in the source: ${srcQ.error}`; break; }
             for (const r of (srcQ.records || [])) {
-              if (r[res.matchField] != null) srcAnchorMap.set(r.Id, r[res.matchField]);
+              const k = mKeyOf(r);
+              if (k != null) { srcAnchorMap.set(r.Id, k); if (mFields.length > 1) srcFirstVals.add(r[mFields[0]]); }
             }
           }
           if (bridgeErr) {
-            diagnostics.push(`${objType}.${fieldName}: could not read ${res.matchObject}.${res.matchField} ${bridgeErr} — those lookups are left empty${res.defaulted ? '' : '. Pick another match field in Lookup Resolution'}.`);
+            diagnostics.push(`${objType}.${fieldName}: could not read ${res.matchObject}.${mLabel} ${bridgeErr} — those lookups are left empty${res.defaulted ? '' : '. Pick another match field in Lookup Resolution'}.`);
             if (res.defaulted) delete effLkp[fieldName];
             continue;
           }
@@ -2114,8 +2127,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           // anchor values must not ride into a target query once a rule
           // covers them; a failed describe read also skips (fail closed).
           const anchorKey = piiPolicyKeys.find(k =>
-            k.toLowerCase() === (res.matchObject + '.' + res.matchField).toLowerCase());
+            mFields.some(f => k.toLowerCase() === (res.matchObject + '.' + f).toLowerCase()));
           let anchorMap = srcAnchorMap;
+          if (anchorKey && mFields.length > 1) {
+            diagnostics.push(`${objType}.${fieldName}: lookup matching anchors on ${res.matchObject} by ${mLabel}, and the PII policy covers ${anchorKey.slice(anchorKey.indexOf('.') + 1)} — a key of several fields cannot be compared disguised; the bridge was skipped (those lookups stay null) instead of comparing raw values.`);
+            continue;
+          }
           if (anchorKey) {
             let aFieldDesc = null;
             try {
@@ -2129,7 +2146,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
               ? await sftkPiiMaskAnchorMap(srcAnchorMap, piiPolicy[anchorKey], aFieldDesc, piiSalt)
               : { map: null, degraded: `the ${res.matchObject} describe could not be read` };
             if (!bridged.map) {
-              diagnostics.push(`${objType}.${fieldName}: lookup matching anchors on ${res.matchObject}.${res.matchField}, which the PII policy covers — ${bridged.degraded}; the bridge was skipped (those lookups stay null) instead of comparing raw values.`);
+              diagnostics.push(`${objType}.${fieldName}: lookup matching anchors on ${res.matchObject}.${mLabel}, which the PII policy covers — ${bridged.degraded}; the bridge was skipped (those lookups stay null) instead of comparing raw values.`);
               continue;
             }
             anchorMap = bridged.map;
@@ -2146,7 +2163,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           //    Excluded anchors leave the lookup null, which the partial-
           //    resolution warning below already counts — plus a diagnostic
           //    that names the ambiguity as the reason.
-          const anchorValues = [...new Set(anchorMap.values())];
+          const anchorValues = mFields.length > 1 ? [...srcFirstVals].filter(v => v != null && v !== '') : [...new Set(anchorMap.values())];
           const VAL_CHUNK = 100;
           const tgtAnchorMap = new Map();
           const ambiguousAnchors = new Set();
@@ -2155,11 +2172,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
               .map(v => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`)
               .join(',');
             let tgtQ;
-            try { tgtQ = await sfQueryAll(tgtOrgUrl, tgtSid, `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE ${res.matchField} IN (${valList})`, false); }
+            try { tgtQ = await sfQueryAll(tgtOrgUrl, tgtSid, `SELECT Id, ${mFields.join(', ')} FROM ${res.matchObject} WHERE ${mFields[0]} IN (${valList})`, false); }
             catch (e) { tgtQ = { error: e && e.message ? e.message : String(e) }; }
             if (tgtQ && tgtQ.error) { bridgeErr = `in the target: ${tgtQ.error}`; break; }
             for (const r of (tgtQ.records || [])) {
-              const v = r[res.matchField];
+              const v = mKeyOf(r);
               if (v == null) continue;
               if (tgtAnchorMap.has(v)) { ambiguousAnchors.add(v); continue; }
               tgtAnchorMap.set(v, r.Id);
@@ -2167,12 +2184,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           }
           for (const v of ambiguousAnchors) tgtAnchorMap.delete(v);
           if (ambiguousAnchors.size) {
-            const ex = [...ambiguousAnchors].slice(0, 3).map(v => `“${v}”`).join(', ');
-            diagnostics.push(`${objType}.${fieldName}: ${ambiguousAnchors.size} ${res.matchObject}.${res.matchField} value(s) match MORE THAN ONE target record (${ex}${ambiguousAnchors.size > 3 ? '…' : ''}) — linking to either would be a guess, so those lookups were left null. Deduplicate the target (or match on an External ID) and re-run to wire them.`);
+            const ex = [...ambiguousAnchors].slice(0, 3).map(v => `“${String(v).split('\u001f').join(' + ')}”`).join(', ');
+            diagnostics.push(`${objType}.${fieldName}: ${ambiguousAnchors.size} ${res.matchObject}.${mLabel} value(s) match MORE THAN ONE target record (${ex}${ambiguousAnchors.size > 3 ? '…' : ''}) — linking to either would be a guess, so those lookups were left null. Deduplicate the target (or match on an External ID) and re-run to wire them.`);
           }
 
           if (bridgeErr) {
-            diagnostics.push(`${objType}.${fieldName}: could not read ${res.matchObject}.${res.matchField} ${bridgeErr} — those lookups are left empty${res.defaulted ? '' : '. Pick another match field in Lookup Resolution'}.`);
+            diagnostics.push(`${objType}.${fieldName}: could not read ${res.matchObject}.${mLabel} ${bridgeErr} — those lookups are left empty${res.defaulted ? '' : '. Pick another match field in Lookup Resolution'}.`);
             if (res.defaulted) delete effLkp[fieldName];
             continue;
           }
@@ -2192,9 +2209,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             // may be created later in this run — the late-link pass connects
             // them then, so this is a note, not a verdict.
             errors.push(treeObjSet.has(res.matchObject)
-              ? `ℹ ${objType}.${fieldName}: ${matched}/${total} lookups resolved via ${res.matchObject}.${res.matchField} in the target — the other ${total - matched} are inserted with an empty ${fieldName} and connected after insert if this run creates the ${res.matchObject} they point at`
+              ? `ℹ ${objType}.${fieldName}: ${matched}/${total} lookups resolved via ${res.matchObject}.${mLabel} in the target — the other ${total - matched} are inserted with an empty ${fieldName} and connected after insert if this run creates the ${res.matchObject} they point at`
               : `${objType}.${fieldName}: ${matched}/${total} lookups resolved via ` +
-                `${res.matchObject}.${res.matchField} — ${total - matched} record(s) will have null ${fieldName}`);
+                `${res.matchObject}.${mLabel} — ${total - matched} record(s) will have null ${fieldName}`);
           }
           // ⛔ PRE-FLIGHT ABORT (user 2026-08-10, after 401 × "Required field
           // missing": "the recommendation … is not strong enough"). A bridge
@@ -2211,7 +2228,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             if (tdescPre && tdescPre.nillable === false && tdescPre.createable) {
               throw new Error(
                 `PRE-FLIGHT STOP — ${objType}.${fieldName}: 0/${total} lookups resolved via ` +
-                `${res.matchObject}.${res.matchField}, and ${tfPre} is REQUIRED in the target, so every ` +
+                `${res.matchObject}.${mLabel}, and ${tfPre} is REQUIRED in the target, so every ` +
                 `insert would fail. Nothing was pushed. Fix: deploy ${res.matchObject} records to the ` +
                 `target first (the numbered plan in Transfer does it in one click), then run again.`);
             }

@@ -52,7 +52,8 @@ describe('the per-field push', () => {
     SCAN.indexOf('function sftkWireDriftCompare'));
 
   it('pushes a lookup by the related record’s KEY, never the raw Id', () => {
-    expect(fn).toMatch(/SELECT Id FROM \$\{parentObj\} WHERE \$\{info\.matchField\} = '\$\{lit\}' LIMIT 2/);
+    // 2026-11-21: every field of the key in the WHERE (one field, or several for a composite parent key), still LIMIT 2
+    expect(fn).toContain("query: `SELECT Id FROM ${parentObj} WHERE ${mfs.map((mf, i) => `${mf} = '${litOf(vals[i])}'`).join(' AND ')} LIMIT 2` });");
   });
 
   it('zero or several matches is that field’s ERROR — never a guess, never a silent null', () => {

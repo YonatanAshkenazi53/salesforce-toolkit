@@ -8,6 +8,7 @@ const read = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 const HTML = read('popup.html'), PJ = read('popup.js'), CSS = read('styles.css'), DBG = read('apex-debugger.js');
 const { sftkFlowKindOfRow: kind, sftkFlowKindCounts: counts, sftkFlowKindTab: tab } =
   extractFunctions('popup.js', ['sftkFlowKindOfRow', 'sftkFlowKindCounts', 'sftkFlowKindTab']);
+const { sftkFlowKindSelectable: selectable } = extractFunctions('popup.js', ['sftkFlowKindSelectable', 'sftkFlowKindOfRow', 'sftkFlowKindTab']);
 
 const row = (apiName, ...versions) => ({ apiName, versions });
 const TRIG = { Acc_After: 'RecordAfterSave', Nightly: 'Scheduled', Evt: 'PlatformEvent' };
@@ -73,5 +74,15 @@ describe('log viewer: text size', () => {
     expect(DBG.slice(DBG.indexOf('id="adbgLogToggle"'), cats)).not.toContain('adbgLogFontDown');
     for (const id of ['adbgLogFontDown', 'adbgLogFontReset', 'adbgLogFontUp']) expect(DBG.split(`id="${id}"`).length).toBe(2);
     expect(CSS).toContain('.adbg-log-cats .adbg-log-fontctl { margin-left: auto;');
+  });
+});
+
+describe('Select All under a kind tab (QA regression run, 2026-11-21)', () => {
+  it('takes only the flows of the kind picked; All takes every flow', () => {
+    const sched = row('Nightly', { ProcessType: 'AutoLaunchedFlow', Status: 'Active' }), screen = row('Wizard', { ProcessType: 'Flow', Status: 'Active' }), pb = row('PB', { ProcessType: 'Workflow', Status: 'Active' });
+    expect(selectable('ScheduledFlow', sched, TRIG)).toBe(true); expect(selectable('ScheduledFlow', screen, TRIG)).toBe(false);
+    expect(selectable('other', pb, TRIG)).toBe(true); expect(selectable('other', sched, TRIG)).toBe(false);
+    for (const r of [sched, screen, pb]) { expect(selectable('all', r, TRIG)).toBe(true); expect(selectable('', r, TRIG)).toBe(true); }
+    expect(PJ).toContain("if (!sftkFlowKindSelectable(_flowTypeFilter, { apiName: (versions[0] || {}).ApiName, versions }, trigMap)) continue;");
   });
 });

@@ -4518,6 +4518,12 @@ function sftkRecDupFields(profile, dp) {
 // dupFields: sftkRecDupFields(...) for a write into the run's TARGET; absent
 // for the reverse-drift write into the source (the bypass is confirmed for the
 // target only).
+// PURE. A field only a Person Account holds, on a row that is a business account.
+function sftkRecPersonOnlyField(objType, row, field) {
+  if (String(objType) !== 'Account' || !row || row.IsPersonAccount !== false) return false;
+  const f = String(field || '');
+  return /^Person/i.test(f) || /__pc$/i.test(f) || ['firstname', 'lastname', 'salutation', 'middlename', 'suffix'].includes(f.toLowerCase());
+}
 // PURE. An update writes an explicit empty for a field under the PII policy that the source holds empty.
 function sftkRecPiiEmptyWrites(piiActive, piiRules, srcField) {
   return !!(piiActive && srcField !== 'RecordTypeId' && piiRules && piiRules[String(srcField).toLowerCase()]);
@@ -4659,12 +4665,14 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         const poly = f.polymorphicForeignKey || (f.referenceTo || []).length > 1;
         if (!f.relationshipName || (poly && !cfg?.matchObject)) continue;
         if (!f.updateable) continue;
-        if (!mapped) lkpAuto.push(`${f.name} (by ${cfg?.matchField || 'Name'})`);
+        if (!mapped) lkpAuto.push(`${f.name} (by ${(Array.isArray(cfg?.matchFields) && cfg.matchFields.filter(Boolean).length > 1) ? cfg.matchFields.filter(Boolean).join(' + ') : (cfg?.matchField || 'Name')})`);
         refPairs.push({
           sf: f.name,
           tf: fm[f.name] || f.name,
           relName:    f.relationshipName,
           matchField: cfg?.matchField || 'Name',
+          // several fields for a parent outside the deployment (2026-11-21): all of them together are the key
+          matchFields: (Array.isArray(cfg?.matchFields) && cfg.matchFields.filter(Boolean).length > 1) ? cfg.matchFields.filter(Boolean) : [cfg?.matchField || 'Name'],
           parentObj:  cfg?.matchObject || (f.referenceTo || [])[0],
           unresolved: 0
         });
@@ -4725,7 +4733,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const idList = sourceIds.filter(id => srcToTgt.has(id));
   const selFields = [...new Set([
     'Id', ...srcFields,
-    ...refPairs.map(rp => `${rp.relName}.${rp.matchField}`),
+    ...refPairs.flatMap(rp => rp.matchFields.map(mf => `${rp.relName}.${mf}`)),
     ...(wantOwners ? ['Owner.Name', 'OwnerId'] : []),   // OwnerId: read only, tells a queue from a user
     ...(srcNameFld ? [srcNameFld] : []),   // labels for History links only
     // A person account's Name cannot be written (derived from its parts) —
@@ -4748,23 +4756,35 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // 'Name') and is NOT wired to node.matching — these are per-LOOKUP parent
   // resolutions, a different axis from the node's own record identity, and
   // rewiring them here would not be a small contained change. Revisit in M3c.
+  // The key of a parent: its one match field's value, or — several fields — all of them together; a parent with one
+  // of them empty has no key and its lookup is left as it is.
+  const lkKey = (parent, fields) => {
+    if (!parent) return null;
+    if (fields.length === 1) return parent[fields[0]];
+    const parts = [];
+    for (const mf of fields) { const v = parent[mf]; if (v == null || v === '') return null; parts.push(String(v)); }
+    return parts.join('\u001f');
+  };
+  const lkWords = k => String(k).split('\u001f').join(' + ');
   for (const rp of refPairs) {
     rp.byKey = new Map();
+    rp.by = rp.matchFields.join(' + ');
+    // the target is asked by the FIRST field; the whole key is compared on what comes back
     const keys = [...new Set(srcRecs
-      .map(r => r[rp.relName] ? r[rp.relName][rp.matchField] : null)
+      .map(r => (r[rp.relName] && lkKey(r[rp.relName], rp.matchFields) != null) ? r[rp.relName][rp.matchFields[0]] : null)
       .filter(v => v != null && v !== ''))];
     for (let i = 0; i < keys.length; i += 100) {
       const lit = keys.slice(i, i + 100)
         .map(v => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
       const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-        query: `SELECT Id, ${rp.matchField} FROM ${rp.parentObj} WHERE ${rp.matchField} IN (${lit})` });
+        query: `SELECT Id, ${rp.matchFields.join(', ')} FROM ${rp.parentObj} WHERE ${rp.matchFields[0]} IN (${lit})` });
       if (q?.error) {
-        warnings.push(`⚠ ${rp.sf}: couldn't look up ${rp.parentObj} by ${rp.matchField} in the target (${q.error}) — this lookup left unchanged`);
+        warnings.push(`⚠ ${rp.sf}: couldn't look up ${rp.parentObj} by ${rp.by} in the target (${q.error}) — this lookup left unchanged`);
         rp.failed = true;
         break;
       }
       for (const rec of (q.records || [])) {
-        const k = String(rec[rp.matchField] ?? '');
+        const k = String(lkKey(rec, rp.matchFields) ?? '');
         if (!k) continue;
         // A key matching MORE THAN ONE target parent is ambiguous — linking
         // to either would be a guess, so it is EXCLUDED (fail closed, same
@@ -4776,8 +4796,8 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     }
     if (rp.dupKeys && rp.dupKeys.size) {
       for (const k of rp.dupKeys) rp.byKey.delete(k);
-      const ex = [...rp.dupKeys].slice(0, 3).map(v => `“${v}”`).join(', ');
-      warnings.push(`⚠ ${rp.sf}: ${rp.dupKeys.size} ${rp.parentObj}.${rp.matchField} value(s) match MORE THAN ONE target record (${ex}${rp.dupKeys.size > 3 ? '…' : ''}) — linking to either would be a guess, so those lookups were left unchanged. Deduplicate the target or match on an External ID.`);
+      const ex = [...rp.dupKeys].slice(0, 3).map(v => `“${lkWords(v)}”`).join(', ');
+      warnings.push(`⚠ ${rp.sf}: ${rp.dupKeys.size} ${rp.parentObj}.${rp.by} value(s) match MORE THAN ONE target record (${ex}${rp.dupKeys.size > 3 ? '…' : ''}) — linking to either would be a guess, so those lookups were left unchanged. Deduplicate the target or match on an External ID.`);
     }
   }
 
@@ -4872,7 +4892,9 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       if (v == null) {
         // A field under the PII policy that the source holds empty is written EMPTY: skipping it would leave what
         // the target has — possibly a real value an earlier, unmasked run planted (review 2026-11-13).
-        if (sftkRecPiiEmptyWrites(piiActive, piiRules, sf)) { piiTgtFields.add(tf); p[tf] = null; piiCounts.emptied = (piiCounts.emptied || 0) + 1; }
+        // …but never a person field of a BUSINESS account: it cannot hold one, and Salesforce may refuse the row for
+        // naming it (QA 2026-11-21; not seen against an org — left out is safe either way).
+        if (!sftkRecPersonOnlyField(objType, sr, sf) && sftkRecPiiEmptyWrites(piiActive, piiRules, sf)) { piiTgtFields.add(tf); p[tf] = null; piiCounts.emptied = (piiCounts.emptied || 0) + 1; }
         continue;
       }
       // Remap RecordTypeId by DeveloperName; drop it if there's no target
@@ -4902,7 +4924,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     // are left unchanged (never nulled) and counted for the summary.
     for (const rp of refPairs) {
       if (rp.failed) continue;
-      const key = sr[rp.relName] ? sr[rp.relName][rp.matchField] : null;
+      const key = sr[rp.relName] ? lkKey(sr[rp.relName], rp.matchFields) : null;
       if (key == null || key === '') continue;      // no parent in source — leave as-is
       const pid = rp.byKey.get(String(key));
       if (!pid) { rp.unresolved++; continue; }
@@ -4947,7 +4969,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 
   for (const rp of refPairs) {
     if (rp.unresolved) {
-      warnings.push(`⚠ ${rp.sf}: ${rp.unresolved} record(s) point at a ${rp.parentObj} with no match in the target (by ${rp.matchField}) — left unchanged; insert the parent first or pick a better match field`);
+      warnings.push(`⚠ ${rp.sf}: ${rp.unresolved} record(s) point at a ${rp.parentObj} with no match in the target (by ${rp.by}) — left unchanged; insert the parent first or pick a better match field`);
     }
   }
 
@@ -5454,10 +5476,12 @@ async function sftkParentVerifyOne(p, refObj, matchField) {
   try {
     _parentVerifyLastError = '';
     const by = matchField || 'Name';
+    // "LastName + FirstName" (sftkDeployParentMatchFields): a key of several fields — the check aligns by all of them
+    const byFields = String(by).split(' + ').map(x => x.trim()).filter(Boolean);
     const eph = { id: `chk_${Date.now()}`, name: `${refObj} check`,
       sourceOrg: p.sourceOrg, targetOrg: p.targetOrg, ephemeral: true,
-      scanConfig: { matchField: by, compareFields: [] },
-      tree: { objectType: refObj, where: '', children: [] } };
+      scanConfig: { matchField: byFields[0] || 'Name', compareFields: [] },
+      tree: { objectType: refObj, where: '', children: [], ...(byFields.length > 1 ? { matching: { strategy: 'composite', fields: byFields, normalize: {} } } : {}) } };
     const res = await runDiffScan(eph);
     if (res?.error) { _parentVerifyLastError = String(res.error); return false; }
     sftkParentSyncPut(p.sourceOrg, p.targetOrg, refObj, {

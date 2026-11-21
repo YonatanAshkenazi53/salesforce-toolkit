@@ -36,7 +36,7 @@ describe('the row and the dialog', () => {
     expect(DV).toContain(' · matched by <b>${esc(matchedBy(s))}</b> <button class="ds-btn ds-btn-xs ds-dep-pmatch-btn" data-dep-pmatch-edit="${esc(s.refObj)}"');
     expect(DV).toContain("h.querySelectorAll('[data-dep-pmatch-edit]').forEach(b => b.addEventListener('click', () => _depParentMatchEdit(p, scan, steps.find(s => s.refObj === b.dataset.depPmatchEdit))));");
     expect(DV).toContain("(f.externalId || f.unique || f.nameField || ['string', 'email', 'phone', 'url'].includes(f.type)) && !f.calculated && f.type !== 'textarea'");
-    expect(DV).toContain('const n = sftkDeploySetParentMatchField(p.tree, step, field);');
+    expect(DV).toContain('const n = sftkDeploySetParentMatchField(p.tree, step, key.length > 1 ? key : key[0]);');
     expect(DV).toContain('await storageSaveProfiles(); }');
     // 2026-11-08: the parents' Matching kit is followed by the tree cards' ✏ matching
     expect(DV).toContain('await _depRescan(p, { from: from.length ? from : undefined });\n  });\n}\n\n// 🎭 PII suggestions on the Deploy page'.replace(/\n/g, DV.includes('\r\n') ? '\r\n' : '\n'));

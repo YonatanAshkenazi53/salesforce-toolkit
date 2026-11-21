@@ -58,7 +58,7 @@ describe('a covered value never stays or travels as it is', () => {
     expect(emptyWrites(true, rules, 'Phone')).toBe(false);
     expect(emptyWrites(false, rules, 'Email')).toBe(false);
     expect(emptyWrites(true, { recordtypeid: {} }, 'RecordTypeId')).toBe(false);
-    expect(REC).toContain("if (sftkRecPiiEmptyWrites(piiActive, piiRules, sf)) { piiTgtFields.add(tf); p[tf] = null;");
+    expect(REC).toContain("if (!sftkRecPersonOnlyField(objType, sr, sf) && sftkRecPiiEmptyWrites(piiActive, piiRules, sf)) { piiTgtFields.add(tf); p[tf] = null;");
   });
   it('the ← step leaves every covered field out and drops the policy from its copy', () => {
     const fm = { Email: 'Work_Email__c', Notes__c: null, Phone: '' };
@@ -92,7 +92,7 @@ describe('a scan under a policy that disguises what it matches by (live 2026-11-
     expect(line).toContain('Email — the field Lead records are matched by');
     expect(line).toContain('LastName — named in the record filter');
     expect(line).toContain('listed under Insert again');
-    expect(line).toContain('the filter cannot find it');
+    expect(line).toContain('the filter may not find them');   // QA 2026-11-21: what may be, not a fact
     expect(line).toContain('Identity…');
     const keyOnly = blindLine('Lead', { keys: ['Email'], filter: [] });
     expect(keyOnly).toContain('Some records are left over in both orgs.'); expect(keyOnly).toContain('creates duplicates');
@@ -106,5 +106,22 @@ describe('a scan under a policy that disguises what it matches by (live 2026-11-
     const SC = read('studio-scan.js');
     expect(SC).toContain('_piiBlind = sftkScanPiiBlind(profile.piiPolicy, objType, srcKeyFields, where);');
     expect(SC.indexOf('sftkScanPiiBlindKeysMatter(_piiBlind, missingInTarget.length, onlyInTarget.length)')).toBeLessThan(SC.indexOf('...(memWarnings.length ? { warnings: memWarnings.slice(0, 10) } : {}),'));
+  });
+});
+
+describe('QA regression run, 2026-11-21', () => {
+  const { sftkRecPersonOnlyField: personOnly } = extractFunctions('studio-reconcile.js', ['sftkRecPersonOnlyField']);
+  it('a person field of a BUSINESS account is never written empty', () => {
+    const biz = { IsPersonAccount: false }, person = { IsPersonAccount: true };
+    for (const f of ['FirstName', 'LastName', 'Salutation', 'PersonEmail', 'PersonMobilePhone', 'Hobby__pc']) { expect(personOnly('Account', biz, f), f).toBe(true); expect(personOnly('Account', person, f), f).toBe(false); }
+    expect(personOnly('Account', biz, 'Phone')).toBe(false); expect(personOnly('Account', biz, 'Name')).toBe(false);
+    expect(personOnly('Contact', biz, 'FirstName')).toBe(false);          // only Account has the two kinds
+    expect(personOnly('Account', {}, 'FirstName')).toBe(false);           // an org without Person Accounts has no flag
+  });
+  it('the filter line waits for records under Insert; the policy cannot be opened under a live run', () => {
+    const SC = read('studio-scan.js');
+    expect(SC).toContain('_piiBlind.filter.length && missingInTarget.length) ? (memWarnings.push(sftkScanPiiBlindLine(objType, { keys: [], filter: _piiBlind.filter }))');
+    expect(SC).not.toContain('const line = sftkScanPiiBlindLine(objType, { keys: [], filter: _piiBlind.filter });');
+    expect(DEP).toContain("if (window._sftkRunActive) return showToast('A run is in progress — change what is disguised when it has finished.'");
   });
 });

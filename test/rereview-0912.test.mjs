@@ -46,7 +46,8 @@ describe('A1 · the per-field push honours the PII policy', () => {
   });
 
   it('refuses a lookup whose match field is PII — the raw key would reach the target org', () => {
-    before(fn, 'if (piiCovered(parentObj, info.matchField))', "SELECT Id FROM ${parentObj} WHERE ${info.matchField}");
+    // 2026-11-21: any field of the key under the policy refuses (a parent key may be several fields)
+    before(fn, 'const coveredMf = mfs.find(mf => piiCovered(parentObj, mf));', 'query: `SELECT Id FROM ${parentObj} WHERE ${mfs.map(');
     expect(fn).toContain('is under this deployment\'s PII policy');
   });
 });

@@ -1234,7 +1234,9 @@ function sftkDeployParentMatchFields(tree, step) {
   for (const nb of ((step && step.neededBy) || [])) {
     const node = byObj.get(nb.obj);
     const lr = node && node.lookupResolutions && node.lookupResolutions[nb.field];
-    const f = (lr && lr.matchField) || 'Name';
+    // a key of several fields (2026-11-21) is ONE entry, "LastName + FirstName"
+    const many = lr && Array.isArray(lr.matchFields) ? lr.matchFields.filter(Boolean) : [];
+    const f = many.length > 1 ? many.join(' + ') : ((lr && lr.matchField) || 'Name');
     if (!out.includes(f)) out.push(f);
   }
   return out.length ? out : ['Name'];
@@ -1249,8 +1251,15 @@ function sftkDeploySetParentMatchField(tree, step, field) {
     if (!node) continue;
     node.lookupResolutions = node.lookupResolutions || {};
     const cur = node.lookupResolutions[nb.field] || {};
-    if (cur.matchField === field && cur.strategy === 'match') continue;
-    node.lookupResolutions[nb.field] = { ...cur, strategy: 'match', matchObject: step.refObj, matchField: field };
+    // field: one API name, or several (an array) — then all of them together are the parent's key
+    const many = Array.isArray(field) ? [...new Set(field.filter(Boolean))] : [];
+    const one = many.length ? many[0] : field;
+    const curMany = Array.isArray(cur.matchFields) ? cur.matchFields.filter(Boolean) : [];
+    const sameKey = many.length > 1 ? JSON.stringify(curMany) === JSON.stringify(many) : curMany.length <= 1;
+    if (cur.matchField === one && cur.strategy === 'match' && sameKey) continue;
+    const next = { ...cur, strategy: 'match', matchObject: step.refObj, matchField: one };
+    if (many.length > 1) next.matchFields = many; else delete next.matchFields;
+    node.lookupResolutions[nb.field] = next;
     n++;
   }
   return n;
@@ -1259,8 +1268,8 @@ function sftkDeploySetParentMatchField(tree, step, field) {
 // the pic above" / "כולל ההמלצות"): the deployment's Matching kit for a parent outside it — Single field or
 // External ID, 💡 Suggestions graded live against both orgs, 🧪 Test this key, Match on source ↔ target. The
 // choice lands on every lookup that points at this parent, the deployment is saved, both orgs are read
-// again. A composite key is not offered for a parent: the lookup bridge in the engine finds a parent by ONE
-// field (background.js) — said in the dialog, not hidden.
+// again. Since 2026-11-21 a parent may be found by SEVERAL fields (Composite): the engine's lookup bridge, the
+// update path, the scan's compare and the parents' check read every field and compare them together.
 async function _depParentMatchEdit(p, scan, step) {
   if (!step) return;
   const sess = await getOrgSession(p.sourceOrg);
@@ -1275,13 +1284,17 @@ async function _depParentMatchEdit(p, scan, step) {
     .map(f => ({ name: f.name, label: f.label || f.name, ext: !!f.externalId, why: f.externalId ? 'external ID' : f.unique ? 'unique' : f.nameField ? 'name' : '', inTgt: !tDesc || tgtNames.has(f.name) }))
     .sort((a, b) => (b.why === 'external ID') - (a.why === 'external ID') || (b.why === 'unique') - (a.why === 'unique') || (b.why === 'name') - (a.why === 'name') || a.label.localeCompare(b.label));
   const cur = sftkDeployParentMatchFields(p.tree, step);
-  let strategy = cands.some(f => f.ext && f.name === cur[0]) ? 'externalId' : 'field';
-  let chosen = cur.length === 1 ? cur[0] : (cands[0] && cands[0].name) || 'Name';
+  const curKey = cur.length === 1 ? cur[0].split(' + ') : [];
+  let strategy = curKey.length > 1 ? 'composite' : cands.some(f => f.ext && f.name === cur[0]) ? 'externalId' : 'field';
+  let chosen = curKey.length ? curKey[0] : (cands[0] && cands[0].name) || 'Name';
+  let more = curKey.slice(1, 3);   // the second and third field of a composite key
+  const keyNow = () => strategy === 'composite' ? [...new Set([chosen, ...more].filter(Boolean))] : [chosen];
   const sugs = (typeof sftkMatchSuggestionsOfDepth === 'function' ? sftkMatchSuggestionsOfDepth(desc.fields, 1, {}) : [])
     .filter(s => s && Array.isArray(s.fields) && s.fields.length === 1 && cands.some(c => c.name === s.fields[0])).slice(0, 4);
   const clone = { ...p, ephemeral: true };
   const grade = async (field, mini) => {
-    const res = await sftkAnalyzeMatchKey(step.refObj, clone, [field], [field], {}, 'field', false);
+    const fields = Array.isArray(field) ? field : [field];
+    const res = await sftkAnalyzeMatchKey(step.refObj, clone, fields, fields, {}, fields.length > 1 ? 'composite' : 'field', false);
     return _matchAnalysisHtml(res, clone, mini);
   };
   const optsHtml = () => cands.filter(f => strategy !== 'externalId' || f.ext)
@@ -1297,13 +1310,14 @@ async function _depParentMatchEdit(p, scan, step) {
           <span class="ds-rec-display-lbl">Matching:</span>
           ${radio('field', 'Single field', false, 'One field is the identity — classic: Name. Example: Account Name.')}
           ${radio('externalId', 'External ID', !hasExt, hasExt ? 'A dedicated unique field, the strongest key: it survives renames.' : `No external ID field on ${step.refObj} in ${orgLabel(p.sourceOrg)} — add one in Setup to enable`)}
-          ${radio('composite', 'Composite', true, 'Several fields for a parent OUTSIDE the deployment is not supported yet: the lookup bridge finds a parent by one field. For an object inside the deployment, its card in “This deployment” opens the full kit.')}
+          ${radio('composite', 'Composite', false, 'Several fields together are the identity — for a parent no single field tells apart. Example: Last Name + First Name. A parent with one of the fields empty is not found by this key.')}
           <span style="flex:1"></span>
           <button class="ds-btn ds-btn-xs" id="dsPmTest" title="Grade this key against both live orgs: populated% + unique% per org and a cross-org match preview">🧪 Test this key</button>
           <button class="ds-btn ds-btn-xs" id="dsPmSug" title="Ranked single-field keys for ${esc(step.refObj)}, each graded against both live orgs">💡 Suggestions</button>
         </div>
         <div class="ds-rec-display-row" style="margin-top:8px">
-          <div class="ds-rec-mf-col"><span class="ds-rec-display-lbl">Match on source:</span><select id="dsDepPmatchSel" class="ds-select ds-select-sm" style="min-width:300px">${optsHtml()}</select></div>
+          <div class="ds-rec-mf-col"><span class="ds-rec-display-lbl">Match on source:</span><select id="dsDepPmatchSel" class="ds-select ds-select-sm" style="min-width:300px">${optsHtml()}</select>
+            <span id="dsPmMore" class="ds-pm-more"></span></div>
           <span class="ds-rec-mf-arrow">↔</span>
           <div class="ds-rec-mf-col"><span class="ds-rec-display-lbl">Match on target:</span><span id="dsPmTgt" class="ds-subtext" style="font-size:12px"></span></div>
         </div>
@@ -1313,18 +1327,41 @@ async function _depParentMatchEdit(p, scan, step) {
     </div>
     <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Cancel</button><button class="ds-btn ds-btn-primary" id="dsDepPmatchGo">Use this key and read both orgs again</button></div>`);
   const sel = eid('dsDepPmatchSel'), out = eid('dsPmOut');
-  const tgtLine = () => { const f = cands.find(c => c.name === chosen); const t = eid('dsPmTgt'); if (t) t.textContent = !f ? '' : f.inTgt ? `${f.name} — the same field in ${orgLabel(p.targetOrg)}` : `⚠ ${f.name} is not on ${step.refObj} in ${orgLabel(p.targetOrg)} — pick another`; };
+  const tgtLine = () => {
+    const t = eid('dsPmTgt'); if (!t) return;
+    const key = keyNow(), missing = key.filter(k => { const c = cands.find(x => x.name === k); return c && !c.inTgt; });
+    t.textContent = missing.length ? `⚠ ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not on ${step.refObj} in ${orgLabel(p.targetOrg)} — pick another`
+      : key.length > 1 ? `${key.join(' + ')} — the same fields in ${orgLabel(p.targetOrg)}` : `${key[0]} — the same field in ${orgLabel(p.targetOrg)}`;
+  };
+  // Composite: up to two more fields, each "and <field>"; an empty pick is no field
+  const moreHtml = () => strategy !== 'composite' ? '' : [0, 1].map(i => {
+    if (i === 1 && !more[0]) return '';
+    const taken = new Set([chosen, more[1 - i]].filter(Boolean));
+    return `<span class="ds-rec-display-lbl ds-pm-and">and</span><select class="ds-select ds-select-sm" data-pm-more="${i}" aria-label="Field ${i + 2} of the key"><option value="">${i === 0 ? '— pick a second field —' : '— no third field —'}</option>${cands.filter(f => !taken.has(f.name)).map(f => `<option value="${esc(f.name)}" ${f.name === more[i] ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})${f.inTgt ? '' : ` — not in ${esc(orgLabel(p.targetOrg))}`}</option>`).join('')}</select>`;
+  }).join('');
+  const paintMore = () => {
+    const host = eid('dsPmMore'); if (!host) return;
+    host.innerHTML = moreHtml();
+    host.querySelectorAll('[data-pm-more]').forEach(m => m.addEventListener('change', () => {
+      const i = Number(m.dataset.pmMore);
+      more[i] = m.value || '';
+      if (i === 0 && !more[0]) more = [];
+      more = more.filter(Boolean);
+      out.innerHTML = ''; paintMore(); tgtLine();
+    }));
+  };
+  paintMore();
   tgtLine();
-  sel?.addEventListener('change', () => { chosen = sel.value; out.innerHTML = ''; tgtLine(); });
+  sel?.addEventListener('change', () => { chosen = sel.value; more = more.filter(m => m !== chosen); out.innerHTML = ''; paintMore(); tgtLine(); });
   document.querySelectorAll('input[name="dsPmStrat"]').forEach(r => r.addEventListener('change', () => {
     if (!r.checked) return;
     strategy = r.value;
     if (strategy === 'externalId' && !cands.some(c => c.ext && c.name === chosen)) chosen = (cands.find(c => c.ext) || {}).name || chosen;
-    sel.innerHTML = optsHtml(); out.innerHTML = ''; tgtLine();
+    sel.innerHTML = optsHtml(); out.innerHTML = ''; paintMore(); tgtLine();
   }));
   eid('dsPmTest')?.addEventListener('click', async ev => {
     const b = ev.currentTarget; b.disabled = true; b.textContent = '⏳ testing…';
-    try { out.innerHTML = await grade(chosen, false); }
+    try { out.innerHTML = await grade(keyNow(), false); }
     catch (e) { out.innerHTML = `<div class="ds-drift-compare-err">⚠ Key test failed: ${esc((typeof sftkFriendlyError === 'function' ? sftkFriendlyError(e?.message || String(e)).message : String(e)))}</div>`; }
     b.disabled = false; b.textContent = '🧪 Test this key';
   });
@@ -1344,18 +1381,22 @@ async function _depParentMatchEdit(p, scan, step) {
     out.querySelectorAll('[data-pm-use]').forEach(u => u.addEventListener('click', () => {
       chosen = u.dataset.pmUse;
       const c = cands.find(x => x.name === chosen);
-      if (strategy === 'externalId' && !(c && c.ext)) { strategy = 'field'; const r = document.querySelector('input[name="dsPmStrat"][value="field"]'); if (r) r.checked = true; }
-      sel.innerHTML = optsHtml(); tgtLine();
+      // a suggestion is ONE field: it replaces whatever key was being built
+      if (strategy !== 'field' && !(strategy === 'externalId' && c && c.ext)) { strategy = 'field'; const r = document.querySelector('input[name="dsPmStrat"][value="field"]'); if (r) r.checked = true; }
+      more = [];
+      sel.innerHTML = optsHtml(); paintMore(); tgtLine();
       u.textContent = '✓ chosen';
     }));
     b.disabled = false; b.textContent = '💡 Suggestions';
   });
   eid('dsDepPmatchGo')?.addEventListener('click', async () => {
-    const field = chosen;
-    if (!field) return;
-    const c = cands.find(x => x.name === field);
-    if (c && !c.inTgt) return showToast(`${field} is not on ${step.refObj} in ${orgLabel(p.targetOrg)} — the parent could not be found by it there. Pick another field.`, 'error', 7000);
-    const n = sftkDeploySetParentMatchField(p.tree, step, field);
+    const key = keyNow();
+    if (!key[0]) return;
+    if (strategy === 'composite' && key.length < 2) return showToast('A composite key needs a second field — pick one, or choose Single field.', 'error', 6000);
+    const off = key.find(k => { const c = cands.find(x => x.name === k); return c && !c.inTgt; });
+    if (off) return showToast(`${off} is not on ${step.refObj} in ${orgLabel(p.targetOrg)} — the parent could not be found by it there. Pick another field.`, 'error', 7000);
+    const field = key.length > 1 ? key.join(' + ') : key[0];
+    const n = sftkDeploySetParentMatchField(p.tree, step, key.length > 1 ? key : key[0]);
     closeModal();
     if (!n) return showToast(`${step.refObj} is already matched by ${field}.`, 'info', 4000);
     if (!p.ephemeral) { const saved = _profiles.find(x => x.id === p.id); if (saved && saved !== p) saved.tree = p.tree; await storageSaveProfiles(); }
@@ -1373,6 +1414,7 @@ async function _depParentMatchEdit(p, scan, step) {
 async function _depPiiSuggest(p, recordsByObj, scope, more) {
   if (!p || typeof bldOpenPiiSuggestModal !== 'function') return;
   if (p.ephemeral) return showToast('Save this deployment first — the PII policy is part of it.', 'info', 5000);
+  if (window._sftkRunActive) return showToast('A run is in progress — change what is disguised when it has finished.', 'info', 5000);   // QA 2026-11-21: both PII buttons come through here
   if (typeof attachMeta === 'function') attachMeta(p.tree);
   const before = JSON.stringify(p.piiPolicy || {});
   const prevEditing = _editingProfile;
