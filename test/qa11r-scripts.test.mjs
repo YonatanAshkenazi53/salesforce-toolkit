@@ -8,14 +8,13 @@ const SCRIPTS = ['scripts/dev/video/sections.mjs', 'scripts/dev/live/screenshots
 const OPEN_FOLD = "const d = document.getElementById('flowDepsFold'); if (d && !d.open) d.querySelector('summary').click();";
 
 describe('the page the scripts drive', () => {
-  it('has no Dependencies view button; the map lives in a fold that draws it when opened', () => {
+  it('has no Dependencies view button and no Dependencies section (owner 2026-11-22)', () => {
     expect(HTML).not.toContain('data-view="deps"');
-    expect(HTML).toContain('<details class="flow-deps-fold" id="flowDepsFold">');
-    expect(HTML.indexOf('id="depTreeContainer"')).toBeGreaterThan(HTML.indexOf('id="flowDepsFold"'));
-    expect(POPUP).toContain("document.getElementById('flowDepsFold')?.addEventListener('toggle', e => { if (e.target.open) renderDependenciesTab(); });");
+    expect(HTML).not.toContain('flowDepsFold');
+    expect(HTML).not.toContain('id="depTreeContainer"');
   });
-  it('hides the map\'s own kind buttons in the fold and makes the map follow the kind tabs of the list', () => {
-    expect(CSS).toContain('.flow-deps-body .dep-filter-buttons { display: none; }');
+  it('keeps one row of kind tabs, on the list', () => {
+    expect(CSS).not.toContain('.flow-deps-body');
     expect(HTML).toContain('id="flowTypeFilter"');
     expect(HTML).toContain('class="flow-type-btn" data-ftype="RecordTriggeredFlow"');
     expect(HTML).toContain('data-ftype="all"');

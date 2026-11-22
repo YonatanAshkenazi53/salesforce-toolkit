@@ -2338,6 +2338,25 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 #tab-flows #backupTreeOpt { margin-left: 0 !important; }
 .flow-tree-btn { border-style: dashed; }
 /* Flows › Versions: a flow tree is a card (2026-11-08) — the same look as ⏻ Switches' .dep-fb-treebox */
+/* 2026-11-22: what the Dependencies view had, on the list — the what-uses search, the report, the rescan */
+.flow-dep-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex-shrink: 0; margin: 0 0 6px; }
+.flow-uses-input { flex: 1 1 320px; min-width: 200px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font-size: 12.5px; }
+.flow-uses-input:focus { outline: none; border-color: var(--brand); }
+.flow-dep-sp { flex: 0 0 8px; }
+.flow-uses-note { flex-shrink: 0; margin: 0 0 6px; padding: 6px 10px; border-radius: 6px; background: var(--brand-bg); color: var(--text); font-size: 12px; line-height: 1.5; }
+.flow-uses-warn { color: var(--warning, #DD7A01); font-weight: 600; }
+.flow-export-status { flex-shrink: 0; font-size: 11.5px; }
+.flow-export-status:empty { display: none; }
+.flow-dep-btn:hover { border-color: var(--brand); color: var(--brand); }
+.flow-uses-count { margin-left: 6px; padding: 0 6px; border-radius: 9px; background: var(--brand-bg); color: var(--brand); font-size: 11px; font-weight: 600; }
+.version-dates { color: var(--subtext); font-size: 11px; margin-left: 10px; white-space: nowrap; }
+/* 2026-11-22: the flows of managed packages, read-only, at the end of the Flows list */
+.flow-managed { margin: 8px 0 0; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+.flow-managed > summary { cursor: pointer; padding: 7px 11px; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.flow-managed-sub { font-weight: 400; color: var(--subtext); font-size: 11.5px; margin-left: 4px; }
+.flow-managed-row { display: flex; align-items: center; gap: 8px; padding: 6px 11px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text); }
+.flow-managed-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-managed-meta { margin-left: auto; color: var(--subtext); font-size: 11.5px; white-space: nowrap; }
 .flow-treebox { margin: 6px 8px; border: 1px solid var(--brand); border-radius: 8px; background: var(--card); overflow: hidden; }
 .flow-tree-hd { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 10px; font-size: 11.5px; background: var(--brand-bg); border-bottom: 1px solid var(--border-light); }
 .flow-tree-pick { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text); cursor: pointer; }
@@ -7638,14 +7657,8 @@ body.sftk-dark .fc-plan-way.on[data-kind="delete"] { background: #4a1b1f; color:
 .flow-type-btn.active { color: var(--brand); border-bottom-color: var(--brand); }
 .flow-type-btn.flow-type-none { opacity: .45; }
 .flow-kind-ico { flex: 0 0 auto; width: 18px; text-align: center; font-size: 12px; margin-right: 2px; }
-.flow-deps-fold { flex-shrink: 0; margin: 0 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
-.flow-deps-fold > summary { cursor: pointer; padding: 7px 11px; font-size: 12.5px; font-weight: 600; color: var(--text); }
-.flow-deps-sub { font-weight: 400; color: var(--subtext); font-size: 11.5px; margin-left: 6px; }
-.flow-deps-body { border-top: 1px solid var(--border); max-height: 46vh; overflow: auto; }
 
 /* Flows: the list's kind tabs are the page's only ones — the map's own are hidden in the fold (it follows the list) */
-.flow-deps-body .dep-filter-buttons { display: none; }
-.flow-deps-body .dep-filter-bar { justify-content: flex-end; border-bottom: 0; }
 /* Log viewer: text size sits at the right end of the filter row, with its name (owner 2026-11-21) */
 .adbg-log-cats { align-items: center; width: 100%; flex: 1 1 100%; box-sizing: border-box; }
 .adbg-log-cats .adbg-log-fontctl { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }

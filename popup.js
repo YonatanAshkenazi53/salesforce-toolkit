@@ -267,8 +267,8 @@ chrome.runtime?.onMessage?.addListener?.((msg, _sender, sendResponse) => {
 
 // Navigate to a feature tab — hides home view, highlights sidebar item.
 function navigateToTab(tabName) {
-  // One Flows page (user 2026-10-17): the old Dependencies tab is a view of it, so every deep link still lands.
-  if (tabName === 'dependencies') { navigateToTab('flows'); setFlowView('deps'); return; }
+  // The Dependencies view is gone (owner 2026-11-22); an old deep link lands on the Flows page.
+  if (tabName === 'dependencies') { navigateToTab('flows'); return; }
   document.getElementById('homeView').style.display = 'none';
   document.getElementById('homeBtn').style.display  = '';
   document.querySelector('.app-body')?.classList.remove('home-active');
@@ -1016,9 +1016,9 @@ async function loadFlows() {
     updateSelectionSummary();
 
     // 🔒 Managed-package flows are invisible to the Tooling query above; list
-    // them from the REST views so the Dependencies tab can show them (with
-    // their contents marked hidden). Fire-and-forget — the section paints
-    // itself when the read lands; a failure is disclosed on the section.
+    // them from the REST views so the Flows list can show them (with their
+    // contents marked hidden). Fire-and-forget — the list is drawn again when
+    // the read lands; a failure is said on the section.
     if (typeof DependencyMap.loadManagedFlows === 'function') {
       // The same read carries FlowDefinitionView.TriggerType for EVERY flow —
       // the scan-independent way to tell a record-triggered flow from a plain
@@ -1026,6 +1026,7 @@ async function loadFlows() {
       DependencyMap.loadManagedFlows(loadOrgUrl, loadSid)
         .then(() => {
           patchFlowTypesFromDefinitions(loadOrgUrl);
+          if (loadOrgUrl === orgUrl) renderFlowList();   // the 🔒 managed package flows, at the end of the list
           // The cached map paints before this list lands, so a managed
           // subflow target read "Not found" until something else repainted.
           if (loadOrgUrl === orgUrl && DependencyMap.treeStaleForManaged?.()
@@ -1197,8 +1198,8 @@ function showScanOfferBar(loadOrgUrl, loadSid) {
   note.className = 'scan-offer-note';
   note.style.cssText = 'font-size:11px;color:var(--subtext,#706E6B);display:block;margin-bottom:4px';
   note.textContent = st.done > 0
-    ? `Dependency scan covers ${st.done} of ${allFlows.length} flow versions. 🔗 subflow markers, flow types and the 🔗 Dependencies section cover only those — ${left.reads} version(s) left to read, ${left.calls} batched call(s) (${left.estLabel}).`
-    : `${allFlows.length} flow versions loaded. The dependency scan reads ${left.reads} of them in ${left.calls} batched API call(s) (${left.estLabel}) and has not been run, so 🔗 subflow markers, refined flow types and the 🔗 Dependencies section have no data yet.`;
+    ? `Dependency scan covers ${st.done} of ${allFlows.length} flow versions. 🔗 subflow markers, flow trees and flow types cover only those — ${left.reads} version(s) left to read, ${left.calls} batched call(s) (${left.estLabel}).`
+    : `${allFlows.length} flow versions loaded. The dependency scan reads ${left.reads} of them in ${left.calls} batched API call(s) (${left.estLabel}) and has not been run, so 🔗 subflow markers, flow trees and refined flow types have no data yet.`;
 
   const btn = document.createElement('button');
   btn.id = 'scanSubflowBtn';
@@ -1497,7 +1498,8 @@ function renderFlowList() {
   // the root, its callees nested with a twig per level, "tick the whole tree" in the header. The cards keep the
   // list's alphabetical order (by the root); a shared subflow nests under its triggered caller first.
   // label or API name (2026-11-05) — any label the flow's versions carry (QA 1.1 finding 51)
-  const hit = row => !search || row.labels.some(label => sftkFlowFilterHit(search, sftkFlowFilterKey(label, row.apiName)));
+  const usesHit = row => !_flowUses || row.versions.some(v => _flowUses.counts[v.Id]);
+  const hit = row => usesHit(row) && (!search || row.labels.some(label => sftkFlowFilterHit(search, sftkFlowFilterKey(label, row.apiName))));
   const trigMap = (typeof DependencyMap.getDefinitionTriggerMap === 'function' && DependencyMap.getDefinitionTriggerMap()) || {};
   const rows = sftkFlowListRows(flowGroups);
   // the kind picked on the tabs above the list; a tab whose kind is gone from the org falls back to All
@@ -1525,6 +1527,14 @@ function renderFlowList() {
     list.appendChild(buildTreeBox(bk, depMap));
   }
 
+  // 🔒 flows installed by managed packages, at the end of the list (owner 2026-11-22: "also we dont see package
+  // flows"). Read-only rows: Salesforce hides their contents and they cannot be deleted or backed up.
+  {
+    const mg = (typeof DependencyMap.getManagedFlows === 'function') ? DependencyMap.getManagedFlows() : null;
+    const shown = _flowUses ? [] : sftkManagedFlowsShown(mg, search, _flowTypeFilter, trigMap);   // their contents are hidden: a what-uses search cannot answer for them
+    if (shown.length) { visibleCount += shown.length; list.appendChild(buildManagedFlowsBox(shown, (mg || []).length)); }
+  }
+
   list.style.display = visibleCount > 0 ? '' : 'none';
   emptyState.style.display = visibleCount === 0 && sortedLabels.length > 0 ? '' : 'none';
   // a search that matches nothing says so — it is not an empty org (QA 2026-10-18)
@@ -1539,6 +1549,106 @@ function renderFlowList() {
     emptyState.style.display = '';
     emptyState.textContent = 'No flows found in this org.';
   }
+  _flowUsesPaint(rows.filter(usesHit).length, visibleCount);
+}
+
+// ── 🔎 What uses… on the list (owner 2026-11-22). The search the Dependencies view had, as a filter of this list:
+// the flows whose metadata mentions the term stay, each with its count, in their trees. ──
+let _flowUses = null;   // { term, counts: { flowVersionId: n } }
+// PURE. The line under the search: what was found, and how much of the org the answer covers.
+// cov: DependencyMap.searchCoverage() → { full, have, total } · managed: DependencyMap.managedCaveat()
+// → { text, warn } — warn is said in the warning colour ('' when the answer covers every flow that can be read)
+function sftkFlowUsesNote(term, nFlows, cov, managed) {
+  const n = Number(nFlows) || 0, c = cov || { full: true, have: 0, total: 0 };
+  const text = n
+    ? `${n.toLocaleString('en-US')} flow${n === 1 ? '' : 's'} mention${n === 1 ? 's' : ''} “${term}” — a literal match in the flow's metadata, capitals ignored.`
+    : (c.full ? `No flow that could be read mentions “${term}”.` : `No match for “${term}” in the flow versions that were read.`);
+  const bits = [];
+  if (!c.full) bits.push(`This search read the text of ${Number(c.have || 0).toLocaleString('en-US')} of ${Number(c.total || 0).toLocaleString('en-US')} flow versions; the others were not searched. ↻ Rescan reads them all.`);
+  if (managed) bits.push(`🔒 ${String(managed).charAt(0).toUpperCase()}${String(managed).slice(1)}.`);
+  return { text, warn: bits.join(' ') };
+}
+function _flowUsesPaint(nFlows, visible) {
+  const note = document.getElementById('flowUsesNote'), clear = document.getElementById('flowUsesClear');
+  if (clear) clear.style.display = _flowUses ? '' : 'none';
+  if (!note) return;
+  if (!_flowUses) { note.style.display = 'none'; note.textContent = ''; return; }
+  const r = sftkFlowUsesNote(_flowUses.term, nFlows, DependencyMap.searchCoverage(), DependencyMap.managedCaveat());
+  note.style.display = '';
+  note.textContent = r.text + (nFlows && !visible ? ' None of them is under this tab or this name filter.' : '');
+  if (r.warn) { const w = document.createElement('span'); w.className = 'flow-uses-warn'; w.textContent = ' ' + r.warn; note.appendChild(w); }
+  // an empty list under a what-uses search is said by the line above, not by the name filter's sentence
+  const es = document.getElementById('emptyState');
+  if (es && !visible && allFlows.length) { es.style.display = ''; es.textContent = nFlows ? 'No flow to show under this tab or this name filter.' : 'No flow to show.'; }
+}
+function runFlowUses() {
+  const term = (document.getElementById('flowUsesInput')?.value || '').trim();
+  if (!term) { _flowUses = null; renderFlowList(); return; }
+  const counts = {};
+  for (const h of (DependencyMap.searchReferences(term) || [])) counts[h.flowId] = h.count;
+  _flowUses = { term, counts };
+  renderFlowList();
+}
+function setupFlowDepTools() {
+  document.getElementById('flowUsesGo')?.addEventListener('click', runFlowUses);
+  document.getElementById('flowUsesInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') runFlowUses();
+    if (e.key === 'Escape') { e.target.value = ''; runFlowUses(); }
+  });
+  document.getElementById('flowUsesClear')?.addEventListener('click', () => { const i = document.getElementById('flowUsesInput'); if (i) i.value = ''; runFlowUses(); });
+  document.getElementById('flowExportBtn')?.addEventListener('click', () => {
+    if (!orgUrl) return;
+    DependencyMap.exportReport(orgUrl, document.getElementById('flowExportStatus'));
+  });
+  document.getElementById('flowRescanBtn')?.addEventListener('click', async e => {
+    const b = e.currentTarget, label = b.textContent;
+    b.disabled = true; b.textContent = '⏳ rescanning…';
+    try { await window.sftkRescanDependencies(); } finally { b.disabled = false; b.textContent = label; if (_flowUses) runFlowUses(); }
+  });
+}
+
+// PURE. The managed package flows the list shows under the search and the kind tab picked.
+// rows: DependencyMap.getManagedFlows() (null while unread) → [{ apiName, label, ns, kind, active, status, version, apiVersion }]
+function sftkManagedFlowsShown(rows, search, filter, trigMap) {
+  const term = String(search || '').toLowerCase().trim(), out = [];
+  for (const f of (rows || [])) {
+    if (!f || !f.apiName) continue;
+    const label = f.label || f.apiName;
+    if (term && !(String(label).toLowerCase().includes(term) || String(f.apiName).toLowerCase().includes(term))) continue;
+    const trig = trigMap && trigMap[f.apiName];
+    const kind = (typeof resolveFlowType === 'function' ? resolveFlowType(f.processType || '', trig) : (f.processType || '')) || '';
+    const tab = ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'].includes(kind) ? kind : 'other';
+    if (filter && filter !== 'all' && tab !== filter) continue;
+    const gov = f.active || f.latest || null;
+    const i = String(f.apiName).indexOf('__');
+    out.push({ apiName: f.apiName, label, ns: i > 0 ? String(f.apiName).slice(0, i) : '', kind, active: !!f.active,
+      status: f.active ? 'Active' : ((gov && gov.status) || 'Inactive'), version: gov ? gov.versionNumber : null, apiVersion: gov ? gov.apiVersion : null });
+  }
+  return out.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+}
+let _managedFlowsOpen = false;
+// The section itself: a fold, closed until asked for, one read-only row per flow.
+function buildManagedFlowsBox(shown, total) {
+  const box = document.createElement('details');
+  box.className = 'flow-managed';
+  box.open = _managedFlowsOpen || !!document.getElementById('searchInput').value.trim();
+  box.addEventListener('toggle', () => { _managedFlowsOpen = box.open; });
+  const sum = document.createElement('summary');
+  const n = shown.length;
+  sum.innerHTML = `🔒 Managed package flows <b>${n.toLocaleString('en-US')}</b>${n !== total ? ` <span class="flow-managed-sub">of ${Number(total).toLocaleString('en-US')}</span>` : ''} <span class="flow-managed-sub">installed by packages · Salesforce hides their contents, so they cannot be deleted, backed up or changed here</span>`;
+  box.appendChild(sum);
+  for (const f of shown) {
+    const row = document.createElement('div');
+    row.className = 'flow-managed-row';
+    const add = (cls, text, title) => { const s = document.createElement('span'); s.className = cls; s.textContent = text; if (title) s.title = title; row.appendChild(s); return s; };
+    add('flow-kind-ico', SFTK_FLOW_KIND_ICON[f.kind] || '•', humanProcessType(f.kind));
+    add('flow-managed-name', f.label, f.apiName);
+    if (f.ns) add('badge flow-managed-ns', f.ns, 'Namespace of the installed package');
+    add(`badge ${f.active ? 'badge-active' : 'badge-draft'}`, f.status);
+    add('flow-managed-meta', [f.version != null ? `v${f.version}` : '', f.apiVersion ? `API ${f.apiVersion}` : ''].filter(Boolean).join(' · '));
+    box.appendChild(row);
+  }
+  return box;
 }
 
 // One card for a flow tree: the header ticks every version of every flow in it (half-ticked when only some are),
@@ -1717,6 +1827,17 @@ function buildGroupElement(label, versions, depMap, o) {
   // "calls unknown", never "calls nothing".
   const callsChip = buildCallsChip(apiName, depMap);
   if (callsChip) groupInfo.appendChild(callsChip);
+  // 🧨 blast radius and ⛓ chain, of the version that governs the flow (the active one, or the newest): the two
+  // panels the Dependencies view opened on a right-click (owner 2026-11-22)
+  {
+    const gov = versions.find(v => v.Status === 'Active') || versions[0];
+    const tool = (text, title, run) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'flow-whole-btn flow-dep-btn'; b.textContent = text; b.title = title;
+      b.addEventListener('click', e => { e.stopPropagation(); run(); }); groupInfo.appendChild(b); };
+    if (gov && typeof DependencyMap.showBlastRadius === 'function') tool('🧨', `Blast radius of ${label} (v${gov.VersionNumber}): the objects, fields, subflows, Apex and labels it touches, who calls it, and what deleting or switching it off risks`, () => DependencyMap.showBlastRadius(gov));
+    if (gov && typeof DependencyMap.showChainPanel === 'function') tool('⛓', `Chain of ${label}: every flow it calls, down the whole tree, and every flow that calls it`, () => DependencyMap.showChainPanel(gov, orgUrl));
+    const uses = _flowUses ? versions.reduce((n, v) => n + (_flowUses.counts[v.Id] || 0), 0) : 0;
+    if (uses) { const c = document.createElement('span'); c.className = 'flow-uses-count'; c.textContent = `×${uses}`; c.title = `“${_flowUses.term}” is mentioned ${uses} time(s) in this flow's versions`; groupInfo.appendChild(c); }
+  }
 
   header.appendChild(checkbox);
   header.appendChild(toggleArrow);
@@ -1808,6 +1929,11 @@ function buildVersionRow(flow, allVersions, groupEl, depMap) {
   row.appendChild(vNum);
   row.appendChild(statusBadge);
   row.appendChild(processType);
+  {
+    const d = sftkFlowVersionDates(flow);
+    if (d) { const el = document.createElement('span'); el.className = 'version-dates'; el.textContent = d; row.appendChild(el); }
+    if (flow.ApiVersion) { const a = document.createElement('span'); a.className = 'version-dates'; a.textContent = `API ${flow.ApiVersion}`; a.title = 'The Salesforce API version this flow version is pinned to — compare and change it in ⚙ API versions'; row.appendChild(a); }
+  }
 
   // 🔗 icon if this specific version is called as a subflow
   if (depMap && (depMap[flow.ApiName] || []).length > 0) {
@@ -1820,6 +1946,14 @@ function buildVersionRow(flow, allVersions, groupEl, depMap) {
   }
 
   return row;
+}
+
+// PURE. "created 2026-10-07 by Dana · modified 2026-11-02 by Avi" for a version row; '' when the org gave no dates.
+function sftkFlowVersionDates(flow) {
+  const day = iso => { const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(iso || '')); return m ? m[1] : ''; };
+  const who = o => (o && o.Name) ? ` by ${o.Name}` : '';
+  const f = flow || {}, c = day(f.CreatedDate), m = day(f.LastModifiedDate);
+  return [c ? `created ${c}${who(f.CreatedBy)}` : '', m ? `modified ${m}${who(f.LastModifiedBy)}` : ''].filter(Boolean).join(' · ');
 }
 
 function renderVersionCheckboxes(groupEl, versions) {
@@ -2473,6 +2607,7 @@ function setupModeToggle() {
   document.querySelectorAll('#flowViews .flow-view-btn').forEach(btn => {
     btn.addEventListener('click', () => setFlowView(btn.dataset.view));
   });
+  setupFlowDepTools();
   // the kinds of flow, on the list
   document.querySelectorAll('#flowTypeFilter .flow-type-btn').forEach(btn => {
     btn.addEventListener('click', () => { _flowTypeFilter = btn.dataset.ftype || 'all'; renderFlowList(); _flowDepsFollowKind(); });
@@ -3544,6 +3679,9 @@ function initFlowAccessTab() {
 function renderDependenciesTab() {
   const container = document.getElementById('depTreeContainer');
   const noBanner  = document.getElementById('depNoDataBanner');
+  // 2026-11-22 (owner, on the 🔗 Dependencies fold of the Flows page: "this tab isn't needed."): the section is
+  // gone from the page, so there is nothing to draw. The scan stays — the list's 🔗 markers, kinds and trees read it.
+  if (!container || !noBanner) return;
 
   // Flows haven't been fetched yet — kick off the load automatically so the
   // user never has to visit the Flows tab first.

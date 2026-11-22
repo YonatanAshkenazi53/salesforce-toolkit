@@ -322,6 +322,13 @@ function renderBuilder() {
     const gq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
       query: `SELECT Id, Name, DeveloperName FROM Group WHERE Type = 'Queue' ORDER BY Name` });
     const queues = (gq && !gq.error && Array.isArray(gq.records)) ? gq.records : [];
+    // who "You" is today (owner 2026-11-22, seeing "You" and their own name in one list: "what is the different between
+    // you and jonathan ashkenazy? they are both the same users"): the user of the open session — said on both options
+    let me = null;
+    try {
+      const ui = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/oauth2/userinfo', _suppressError: true });
+      if (ui && !ui.error && ui.user_id) me = { id: String(ui.user_id), name: ui.name || '' };
+    } catch (_) { me = null; }
     const curAny = _editingProfile.ownerMapping?.fallbackUserId || '';
     const curIsQueue = /^00G/.test(curAny);
     const cur  = curIsQueue ? '' : curAny;   // the saved-USER checks below are about users only
@@ -343,10 +350,10 @@ function renderBuilder() {
     // select shows the truth instead of falling back to the placeholder.
     const pinned = saved.action === 'restore' && saved.user ? saved.user : null;
     const opt = u => `<option value="${esc(u.Id)}" data-name="${esc(u.Name)}"${u.Id === cur ? ' selected' : ''}>` +
-      `${esc(u.Name)}${u.Username ? ` (${esc(u.Username)})` : ''}${pinned && u.Id === pinned.Id ? ' — not in the list below' : ''}</option>`;
+      `${esc(u.Name)}${u.Username ? ` (${esc(u.Username)})` : ''}${bldOwnerIsMe(u.Id, me) ? ' — you today; stays this user whoever runs it' : ''}${pinned && u.Id === pinned.Id ? ' — not in the list below' : ''}</option>`;
     const qOpt = g => `<option value="${esc(g.Id)}" data-name="${esc(g.Name)} (queue)"${g.Id === curAny ? ' selected' : ''}>👥 ${esc(g.Name)}${g.DeveloperName && g.DeveloperName !== g.Name ? ` (${esc(g.DeveloperName)})` : ''}</option>`;
     const lostQueue = curIsQueue && !queues.some(g => g.Id === curAny);
-    sel.innerHTML = `<option value="">You — the user who runs the deployment</option>` +
+    sel.innerHTML = `<option value="">${esc(bldOwnerYouLabel(me))}</option>` +
       (lostQueue ? `<option value="${esc(curAny)}" data-name="${esc(_editingProfile.ownerMapping.fallbackUserName || 'saved queue')}" selected>${esc(_editingProfile.ownerMapping.fallbackUserName || 'saved queue')} — not found in this org</option>` : '') +
       `<optgroup label="Users">` + (pinned ? opt(pinned) : '') + list.shown.map(opt).join('') + `</optgroup>` +
       (queues.length ? `<optgroup label="Queues — used on the objects each queue takes">${queues.map(qOpt).join('')}</optgroup>` : '');
@@ -648,6 +655,15 @@ function bldSavedFallbackFromLookup(res) {
 // The one-line hint under the picker. Never claims a total it did not
 // measure, and never reports the saved user as missing on the strength of a
 // capped list alone.
+// PURE. "You" is whoever runs the deployment — a different person on another day; a user picked by name stays that
+// user. The option says who "You" is right now, so the two rows of the same person are told apart.
+function bldOwnerYouLabel(me) {
+  return 'You — the user who runs the deployment' + (me && me.name ? ` (today: ${me.name})` : '');
+}
+// PURE. Is this user the one of the open session? Ids are compared on their first 15 characters.
+function bldOwnerIsMe(userId, me) {
+  return !!(me && me.id && userId && String(userId).slice(0, 15) === String(me.id).slice(0, 15));
+}
 function bldOwnerFallbackHint(list, orgName, saved) {
   const group = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   const shownN = list && Array.isArray(list.shown) ? list.shown.length : 0;

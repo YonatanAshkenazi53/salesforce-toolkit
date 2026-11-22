@@ -79,7 +79,7 @@ describe('🗂 Versions: the search matches the API name too', () => {
   it('the list and Select All use the same key and rule as the panels', () => {
     // the list is cut into tree blocks since 2026-11-08; the same key and rule decide which rows a search keeps
     // a row carries every label its versions have (QA 1.1 finding 51: a flow renamed in a later version is one row)
-    expect(POP).toContain("const hit = row => !search || row.labels.some(label => sftkFlowFilterHit(search, sftkFlowFilterKey(label, row.apiName)));");
+    expect(POP).toContain("const hit = row => usesHit(row) && (!search || row.labels.some(label => sftkFlowFilterHit(search, sftkFlowFilterKey(label, row.apiName))));");
     expect(POP).toContain("if (search && !sftkFlowFilterHit(search, sftkFlowFilterKey(label, (versions[0] || {}).ApiName))) continue;");
     expect(POP).not.toContain('if (search && !label.toLowerCase().includes(search)) continue;');
     expect(POP).toContain('No flow name or API name matches');

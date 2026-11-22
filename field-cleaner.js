@@ -5274,8 +5274,6 @@ const FieldCleaner = (() => {
           <div class="fc-flow-head">
             <span class="fc-item-name">${esc(c.name)}</span>
             <span class="fc-item-btns">
-              ${xlinkHtml('dependencies', '↗ Deps',
-                "Map this flow's subflow call chain in the 🔗 Dependencies section of the Flows page before trimming it")}
               <button class="btn btn-sm fc-inspect-btn" title="View the XML of ${esc(seen)}"
                       data-id="${esc(id)}" data-type="Flow">🔍</button>
               <span class="${c.pb ? 'fc-del-pair' : 'fc-fix-pair'}" data-id="${esc(id)}" data-type="Flow" data-name="${esc(c.name)}">${_fixBtnsHtml('Flow', id, c.name)}</span>

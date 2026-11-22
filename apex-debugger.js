@@ -812,7 +812,7 @@ const ApexDebugger = (() => {
         <!-- ── Split: list | detail ───────────────── -->
         <div class="adbg-split">
           <div class="adbg-log-list" id="adbgLogList">
-            <div class="adbg-list-ph">${sftkCatSm('Loading logs…')}</div>
+            <div class="adbg-list-ph">${sftkCat('Loading logs…')}</div>
           </div>
           <div class="adbg-detail" id="adbgDetail">
             <div class="adbg-detail-empty">
@@ -1484,7 +1484,7 @@ const ApexDebugger = (() => {
   async function _loadLogs() {
     const listEl = document.getElementById('adbgLogList');
     if (!listEl) return;
-    listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCatSm('Loading…') + '</div>';
+    listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCat('Loading logs…') + '</div>'   // the full cat: the list is a wide, tall pane (owner 2026-11-22: "the kitty when loading debug logs is too small");
 
     // List view shows ALL logs in the org. The user picker drives trace-flag
     // management (Start Trace), not log filtering.
@@ -2329,13 +2329,6 @@ const ApexDebugger = (() => {
                     ${r.depth > 0
                         ? `and triggered <em>itself</em> while already running (nesting depth: ${r.depth})`
                         : `in a single transaction — possible cascade loop`}
-                    ${r.type === 'flow'
-                        // C5b: "flow A updates X which re-triggers flow B" is
-                        // exactly the what-references-what question the
-                        // Dependencies tab answers.
-                        ? _xlink('dependencies', 'Deps',
-                            'Map which flows call or re-trigger this one in the Dependencies section of the Flows page')
-                        : ''}
                   </div>`).join('')}
               </div>
             </div>
@@ -2354,14 +2347,13 @@ const ApexDebugger = (() => {
                 ${info.faulted   ? '<span class="adbg-tag-fault"><span class="adbg-i" data-i="warn" aria-hidden="true"></span>Fault</span>'  : ''}
                 ${info.recursed  ? '<span class="adbg-tag-loop">LOOP</span>'       : ''}
                 ${
-                  // C5b: jump links. Deps for every flow (call-chain map);
+                  // C5b: jump links (the Deps link went with the Dependencies fold, 2026-11-22).
                   // Flow Access only for flows that could be screen flows —
                   // that tab manages Screen Flows only, so a RECORD-TRIGGERED
                   // flow would just dead-end into an empty filter; Flows
                   // (version cleaner) for faulted flows, where remediation
                   // (inspect versions / deactivate a bad one) lives.
-                  _xlink('dependencies', 'Deps',
-                    "Map this flow's subflow call chain — and what re-triggers it — in the Dependencies section of the Flows page")}
+                  ''}
                 ${!info.recordTriggered
                   ? _xlink('flow-access', 'Access',
                       'See who can run this flow in the Flow Access tool (screen flows only) — list prefiltered to this name', name)
@@ -3410,7 +3402,7 @@ const ApexDebugger = (() => {
     // Deletes run one-by-one and can far exceed the 200 listed — show a busy
     // cat in the list plus a live n/N counter so it never looks frozen.
     const listEl = document.getElementById('adbgLogList');
-    if (listEl) listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCatSm('Purging old logs…') + '</div>';
+    if (listEl) listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCat('Purging old logs…') + '</div>';
     const cnt = document.getElementById('adbgLogCount');
     let failed = 0, firstErr = null;
     const results = await _deleteApexLogsVerified(ids, (done, total) => {
@@ -3652,7 +3644,7 @@ const ApexDebugger = (() => {
     // Up to 200 sequential deletes (30+ seconds) — busy cat in the list body
     // plus a live n/N counter in the count span.
     const listEl = document.getElementById('adbgLogList');
-    if (listEl) listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCatSm('Deleting logs…') + '</div>';
+    if (listEl) listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCat('Deleting logs…') + '</div>';
     const cnt = document.getElementById('adbgLogCount');
     // Per-record results ARE checked (QA 2026-07-27): rows whose delete
     // failed stay in the list instead of vanishing while the org keeps them.

@@ -66,7 +66,7 @@ describe('the engine and the Builder', () => {
   });
   it('one picker: you, the target’s users, the target’s queues', () => {
     expect(BL).toContain('<span class="ds-builder-owner-fb-lbl">2. Only when that finds no one, give the record to</span>');
-    expect(BL).toContain('<option value="">You — the user who runs the deployment</option>');
+    expect(BL).toContain('<option value="">${esc(bldOwnerYouLabel(me))}</option>');
     expect(BL).toContain('<optgroup label="Users">');
     expect(BL).toContain('<optgroup label="Queues — used on the objects each queue takes">');
     expect(BL).toContain("query: `SELECT Id, Name, DeveloperName FROM Group WHERE Type = 'Queue' ORDER BY Name`");

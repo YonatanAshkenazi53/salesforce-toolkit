@@ -11,19 +11,19 @@ const MAN = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url)
 // User 2026-10-17: "merge the page of flows and dependencies into a one page with all the features … add an
 // option to delete flows or flows with versions … along with failed interview and rollback".
 describe('one Flows page', () => {
-  it('the Dependencies tab is gone from the sidebar; its containers live inside the Flows tab', () => {
+  it('the Dependencies tab is gone from the sidebar, and its section from the Flows tab (owner 2026-11-22)', () => {
     expect(HTML).not.toContain('data-tab="dependencies"');
     const flows = HTML.indexOf('id="tab-flows"'), deps = HTML.indexOf('id="tab-dependencies"'), next = HTML.indexOf('id="tab-debugger"');
     expect(flows).toBeGreaterThan(0); expect(deps).toBeGreaterThan(flows); expect(next).toBeGreaterThan(deps);
     expect(HTML).toContain('<div id="tab-dependencies" class="flow-view" style="display:none">');   // not a tab-content: navigateToTab leaves it alone
-    expect(HTML).toContain('id="depTreeContainer"');
+    expect(HTML).not.toContain('id="depTreeContainer"');
     expect(HTML).not.toContain('data-view="deps"');   // 2026-11-21: the dependency map is a fold of the Flows view
     for (const v of ['versions', 'switches', 'apiver']) expect(HTML).toContain(`class="flow-view-btn${v === 'versions' ? ' active' : ''}" data-view="${v}"`);
     expect(HTML).toContain('<script src="sftk-flowinterviews.js"></script>');
     expect(readFileSync(new URL('../styles.css', import.meta.url), 'utf8')).toContain('.flow-views { margin-bottom: 8px; flex-shrink: 0; }');
   });
-  it('every deep link to the old tab lands on the Flows page, Dependencies view', () => {
-    expect(PJ).toContain("if (tabName === 'dependencies') { navigateToTab('flows'); setFlowView('deps'); return; }");
+  it('every deep link to the old tab lands on the Flows page', () => {
+    expect(PJ).toContain("if (tabName === 'dependencies') { navigateToTab('flows'); return; }");
     expect(PJ).not.toContain("id: 'dependencies',\n    i: 'share',");
     expect(PJ).toContain("ids: ['flows', 'debugger']");
     expect(PJ).toContain("else if (v === 'switches') DependencyMap.renderSwitchesPanel(host, orgUrl, sid);");

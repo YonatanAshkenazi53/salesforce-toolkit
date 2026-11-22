@@ -36,14 +36,12 @@ describe('the kind of a flow', () => {
 });
 
 describe('one Flows view', () => {
-  it('three views; the kind tabs sit on the list; the dependency map is a fold of it', () => {
+  it('three views; the kind tabs sit on the list; the Dependencies section is gone (owner 2026-11-22)', () => {
     expect(HTML).toContain('data-view="versions" role="tab" aria-selected="true"');
     expect(HTML).toContain('>🗂 Flows</button>');
     expect(HTML).not.toContain('data-view="deps"');
     for (const k of ['all', 'RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow', 'other']) expect(HTML).toContain(`data-ftype="${k}"`);
-    const fold = HTML.indexOf('<details class="flow-deps-fold" id="flowDepsFold">'), list = HTML.indexOf('id="flowViewVersions"'), end = HTML.indexOf('<!-- /flowViewVersions -->');
-    expect(fold).toBeGreaterThan(list); expect(fold).toBeLessThan(end);
-    expect(HTML.indexOf('id="depTreeContainer"')).toBeGreaterThan(fold); expect(HTML.indexOf('id="depTreeContainer"')).toBeLessThan(end);
+    expect(HTML).not.toContain('flowDepsFold'); expect(HTML).not.toContain('id="depTreeContainer"');
   });
   it('a tree is shown whole when one of its flows is of the kind picked; a kind gone from the org falls back to All', () => {
     expect(PJ).toContain("const kindHit = row => _flowTypeFilter === 'all' || sftkFlowKindTab(sftkFlowKindOfRow(row, trigMap)) === _flowTypeFilter;");
@@ -57,9 +55,9 @@ describe('one Flows view', () => {
     expect(PJ).not.toContain("getElementById('tab-dependencies').style.display !== 'none'");
     expect(PJ).toContain("document.getElementById('flowDepsFold')?.addEventListener('toggle', e => { if (e.target.open) renderDependenciesTab(); });");
   });
-  it('one row of kind tabs: the map’s own are hidden in the fold and it follows the list', () => {
-    expect(CSS).toContain('.flow-deps-body .dep-filter-buttons { display: none; }');
-    expect(PJ).toContain("const btn = [...document.querySelectorAll('#depTreeContainer .dep-filter-btn')].find(b => b.dataset.type === want);");
+  it('one row of kind tabs; the fold of the dependency map is gone (owner 2026-11-22)', () => {
+    expect(CSS).not.toContain('.flow-deps-fold');
+    expect(CSS).not.toContain('.flow-deps-body');
   });
   it('each flow names its kind with an icon and a hover text', () => {
     expect(PJ).toContain("ico.className = 'flow-kind-ico';");
