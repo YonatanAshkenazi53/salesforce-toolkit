@@ -6425,6 +6425,10 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-amb-col { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface); min-width: 0; }
 .ds-amb-col-tgt { border-color: var(--brand); }
 .ds-amb-collbl { font-size: 12px; margin-bottom: 4px; }
+/* 2026-11-22: which side an org is, said beside its name wherever the tab names it */
+.ds-role { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; line-height: 1.5; vertical-align: 1px; border: 1px solid currentColor; white-space: nowrap; }
+.ds-role-src { color: var(--c-warn-fg); }
+.ds-role-tgt { color: var(--brand); }
 .ds-amb-rec { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 3px 0; font-size: 12px; }
 .ds-amb-letter { font-weight: 700; min-width: 18px; color: var(--c-warn-fg); }
 .ds-amb-colfoot { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; }

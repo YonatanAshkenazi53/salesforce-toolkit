@@ -643,13 +643,13 @@ async function renderDeploy() {
   if (scan.dupKeys?.rows) notes.push(sftkRecDupsHtml(scan, p));
   // Phase 5 — the ambiguous copies are listed, not guessed: say where.
   { const nAmb = (scan.ambiguous || []).length;
-    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString('en-US')} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record${nAmb === 1 ? '' : 's'} need${nAmb === 1 ? 's' : ''} a decision</b> — more than one record carries the same name, and the scan does not guess. Nothing is deployed for them until it is settled: <button class="ds-btn ds-btn-xs" data-dep-tab-go="amb" title="Opens the ⚠ Needs a decision tab below">⚠ Open Needs a decision</button> — 🔀 merge copies of the same record, or say per record 📌 which ${esc(orgLabel(p.targetOrg))} record it is, or ➕ that it is new there.`); }
+    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString('en-US')} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record${nAmb === 1 ? '' : 's'} need${nAmb === 1 ? 's' : ''} a decision</b> — more than one record carries the same name, and the scan does not guess. Nothing is deployed for them until it is settled: <button class="ds-btn ds-btn-xs" data-dep-tab-go="amb" title="Opens the ⚠ Needs a decision tab below">⚠ Open Needs a decision</button> — 🔀 merge copies of the same record, or say per record 📌 which record in the target ${esc(orgLabel(p.targetOrg))} it is, or ➕ that it is new there.`); }
   // child objects: the same card, without the root's fix buttons (they act on the root's key)
   for (const [pk, cs] of Object.entries(scan.children || {})) {
     if (!cs || !cs.dupKeys || !cs.dupKeys.rows) continue;
     const node = getNodeByPath(p.tree, pk);
     const obj = node ? (node.objectType || node.childSObject) : pk;
-    const card = sftkRecDupsHtml(cs, { ...p, tree: node || p.tree }, obj).replace(/<button[^>]*data-rec-dupfix[^>]*>[\s\S]*?<\/button>/g, '');
+    const card = sftkRecDupsHtml(cs, { ...p, tree: node || p.tree }, obj, pk).replace(/<button[^>]*data-rec-dupfix[^>]*>[\s\S]*?<\/button>/g, '');
     if (card) notes.push(`<div class="ds-dep-childdup">${card}</div>`);
   }
   if (scan.nearMisses) notes.push(`≈ ${scan.nearMisses} record pair(s) almost matched — keys differ only by whitespace or case (marked ≈ on the rows).`);
@@ -1490,8 +1490,14 @@ async function _depOpenMatching(p, pathKey) {
 //   • duplicates — this tab decides which record IS which; it never deletes.
 //     The copy that is left over is then listed under 🔵 Only in the target,
 //     where deleting it is already offered. The intro says so.
+// 2026-11-22 (owner, on the Needs-a-decision tab: "here we show the org names. but we dont say who is the source and
+// who is the target which is an important info"): two org names can differ by a few characters in the middle, so
+// wherever this tab names an org it says which side it is. Three forms of one thing: the chip for HTML, the escaped
+// words for an attribute, the raw words for text that is escaped later (an <option>).
+// Each function below carries its own `role` — they are loaded one by one by the tests.
 function _depAmbIntro(p, isRoot, s) {
-  const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
+  const role = (org, side) => `<span class="ds-role ds-role-${side}">${side === 'src' ? 'source' : 'target'}</span> ${esc(orgLabel(org))}`;
+  const srcL = role(p.sourceOrg, 'src'), tgtL = role(p.targetOrg, 'tgt');
   const adv = (s && s.ambiguousAdvice && s.ambiguousAdvice[0]) || null;
   const nSug = ((s && s.ambiguous) || []).filter(r => r && r.suggest).length;
   if (!isRoot) return `<div class="ds-dep-note ds-dep-amb-intro">
@@ -1520,7 +1526,9 @@ function _depAmbIntro(p, isRoot, s) {
 // screen; memOf(r) = the answer already remembered ('' when none).
 const SFTK_AMB_RADIO_MAX = 6;   // more candidates than this: a dropdown, same sentences
 function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
-  const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
+  const role = (org, side) => `<span class="ds-role ds-role-${side}">${side === 'src' ? 'source' : 'target'}</span> ${esc(orgLabel(org))}`;
+  const srcL = role(p.sourceOrg, 'src'), tgtL = role(p.targetOrg, 'tgt');
+  const srcT = esc('source ' + orgLabel(p.sourceOrg)), tgtT = esc('target ' + orgLabel(p.targetOrg));
   const candTell = (s && s.ambiguousCand) || {};
   const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
   const tellText = tell => (tell || []).filter(x => x && x[1] !== '').map(x => `${x[0]}: ${x[1]}`).join(' · ');
@@ -1546,23 +1554,23 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
     const sameNote = '<span class="ds-dep-muted">they agree on every compared field — they look like the same record</span>';
     const srcMerge = nSrc > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="src" data-dep-amb-key="${esc(k)}" title="${mergeTitle}">🔀 Merge the ${nSrc} copies in ${srcL}</button>${sameSrc ? sameNote : ''}` : oneRec;
     const tgtMerge = cands.length > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="tgt" data-dep-amb-key="${esc(k)}" title="${mergeTitle}">🔀 Merge the ${cands.length} copies in ${tgtL}</button>${sameTgt ? sameNote : ''}` : oneRec;
-    const bothMerge = nSrc > 1 && cands.length > 1 ? `<div class="ds-amb-both"><button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="both" data-dep-amb-key="${esc(k)}" title="First the ${srcL} copies, then the ${tgtL} copies — each with its own picker and confirmation; both orgs are read again once at the end.">🔀 Merge both sides</button></div>` : '';
-    const srcCol = `<div class="ds-amb-col ds-amb-col-src"><div class="ds-amb-collbl"><b>${srcL}</b> <span class="ds-dep-muted">source · ${nSrc} record${nSrc === 1 ? '' : 's'} of this name</span></div>
-        ${rs.map((r, ri) => `<div class="ds-amb-rec"><span class="ds-amb-letter">${letter(ri)}</span>${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a></div>`).join('')}
+    const bothMerge = nSrc > 1 && cands.length > 1 ? `<div class="ds-amb-both"><button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="both" data-dep-amb-key="${esc(k)}" title="First the ${srcT} copies, then the ${tgtT} copies — each with its own picker and confirmation; both orgs are read again once at the end.">🔀 Merge both sides</button></div>` : '';
+    const srcCol = `<div class="ds-amb-col ds-amb-col-src"><div class="ds-amb-collbl"><b>${srcL}</b> <span class="ds-dep-muted">${nSrc} record${nSrc === 1 ? '' : 's'} of this name</span></div>
+        ${rs.map((r, ri) => `<div class="ds-amb-rec"><span class="ds-amb-letter">${letter(ri)}</span>${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this record in the ${srcT}">open ↗</a></div>`).join('')}
         <div class="ds-amb-colfoot">${srcMerge}</div></div>`;
-    const tgtCol = `<div class="ds-amb-col ds-amb-col-tgt"><div class="ds-amb-collbl"><b>${tgtL}</b> <span class="ds-dep-muted">target · ${cands.length} record${cands.length === 1 ? '' : 's'} of this name</span></div>
-        ${cands.map((t, i) => `<div class="ds-amb-rec"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('') || '<div class="ds-amb-rec ds-dep-muted">no record of this name</div>'}
+    const tgtCol = `<div class="ds-amb-col ds-amb-col-tgt"><div class="ds-amb-collbl"><b>${tgtL}</b> <span class="ds-dep-muted">${cands.length} record${cands.length === 1 ? '' : 's'} of this name</span></div>
+        ${cands.map((t, i) => `<div class="ds-amb-rec"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this record in the ${tgtT}">open ↗</a></div>`).join('') || '<div class="ds-amb-rec ds-dep-muted">no record of this name</div>'}
         <div class="ds-amb-colfoot">${tgtMerge}</div></div>`;
     // every answer as one plain sentence (user 2026-10-27 on the grid: "i dont understand this part at all" —
     // one line per source copy: the copy, then what it IS in the target, chosen from sentences)
     const answers = r => [
-      ...cands.map((t, i) => ({ v: t, text: `the same record as #${i + 1} in ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}${r.suggest === t ? ` — suggested: same ${r.suggestBy || 'value'}` : ''}` })),
-      { v: '__new__', text: `a new record — not in ${orgLabel(p.targetOrg)} yet, create it there` },
+      ...cands.map((t, i) => ({ v: t, text: `the same record as #${i + 1} in the target ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}${r.suggest === t ? ` — suggested: same ${r.suggestBy || 'value'}` : ''}` })),
+      { v: '__new__', text: `a new record — not in the target ${orgLabel(p.targetOrg)} yet, create it there` },
       { v: '', text: 'not decided yet — it stays out of the deployment' },
     ];
-    const question = `For each ${srcL} copy, say what it is in ${tgtL}:`;
+    const question = `For each copy in ${srcL}, say what it is in ${tgtL}:`;
     const matrix = `<div class="ds-amb-mx-q">${question}</div>${rs.map((r, ri) => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src${pick ? ' ds-amb-src-on' : ''}"><span class="ds-amb-letter">${letter(ri)}</span>${chips(r.tell)}<span class="ds-amb-is">is</span>
-          <select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="What this ${srcL} copy is in ${tgtL}">
+          <select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="What this copy from the ${srcT} is in the ${tgtT}">
             ${[ans[ans.length - 1], ...ans.slice(0, -1)].map(a => `<option value="${esc(a.v)}" ${pick === a.v ? 'selected' : ''}>${esc(a.text)}</option>`).join('')}
           </select>${r.suggest ? '<span class="ds-amb-mx-sug" title="One compared field has the same value in both — a suggestion, not a decision">💡 suggested</span>' : ''}</div>`; }).join('')}`;
     html += `<div class="ds-amb-group">
@@ -1571,7 +1579,7 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
         <button class="ds-btn ds-btn-xs" data-dep-amb-one="${esc(k)}" ${pending ? '' : 'disabled'} title="Remember the answers of this name now. Both orgs are read again later, once.">📌 Apply this one</button></div>
       <div class="ds-amb-cols">${srcCol}${tgtCol}</div>${bothMerge}
       ${nSrc > 1 || cands.length > 1
-        ? `<details class="ds-amb-match ds-amb-match-fold"${pending && rs.some(r => pickOf(r)) ? ' open' : ''}><summary>Not copies but different records that share a name? <span class="ds-dep-muted">Say which ${tgtL} record each ${srcL} one is — or merge above and skip this.</span></summary>${matrix}</details>`
+        ? `<details class="ds-amb-match ds-amb-match-fold"${pending && rs.some(r => pickOf(r)) ? ' open' : ''}><summary>Not copies but different records that share a name? <span class="ds-dep-muted">Say which record in ${tgtL} each record in ${srcL} is — or merge above and skip this.</span></summary>${matrix}</details>`
         : `<div class="ds-amb-match">${matrix}</div>`}
     </div>`;
   }
@@ -1617,7 +1625,8 @@ function sftkDepOneSidedDups(scan, keyOf) {
 function _depOneSidedHtml(p, groups, total) {
   if (!groups.length) return '';
   const pairsCut = groups.some(g => g.pairsCut);
-  const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
+  const role = (org, side) => `<span class="ds-role ds-role-${side}">${side === 'src' ? 'source' : 'target'}</span> ${esc(orgLabel(org))}`;
+  const srcL = role(p.sourceOrg, 'src'), tgtL = role(p.targetOrg, 'tgt');
   const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
   const mergeTitle = 'Merge these records into one: you choose which one stays and which values it keeps; the others are merged into it and deleted.';
   const row = g => {
@@ -1696,11 +1705,11 @@ function _depGoOrigin(p) {
 }
 
 function _depWireChrome(p) {
-  // a note that points at a tab opens it (the ⚠ Needs a decision note, 2026-10-25). Both notes that carry the
-  // button are about the ROOT object (a child's card has none), so it opens the root's tab whichever object the
-  // records panel shows — the tab buttons carry no object, and a click on one kept a child selected (QA 1.1 regression #16).
+  // a note that points at a tab opens it (the ⚠ Needs a decision note, 2026-10-25). A note about the ROOT object
+  // carries no object and opens the root's tab whichever object the records panel shows; a child's card names its
+  // own object (data-dep-tab-obj, 2026-11-22) — the tab buttons carry no object, and a click on one kept a child selected (QA 1.1 regression #16).
   document.querySelectorAll('[data-dep-tab-go]').forEach(b => b.addEventListener('click', () => {
-    _depObjPath = ''; _depTab = b.dataset.depTabGo; _depFilter = '';
+    _depObjPath = b.dataset.depTabObj || ''; _depTab = b.dataset.depTabGo; _depFilter = '';
     renderDeploy().then(() => eid('dsDepRecords')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
   }));
   eid('dsDepBack')?.addEventListener('click', () => { _currentView = 'profiles'; renderProfiles(); });
@@ -1723,7 +1732,7 @@ function _depWireChrome(p) {
 // to the caller (🔀 Merge both sides reads both orgs once, after the second merge).
 async function _depMergeCopies(p, side, name, ids, opts = {}) {
   const orgUrl = side === 'src' ? p.sourceOrg : p.targetOrg;
-  const obj = (p.tree && p.tree.objectType) || '';
+  const obj = opts.obj || (p.tree && p.tree.objectType) || '';   // opts.obj: a child object of the deployment
   const uniq = [...new Set((ids || []).filter(Boolean))];
   if (!obj || uniq.length < 2) { showToast('Nothing to merge: this name has one record on that side.', 'info', 5000); return null; }
   if (!uniq.every(sftkMergeIdOk)) { showToast('These records could not be merged: an id is not a Salesforce id.', 'error', 6000); return null; }
@@ -2013,7 +2022,9 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const ambMem = r => { const v = ambMemNow()[r.sourceId]; return v === SFTK_MEM_NEW ? '__new__' : (v && (r.candidates || []).includes(v) ? v : ''); };
   const ambPick = r => _depAmbPick.has(r.sourceId) ? _depAmbPick.get(r.sourceId) : (ambMem(r) || r.suggest || '');
   const ambRoot = tabDef.k === 'amb' && isRoot;
-  const oneSidedAll = ambRoot ? sftkDepOneSidedDups(s, key).filter(g => !q || g.name.toLowerCase().includes(q)) : [];
+  // 2026-11-22 (owner, on a Contact name held twice: "we dont see it in the needs a decision for the contact object"):
+  // a child object's names that one org holds more than once are listed on its own tab too, with the merge
+  const oneSidedAll = tabDef.k === 'amb' ? sftkDepOneSidedDups(s, key).filter(g => !q || g.name.toLowerCase().includes(q)) : [];
   if (oneSidedAll.length && ['changed', 'identical'].some(b => sftkScanBucketInfo(s, b).capped)) oneSidedAll.forEach(g => { g.pairsCut = true; });
   const oneSided = oneSidedAll.slice(0, 50);
   if (wkey !== _depWindowKey) { _depWindowKey = wkey; _depWindow = SFTK_DEPLOY_WINDOW; }
@@ -2078,7 +2089,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       // a child object's ambiguous rows (the root object uses _depAmbGroupsHtml)
       const cands = r.candidates || [];
       const nSrc = (r.twins || []).length + 1, srcL = orgLabel(p.sourceOrg), tgtL = orgLabel(p.targetOrg);
-      extra = `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="${nSrc} record(s) in ${esc(srcL)} and ${cands.length} in ${esc(tgtL)} carry this name — the name alone cannot say which is which.">${nSrc > 1 ? `${nSrc} with this name in ${esc(srcL)} · ` : ''}${cands.length} with this name in ${esc(tgtL)}</span>`;
+      extra = `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="${nSrc} record(s) in the source ${esc(srcL)} and ${cands.length} in the target ${esc(tgtL)} carry this name — the name alone cannot say which is which.">${nSrc > 1 ? `${nSrc} with this name in the source ${esc(srcL)} · ` : ''}${cands.length} with this name in the target ${esc(tgtL)}</span>`;
       tail = `<span class="ds-rec-pnote" title="Choosing by hand works for the first object of the deployment only. A child object needs a second match field so its records can be told apart by more than the name.">cannot be chosen by hand for a child object — add a second match field (✏ Edit → Records → Matching)</span>`;
     } else {
       extra = r.personAccount ? '<span class="ds-rec-pnote" title="The Contact behind a Person Account — Salesforce creates and owns it.">👤 person account</span>' : '';
@@ -2100,7 +2111,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   host.innerHTML = `
     <div class="ds-dep-tools">
       <input type="search" id="dsDepFilter" class="ds-dep-filter" placeholder="🔍 filter by name${isRoot ? '' : ' or parent'}…" value="${esc(_depFilter)}" aria-label="Filter records">
-      <span>${esc(sftkDeployCountLabel(info.shown, info.total, info.capped, info.totalIsFloor))} ${esc(cur.obj)} ${esc(tabDef.noun)}${info.capped ? ` — the first ${Number(info.shown || 0).toLocaleString('en-US')} are listed here` : ''}</span>
+      <span>${tabDef.k === 'amb' && !all.length && oneSidedAll.length ? `No ${esc(cur.obj)} waits for a decision · ${oneSidedAll.length.toLocaleString('en-US')} name${oneSidedAll.length === 1 ? '' : 's'} with copies to merge, below` : `${esc(sftkDeployCountLabel(info.shown, info.total, info.capped, info.totalIsFloor))} ${esc(cur.obj)} ${esc(tabDef.noun)}`}${info.capped ? ` — the first ${Number(info.shown || 0).toLocaleString('en-US')} are listed here` : ''}</span>
       <span class="ds-dep-sp"></span>${bulk}${ambRoot && rows.length ? `<button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepAmbApply" disabled>📌 Apply</button>` : ''}
     </div>
     ${info.capped ? `<div class="ds-dep-note">⚠ This list is truncated — ${tabDef.k === 'same'
@@ -2197,7 +2208,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   // 🔀 the copies of one name, on the side that holds more than one, merged into one record
   host.querySelectorAll('[data-dep-dup-merge]').forEach(b => b.addEventListener('click', () => {
     const g = oneSidedAll.find(x => x.side === b.dataset.depDupMerge && x.name === b.dataset.depDupKey);
-    if (g) _depMergeCopies(p, g.side, g.name, g.ids);   // its own picker and confirmation; both orgs are read again after it
+    if (g) _depMergeCopies(p, g.side, g.name, g.ids, isRoot ? {} : { obj: cur.obj });   // its own picker and confirmation; both orgs are read again after it
   }));
   host.querySelectorAll('[data-dep-amb-merge]').forEach(b => b.addEventListener('click', async () => {
     const side = b.dataset.depAmbMerge, name = b.dataset.depAmbKey;

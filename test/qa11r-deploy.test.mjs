@@ -39,9 +39,9 @@ describe('#8 — a one-sided name with a copy that is already paired', () => {
   const p = { sourceOrg: 'SRC', targetOrg: 'TGT' };
   it('the line of such a name does not say the other org has none', () => {
     const html = draw()(p, dups(scan, key), 3);
-    expect(html).toContain('<b>2 copies in SRC</b> have no pair in TGT — a run creates all 2 there, beside the 1 of this name already paired.');
-    expect(html).toContain('<b>2 copies in TGT</b> have no pair in SRC — a run leaves them as they are. 2 of this name are already paired.');
-    expect(html).toContain('<b>2 copies in SRC</b>, none in TGT — a run creates all 2 there.');   // "Lone": nothing paired, the old line is true
+    expect(html).toContain('<b>2 copies in <span class="ds-role ds-role-src">source</span> SRC</b> have no pair in <span class="ds-role ds-role-tgt">target</span> TGT — a run creates all 2 there, beside the 1 of this name already paired.');
+    expect(html).toContain('<b>2 copies in <span class="ds-role ds-role-tgt">target</span> TGT</b> have no pair in <span class="ds-role ds-role-src">source</span> SRC — a run leaves them as they are. 2 of this name are already paired.');
+    expect(html).toContain('<b>2 copies in <span class="ds-role ds-role-src">source</span> SRC</b>, none in <span class="ds-role ds-role-tgt">target</span> TGT — a run creates all 2 there.');   // "Lone": nothing paired, the old line is true
     expect(html).not.toContain('the other org has no record of the name');
     expect(html).toContain('There is nothing to decide here: the other org has no unpaired record of the name.');
     expect(html).not.toContain('that only one org holds, more than once');
@@ -53,8 +53,8 @@ describe('#8 — a one-sided name with a copy that is already paired', () => {
   it('with nothing paired and the whole list on screen, the sentences are the ones there before', () => {
     const html = draw()(p, [{ name: 'Lone', side: 'src', ids: ['l1', 'l2'] }, { name: 'Gone', side: 'tgt', ids: ['g1', 'g2'] }], 2);
     expect(html).toContain('<b>2 names that only one org holds, more than once.</b> There is nothing to decide here: the other org has no record of the name.');
-    expect(html).toContain('<b>2 copies in SRC</b>, none in TGT — a run creates all 2 there.');
-    expect(html).toContain('<b>2 copies in TGT</b>, none in SRC — a run leaves them as they are.');
+    expect(html).toContain('<b>2 copies in <span class="ds-role ds-role-src">source</span> SRC</b>, none in <span class="ds-role ds-role-tgt">target</span> TGT — a run creates all 2 there.');
+    expect(html).toContain('<b>2 copies in <span class="ds-role ds-role-tgt">target</span> TGT</b>, none in <span class="ds-role ds-role-src">source</span> SRC — a run leaves them as they are.');
   });
   it('a list cut short does not vouch for the names it does not show', () => {
     const html = draw()(p, [{ name: 'Lone', side: 'src', ids: ['l1', 'l2'] }], 60);
@@ -66,8 +66,8 @@ describe('#8 — a one-sided name with a copy that is already paired', () => {
     expect(DP).toContain("if (oneSidedAll.length && ['changed', 'identical'].some(b => sftkScanBucketInfo(s, b).capped)) oneSidedAll.forEach(g => { g.pairsCut = true; });");
     expect(html).not.toContain('none in');
     expect(html).not.toContain('the other org has no record of the name');
-    expect(html).toContain('<b>2 copies in SRC</b> have no pair in TGT — a run creates all 2 there.');
-    expect(html).toContain('<b>2 copies in TGT</b> have no pair in SRC — a run leaves them as they are.');
+    expect(html).toContain('<b>2 copies in <span class="ds-role ds-role-src">source</span> SRC</b> have no pair in <span class="ds-role ds-role-tgt">target</span> TGT — a run creates all 2 there.');
+    expect(html).toContain('<b>2 copies in <span class="ds-role ds-role-tgt">target</span> TGT</b> have no pair in <span class="ds-role ds-role-src">source</span> SRC — a run leaves them as they are.');
   });
   it('a pair filed under a differing link counts as paired too', () => {
     const s = { onlyInTarget: [{ matchKey: 'A', targetId: 't2' }, { matchKey: 'A', targetId: 't3' }], linkMismatch: [{ matchKey: 'A', sourceId: 's1', targetId: 't1' }] };
@@ -80,7 +80,7 @@ describe('#16 — the button of the root card opens the root object', () => {
   const body = DP.slice(at, DP.indexOf("eid('dsDepBack')", at));
   it('selects the root object and the tab, then draws', () => {
     expect(at).toBeGreaterThan(-1);
-    expect(body).toContain("_depObjPath = ''; _depTab = b.dataset.depTabGo; _depFilter = '';");
+    expect(body).toContain("_depObjPath = b.dataset.depTabObj || ''; _depTab = b.dataset.depTabGo; _depFilter = '';");
     expect(body).toContain("renderDeploy().then(() => eid('dsDepRecords')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));");
   });
   it('run with a child object on screen: the click leaves the root object, the asked tab and no filter, and draws once', async () => {

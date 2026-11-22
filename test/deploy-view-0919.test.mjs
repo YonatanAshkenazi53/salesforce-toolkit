@@ -350,7 +350,7 @@ describe('2026-09-21 — four asks from the live page', () => {
   it('duplicates: both pages draw the same block, and stamping is offered LAST', () => {
     expect(RC).toContain('_health.push(sftkRecDupsHtml(scan, p));');
     expect(DV).toContain('notes.push(sftkRecDupsHtml(scan, p));');
-    const fn = RC.slice(RC.indexOf('function sftkRecDupsHtml(scan, p, objLabel) {'), RC.indexOf('function sftkRecWireDupFix('));
+    const fn = RC.slice(RC.indexOf('function sftkRecDupsHtml(scan, p, objLabel, childPath) {'), RC.indexOf('function sftkRecWireDupFix('));
     expect(fn.indexOf('The same record, entered more than once? Merge the copies.')).toBeLessThan(fn.indexOf('When the pairs are right, keep them.'));   // the merge first, stamping last (reworded 2026-11-20)
     expect(fn).toContain('✏ Change the matching rule</button>');   // owner 2026-11-20: "we do have to still offer changing the matching key"
     expect(fn).toContain('<i>Do this last</i>: while copies are still mixed up, it would fix the wrong pairs in place.');

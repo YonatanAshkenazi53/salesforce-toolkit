@@ -33,8 +33,8 @@ describe('names only one org holds, more than once', () => {
 });
 
 describe('the tab', () => {
-  it('lists them under the questions, on the root object, filtered like the rows', () => {
-    expect(DP).toContain("const oneSidedAll = ambRoot ? sftkDepOneSidedDups(s, key).filter(g => !q || g.name.toLowerCase().includes(q)) : [];");
+  it('lists them under the questions, on the tab of any object (a child too, 2026-11-22), filtered like the rows', () => {
+    expect(DP).toContain("const oneSidedAll = tabDef.k === 'amb' ? sftkDepOneSidedDups(s, key).filter(g => !q || g.name.toLowerCase().includes(q)) : [];");
     expect(DP).toContain('${_depOneSidedHtml(p, oneSided, oneSidedAll.length)}');
   });
   it('says there is nothing to decide, and what a run does with the copies', () => {
@@ -43,7 +43,7 @@ describe('the tab', () => {
     expect(DP).toContain('none in ${there} — a run leaves them as they are.');
   });
   it('the merge is the tab’s own: its picker, its confirmation, both orgs read again', () => {
-    expect(DP).toContain('if (g) _depMergeCopies(p, g.side, g.name, g.ids);');
+    expect(DP).toContain('if (g) _depMergeCopies(p, g.side, g.name, g.ids, isRoot ? {} : { obj: cur.obj });');
   });
   it('an empty question list no longer says "nothing" over a list of copies', () => {
     expect(DP).toContain("(oneSided.length ? '' : `<div class=\"ds-dep-empty\">");

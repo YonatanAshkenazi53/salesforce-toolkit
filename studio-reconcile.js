@@ -5312,16 +5312,18 @@ function sftkCapFailedIds(list, richCap, idCap) {
 // do about it, in the order that is safe (user 2026-09-21: "What operations we
 // can suggest in order to fix"). Shared by ⚖ Transfer and the Deploy view.
 // Buttons carry data-rec-dupfix; each page wires them (sftkRecWireDupFix).
-function sftkRecDupsHtml(scan, p, objLabel) {
+function sftkRecDupsHtml(scan, p, objLabel, childPath) {
   const child = !!objLabel;   // a child object's card: the merge tab, Match review and Stamp identity act on the root object only
   const ex = (scan && scan.dupKeys && scan.dupKeys.examples) || [];
   if (!scan || !scan.dupKeys || !scan.dupKeys.rows) return '';
   const key = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
   const rl = (org, id, i) => `<a href="${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view" target="_blank" rel="noopener" class="ds-lkpo-vallink" title="${esc(id)}">copy ${i + 1}</a>`;
+  // which side an org is, beside its name (owner 2026-11-22)
+  const role = (org, side) => `<span class="ds-role ds-role-${side}">${side === 'src' ? 'source' : 'target'}</span> ${esc(orgLabel(org))}`;
   const rows = ex.map(e => {
     const parts = [];
-    if ((e.src || []).length > 1) parts.push(`${e.src.length}× in ${esc(orgLabel(p.sourceOrg))}: ${e.src.map((id, i) => rl(p.sourceOrg, id, i)).join(' · ')}`);
-    if ((e.tgt || []).length > 1) parts.push(`${e.tgt.length}× in ${esc(orgLabel(p.targetOrg))}: ${e.tgt.map((id, i) => rl(p.targetOrg, id, i)).join(' · ')}`);
+    if ((e.src || []).length > 1) parts.push(`${e.src.length}× in ${role(p.sourceOrg, 'src')}: ${e.src.map((id, i) => rl(p.sourceOrg, id, i)).join(' · ')}`);
+    if ((e.tgt || []).length > 1) parts.push(`${e.tgt.length}× in ${role(p.targetOrg, 'tgt')}: ${e.tgt.map((id, i) => rl(p.targetOrg, id, i)).join(' · ')}`);
     return `<div class="ds-rec-dup-row">“<strong>${key(e.key)}</strong>” ${parts.join(' and ')}</div>`;
   }).join('');
   const more = (scan.dupKeys.keys || []).length > ex.length ? `<div class="ds-rec-dup-note">Showing ${ex.length} of ${(scan.dupKeys.keys || []).length} duplicated name(s).</div>` : '';
@@ -5341,7 +5343,9 @@ function sftkRecDupsHtml(scan, p, objLabel) {
       <div class="ds-rec-dup-fix"><b>What to do</b>
         <ol>
           <li><b>The same record, entered more than once? Merge the copies.</b> ${child
-            ? 'Merge them in Salesforce (the links above open each copy), then 🔄 Refresh state.'
+            ? (childPath
+              ? `<button class="ds-btn ds-btn-xs" data-dep-tab-go="amb" data-dep-tab-obj="${esc(childPath)}" title="Opens the ⚠ Needs a decision tab of ${esc(objLabel)}">🔀 Show them with their merge</button> A name that only one org holds more than once is listed there with its merge.`
+              : 'Merge them in Salesforce (the links above open each copy), then 🔄 Refresh state.')
             : `<button class="ds-btn ds-btn-xs" data-dep-tab-go="amb" title="Opens the ⚠ Needs a decision tab of the Deploy page">🔀 Show them with their merge</button> You choose the record that stays and the values it keeps.${nAmb && oneSided ? ' Names both orgs hold come first, as questions; names only one org holds are listed under them.' : ''}`}</li>
           <li><b>Different records with the same name? Add a field to the matching rule</b>, so they can be told apart — Name and Email, Name and billing city. ${saved ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(p.id)}" title="Opens this deployment in the builder — Pick Records, the matching rule">✏ Change the matching rule</button>` : '<span class="ds-lkp-hint">Save this pair as a deployment to change its matching rule.</span>'}</li>
           ${!child && unS && unT ? `<li><b>Or say which is which by hand.</b> <button class="ds-btn ds-btn-xs" data-rec-dupfix="review" title="Pick, for each unmatched source record, the target record it really is — remembered for this org pair">🔗 Match review</button> pairs the ${unS.toLocaleString('en-US')} unmatched source record${unS === 1 ? '' : 's'} with the ${unT.toLocaleString('en-US')} unmatched target record${unT === 1 ? '' : 's'}.</li>` : ''}

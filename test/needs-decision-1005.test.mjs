@@ -64,8 +64,8 @@ describe('the answers are sentences, in the open', () => {
   it('each candidate answer carries that record’s telling values; "new" and "not decided" say what happens', () => {
     expect(groups).toContain("const tellText = tell => (tell || []).filter(x => x && x[1] !== '').map(x => `${x[0]}: ${x[1]}`).join(' · ');");
     // 2026-10-27: the sentences complete "<copy> is …" (the grid before them was not understood)
-    expect(groups).toContain("text: `the same record as #${i + 1} in ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}");
-    expect(groups).toContain("{ v: '__new__', text: `a new record — not in ${orgLabel(p.targetOrg)} yet, create it there` },");
+    expect(groups).toContain("text: `the same record as #${i + 1} in the target ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}");
+    expect(groups).toContain("{ v: '__new__', text: `a new record — not in the target ${orgLabel(p.targetOrg)} yet, create it there` },");
     expect(groups).toContain("{ v: '', text: 'not decided yet — it stays out of the deployment' },");
     expect(groups).not.toContain('— decide —');
     expect(groups).not.toContain('it is #');
