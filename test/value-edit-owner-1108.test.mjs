@@ -29,7 +29,7 @@ describe('the Owner row', () => {
     // with the running user's NAME — test/value-edit-owner-will-1119
     // QA 1.1 finding 47: the whole sentence comes from sftkVeOwnerLine, which is told when the row is an update (a
     // Changed record keeps or matches its target owner) — test/qa11-builder-owner-update
-    expect(VE).toContain("const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' });");
+    expect(VE).toContain("const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })");
     expect(VE).toContain("if (!x.upd) return 'Will belong to ' + sftkVeOwnerWill(x);");
     expect(VE).toContain('data-ve-own-clear="1" title="Forget this pick — the owner is matched by name again">✕ back to matching</button>');
   });

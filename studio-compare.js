@@ -664,15 +664,29 @@ function _ocRenderResults() {
 // no server round-trip). Columns adapt to the presence-only result shape:
 // matched/missing/onlyInTarget instead of per-field "changed" (Org Compare
 // doesn't diff field values — that's Transfer's job).
+// One CSV cell. The detail column carries text the org wrote (an API error, a
+// skip reason) and the object column an API name: a cell that opens with
+// = + - @ (or a tab / carriage return) is run as a formula by Excel and Sheets,
+// and quoting alone does not stop that. Such a cell gets a leading apostrophe,
+// which a spreadsheet reads as "this is text"; then the usual RFC-4180 quoting.
+// Same rule as histCsvEscape (studio-history.js) and sftkSweepCsv. Pure.
+function sftkOcCsvCell(v) {
+  let s = v == null ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
 function _ocExportCsv() {
   const rows = (_orgCompareState.results || []).filter(r => r.status !== 'pending');
   if (!rows.length) {
     showToast('Nothing to export yet — run a compare first', 'error', 3000);
     return;
   }
-  const cell = v => {
-    const s = v == null ? '' : String(v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  // The fallback is the same guard inline, for a sandbox that loads this function alone.
+  const cell = typeof sftkOcCsvCell === 'function' ? sftkOcCsvCell : v => {
+    let s = v == null ? '' : String(v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const header = ['object', 'status', 'matchField', 'sourceCount', 'targetCount',
                   'matched', 'missingInTarget', 'onlyInTarget', 'blankKeySource', 'blankKeyTarget', 'matchPct', 'detail'];

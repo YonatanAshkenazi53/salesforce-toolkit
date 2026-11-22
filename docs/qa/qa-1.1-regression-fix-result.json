@@ -1,0 +1,521 @@
+{
+ "lanes": [
+  {
+   "lane": "modals",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#5",
+      "status": "fixed",
+      "what": "In the Pick Records modal of studio-builder-modals.js the session-only default `if (!node.matching) matchNormalize = {all five on}` is gone from the opening code: a never-set rule now opens with the exact comparison the scan uses (sftkMatchingFromNode normalize {}), so the switch, the live result and an untouched Apply agree. The same line now sits in the [data-mq-field] change handler, so the first field the user picks for a never-set rule starts forgiving and matchCfgChanged -> persistMatching saves it in the same step. The switch and the fine-tune boxes already persisted on change. No change to the dsRecSave handler: an untouched Apply still saves no rule, so the scan's unconfigured-node heuristics (name fallback, child rekey) stay as they were.",
+      "test": "test/qa11r-modals.test.mjs — 'the scan reads a never-set rule as an exact comparison, and the panel no longer opens with anything else'; 'the forgiving start belongs to the first field the user picks, and that step saves the rule'; 'the switch itself saves what it shows'"
+     },
+     {
+      "finding": "#11",
+      "status": "fixed",
+      "what": "Same defect as #5, same change (opening state of matchNormalize plus the [data-mq-field] handler). _depOpenMatching needs no change: an untouched Apply leaves the node unchanged, and now the screen showed exactly that.",
+      "test": "test/qa11r-modals.test.mjs — the three it() of describe '#5 / #11 — a rule never set: what is shown is what the scan uses'"
+     },
+     {
+      "finding": "#6",
+      "status": "fixed",
+      "what": "In runMatchLive, `const seq = ++matchLiveSeq; clearTimeout(matchLiveTimer);` moved above both early returns (the missing-target return and the cache hit), so any call for the rule now on screen invalidates a read still in flight for an older rule; the older run stops at its `if (seq !== matchLiveSeq) return;` checks. The cache-hit line itself is unchanged (test/match-rule-1120 pins its text).",
+      "test": "test/qa11r-modals.test.mjs — 'the sequence advances and the timer is cleared before any early return'; 'there is one bump per call, and the older read still checks it after its wait and after its queries'"
+     },
+     {
+      "finding": "#7",
+      "status": "fixed",
+      "what": "New pure top-level bldMatchTieredExamples(srcParts, tgtParts, labelOf, pairsFn) runs the scan's own pairing (sftkTieredPairs, passed in) over the same part lists sftkTieredPreview counts, and takes the examples from it: first pair, first insert, first undecided group with its srcs/tgts sizes. runMatchLive uses it when res.cross.tiered (guarded with typeof sftkTieredPairs), and bldMatchExamples otherwise; the label function is shared as exLabel.",
+      "test": "test/qa11r-modals.test.mjs — 'a record counted as already in the target is its example, never the example of a new one'; 'records it cannot tell apart: the group of the pairing, with its own counts'; 'an example exists only where the count is not zero'; 'no pairing function, or no lists: no examples and no throw'; 'the live result takes them when the counts are tiered, and the exact ones otherwise'"
+     },
+     {
+      "finding": "#15",
+      "status": "fixed",
+      "what": "New pure top-level bldMatchSeedNoName(fields, node, fallbackFn): for a node with no rule whose legacy field (node.matchField, else Name) is not on the object, it returns what the scan uses — the object's non-autonumber name field, else sftkMatchingFallback(fields, { lookupResolutions }) with its strategy and normalize. The modal seeds matchStrategy / matchFields / matchNormalize from it right after the initial state and before matchSuggestDepth is computed (if there is no usable key it starts from the first candidate field instead of Name). The fold summary for an unconfigured node now names the fields on screen instead of the literal Name.",
+      "test": "test/qa11r-modals.test.mjs — describe '#15 — an object without a Name' (7 it(): 'a never-set node opens with the key the scan falls back to, not with Name', 'a name field under another name that is not a number is the key, as in the scan', 'an object with a Name, a node with a rule, a legacy field that exists, or no describe: nothing is changed', 'a legacy field that is not on the object is replaced the same way', 'nothing usable, or no fallback loaded: the caller keeps its own start', 'a per-lookup match field of the node reaches the fallback', 'the modal seeds before the suggestions are sized, and the summary names the rule on screen')"
+     }
+    ],
+    "needsOtherFile": [
+     "test/match-rule-1120.test.mjs line ~88: the it() title 'one switch for small differences; a rule never set starts with it on, a saved rule keeps its own' still passes (the pinned source line exists, now inside the [data-mq-field] handler) but its wording is no longer true. Change the title to: 'one switch for small differences; a rule never set opens exact as the scan reads it and turns forgiving at the first field picked, a saved rule keeps its own'.",
+     "CHANGELOG.md (2026-11-20 entry, around line 28, not mine to edit): the sentence that the switch 'is on for a rule that was never set' is no longer what the app does. It should say: a rule that was never set is shown as the scan reads it (exact); the switch turns on when the first field of a new rule is picked, and is saved with it.",
+     "scripts/dev/live/qa-match-chapter.mjs and scripts/dev/video/sections.mjs (around line 1109) use #dsMqForgive: if either expects the switch to be already ticked on a never-configured object, that expectation must flip (it is unticked until a field is picked or the switch is pressed). I did not run or read them in full."
+    ],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-modals.test.mjs",
+    "doubts": "1) #5/#11 design choice: I followed the lane note (a never-touched rule shows what the scan uses) rather than the finding's 'persist on Apply', because persisting on an untouched Apply would set hasMatchingCfg and switch off the scan's unconfigured-node paths (name auto-correct, no-Name fallback, child rekey on collisions) for anyone who only picks records. The owner's 2026-11-20 wish (a new rule starts forgiving) is kept at the first field pick, not at open — this is a visible behaviour change and the CHANGELOG sentence needs rewording (see needsOtherFile). A legacy node (matchField, no matching) also turns forgiving at its first field pick. 2) #15: for a child node the scan's fallback also gets parentField/parentKeyPath (the parent's key first); the modal has no parentKeyPath, so on a no-Name child object the seeded rule can differ from the scan's in its first component (the modal lists the parent as Rel.Name among the lookups instead). 3) #6: the cache-hit paint still shows matchLive.html without the cached 'Use it' offer (pre-existing; the line is pinned verbatim by test/match-rule-1120, so I left it). 4) #7 runs the tiered pairing a second time for the examples (sample is capped at 2,000 records per side); returning the examples from sftkTieredPreview would avoid that but sftk-matching.js is not my file. 5) Verified only by node --check and vitest on test/qa11r-modals.test.mjs, test/match-rule-1120.test.mjs and test/noname-key-0922.test.mjs (39 pass); nothing was run in a browser or against an org, and the full suite was not run."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#5",
+      "holds": true,
+      "why": "The session-only forgiving default is gone from the opening code, so a never-set rule opens with normalize {} - the same exact comparison studio-scan.js uses for a node without node.matching - and an untouched Apply saves nothing that differs from the screen. The forgiving start moved to the [data-mq-field] change handler, which runs before matchCfgChanged -> persistMatching, so it is saved in the same step. Every other path that can change the rule (switch, fine-tune boxes, tiered radio, upsert toggle, suggestion apply, Use it) already persists what it shows. The string test/match-rule-1120 pins (line 90) is still in the file; that test passes. The lane's tests for this are source pins only (the logic lives in the modal closure, no pure function to test)."
+     },
+     {
+      "finding": "#11",
+      "holds": true,
+      "why": "Same change as #5. _depOpenMatching sees no change after an untouched Apply, and the screen now showed exactly that (exact comparison), so there is nothing to re-read."
+     },
+     {
+      "finding": "#6",
+      "holds": false,
+      "why": "The scenario of the finding is closed: the bump and clearTimeout sit above both early returns, so an older rule's read stops at its seq checks. But the fix broke something: the search box re-renders the whole modal on every letter (wireModal -> runMatchLive -> cache hit), and the same happens when the fold is closed and opened. That cache hit now advanced the sequence and ended the same rule's own search for a better rule ('Use it' offer), which was guarded by the same seq; the result is cached without an offer, so it never came back for that rule. Before the fix that loop survived a same-rule re-render.",
+      "repaired": "studio-builder-modals.js: new modal-scope matchLiveShown (the signature of the rule on screen; null when there is no target), set in runMatchLive before the cache check. The better-rule phase and paint() now use stale() = matchLive !== mine || matchLiveShown !== sig instead of the call sequence, so only another rule on screen ends it, and it can never write onto another rule's cached result. The two seq checks around the wait and the queries are unchanged, as is the cache-hit line pinned by test/match-rule-1120. test/qa11r-modals.test.mjs: the seq-check count is now exactly 2 with their positions (after the wait, after the queries, before the store) pinned, plus a new it() for the shown-rule guard. node --check passes; qa11r-modals 18/18; the 11 other test files that read studio-builder-modals.js pass (197 tests)."
+     },
+     {
+      "finding": "#7",
+      "holds": true,
+      "why": "bldMatchTieredExamples builds the same synthetic records as sftkTieredPreview and runs the same sftkTieredPairs, so both / onlySrc / clash come from the pairing the counts come from; the clash carries the group's own srcs/tgts sizes. It is a new pure top-level function, called from the closure with a typeof guard on sftkTieredPairs, and falls back to bldMatchExamples for a non-tiered rule. Labels still go through bldMatchLiveHtml's esc. The tests run the real pairing on the finding's Acme case and show the old exact-key function giving the wrong example for the same data, so they fail without the fix."
+     },
+     {
+      "finding": "#15",
+      "holds": true,
+      "why": "bldMatchSeedNoName mirrors studio-scan.js for an unconfigured node: legacy field missing -> the non-autonumber name field (scan line 916), else sftkMatchingFallback with lookupResolutions (scan line 942), with its strategy and normalize. The modal seeds before matchSuggestDepth, so the sentence, the live check on open and the scan use the same key; the fold summary names the fields on screen through esc(). Pure top-level function, the fallback passed in with a typeof guard. Tests exercise the real sftkMatchingFallback and cover the null cases. Known limit, not a defect of the fix: the modal does not know a child scan's parent link, so for a child object the scan's fallback can start with the parent's key while the modal's does not."
+     }
+    ],
+    "needsOtherFile": [
+     "CHANGELOG.md (2026-11-20 entry, about line 28): it says the switch 'Ignore small differences' is on for a rule that was never set. After the #5/#11 fix it is off when a never-set rule opens and turns on at the first field the user picks. The sentence needs rewording by whoever owns CHANGELOG.md.",
+     "test/match-rule-1120.test.mjs line 94 pins the cache-hit line `if (matchLive && matchLive.sig === sig) { el0.innerHTML = matchLive.html; wireLive(); return; }`. That line paints the cached result without matchLive.reco, so an already shown 'Use it' offer disappears on any same-rule re-render (each letter typed in the search box) until the rule changes. This is older than the lane's fix and the QA fix text for #6 suggested `matchLive.html + (matchLive.reco || '')`; changing it needs that pin updated in the same step. Not changed here because the test file is outside the lane."
+    ]
+   }
+  },
+  {
+   "lane": "deploy",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#8",
+      "status": "fixed",
+      "what": "sftkDepOneSidedDups now also reads scan.changed and scan.identical and puts `paired` (count of distinct source ids of the same name already paired; only set when not 0) on each group. _depOneSidedHtml uses it: such a row reads \"N copies in HERE have no pair in THERE — a run creates all N there, beside the K of this name already paired.\" (target side: \"... a run leaves them as they are. K of this name is/are already paired.\"), and the intro says \"the other org has no unpaired record of the name\" whenever any listed group has a paired copy or the list is cut short (total > groups shown). With nothing paired and the whole list on screen, the previous sentences are unchanged, so test/dep-onesided-dups-1120.test.mjs still passes.",
+      "test": "test/qa11r-deploy.test.mjs — 'the group carries how many records of the name the scan paired; a name with none carries nothing', 'a paired record is counted once, and a row without both ids is not a pair', 'the line of such a name does not say the other org has none', 'one paired record reads in the singular', 'with nothing paired and the whole list on screen, the sentences are the ones there before', 'a list cut short does not vouch for the names it does not show'"
+     },
+     {
+      "finding": "#16",
+      "status": "fixed",
+      "what": "In _depWireChrome the [data-dep-tab-go] handler no longer searches for a tab button with data-dep-obj (none carries it) and clicks the current object's tab; it sets _depObjPath = '', _depTab = b.dataset.depTabGo, _depFilter = '' and calls renderDeploy().then(scroll to dsDepRecords). Both emitters of the button (the root sftkRecDupsHtml card and the root 'need a decision' note in renderDeploy) are about the root object; the child card emits none.",
+      "test": "test/qa11r-deploy.test.mjs — 'selects the root object and the tab, then draws', 'no longer looks for a tab button that names an object (none does) or clicks the tab on screen'"
+     }
+    ],
+    "needsOtherFile": [],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-deploy.test.mjs",
+    "doubts": "Nothing was run in a browser or against an org; the checks are node --check on studio-deploy.js and vitest on the new file plus test/dep-onesided-dups-1120.test.mjs and test/ambiguous-help-1001.test.mjs (all pass). #8: the paired count matches by the row's matchKey label, which for a memory pair is the SOURCE record's key (studio-scan.js: `sftkMatchKey(sr, srcMatching) || sftkMatchKey(tr, tgtMatching)`). So for a target-side group, a target record of that name paired from memory to a source record with a DIFFERENT name is not counted (the row carries no target key) — in that case 'none in SOURCE' is still true by name, but the target copy count shown excludes the paired one. The count takes every changed/identical row of the name, not only viaMemory ones. The merge button of such a group still merges only the unpaired copies (unchanged behaviour). #16: the wiring is verified by source text only, not by a click. scripts/dev/live/amb-onesided.mjs clicks the same button and should still work, but I did not run it (live scripts are off limits)."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#8",
+      "holds": true,
+      "why": "Traced against studio-scan.js: memory pairs land in changed/identical with matchKey, sourceId and targetId (lines 1445-1446), the same shape the fix reads, and the caller passes the same label function for both lists, so the Acme scenario now yields paired: 1 and neither false sentence. With nothing paired the old strings are unchanged; test/dep-onesided-dups-1120.test.mjs (9) and test/ambiguous-help-1001.test.mjs (12) pass. Org text (g.name) still goes through esc(); the count is a number. No new global is called from sftkDepOneSidedDups or _depOneSidedHtml. The tests for the pure function fail without the fix. Two gaps I closed: (1) the scan ships changed/identical cut at its cap (5,000 rows), so a paired copy can be missing from them and 'none in <org>' / 'no record of the name' would again be said without knowing; (2) a pair filed only under linkMismatch was not counted. Not handled, and I judge it correct as is: a memory pair whose two records carry different names is counted under the source record's name only.",
+      "repaired": "studio-deploy.js: sftkDepOneSidedDups also reads scan.linkMismatch for paired rows. The records-panel renderer marks every group pairsCut when sftkScanBucketInfo reports changed or identical as capped (new line after oneSidedAll is built; sftkScanBucketInfo was already called unguarded in that same function, and the _depOneSidedHtml call string pinned by dep-onesided-dups-1120 is untouched). _depOneSidedHtml then uses the cautious intro and the row wording 'N copies in HERE have no pair in THERE — a run creates all N there.' / '... leaves them as they are.' Two tests added to test/qa11r-deploy.test.mjs (cut lists; linkMismatch pair). node --check passes; qa11r-deploy 11/11."
+     },
+     {
+      "finding": "#16",
+      "holds": true,
+      "why": "The handler now sets _depObjPath = '' , _depTab and _depFilter and awaits renderDeploy (it is async, line 497), the same pattern the neighbouring navigations use (lines 743-752, 925). The amb tab is not childOnly, so the root always has it and the line-664 fallback to 'ins' cannot trigger. Both emitters of data-dep-tab-go on the Deploy page are root notes; the child card (line 652, objLabel set) emits no such button. No caller relied on the old tab .click(). The engineer's tests only pinned source strings, so I added one that executes the handler.",
+      "repaired": "test/qa11r-deploy.test.mjs: new test runs the sliced handler with a stub document, starting from a child object ('0'), tab 'ins' and a filter, and asserts state becomes root / 'amb' / empty filter, one draw, one scroll, and that no tab button is looked up. No source change for #16."
+     }
+    ],
+    "needsOtherFile": [
+     "studio-reconcile.js line 1364 (Reconcile view health card): sftkRecDupsHtml(scan, p) emits the same root button data-dep-tab-go=\"amb\" ('Show them with their merge', title 'Opens the Needs a decision tab of the Deploy page'), but the only listener for [data-dep-tab-go] is in studio-deploy.js _depWireChrome, which is wired by the Deploy page. Read from the code only (grep of root *.js), not run: on the Reconcile view the button appears to have no handler. Either wire it there to open the Deploy page on the root's amb tab, or do not emit the button outside the Deploy page. Pre-existing, outside finding #16's scenario."
+    ]
+   }
+  },
+  {
+   "lane": "fc",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#9",
+      "status": "fixed",
+      "what": "In field-cleaner.js every deploy write that passes `submitted` through now has a reader: _xmlEditorDeploy says the deploy was sent and is still running in Salesforce (returns 'submitted', before the refusal line), fixEdit (the scissors/replace metadata edit), the search-layout fix and fixReportType throw a 'was sent and Salesforce is still running it ... The restore point is kept and Undo is in Activity' error before their refusal sentence, and all four History entries keep their undo step on `wr && (wr.accepted || (wr.raw && wr.raw.submitted))`. The two restoreSnapshot deploy branches (MdDelete/MdEdit and ReportType) say the restore is still running and the restore point is kept, instead of the bare error. The checks are written inline (not a helper) because test/regress-1115-close-r3.test.mjs loads fixReportType by name in a sandbox.",
+      "test": "test/qa11r-fc.test.mjs — 'every write that passes submitted through has a reader of it', 'the two expressions, on the three answers: submitted keeps the undo and is not a refusal', 'the XML editor says it is still running, before the refusal line, and keeps the undo', 'the ✂ / ⇄ edit, the search layout and the report type say so before their refusal sentence', 'a restore that is still running is not reported with the bare error'"
+     },
+     {
+      "finding": "#17",
+      "status": "fixed",
+      "what": "In `back` of _jsonKindEditorOpen: after a deploy (note set), if the fresh re-read settled the row (fc-item-fixed with a label _fixedRowChanged calls unchanged), markFixed is called again with the new pure top-level fcHandEditGoneLabel(spec.what) ('Edited — your edit is in the org and nothing in this page layout uses the field any more — verified by re-reading the org'), so the row shows the green chip, gets its Undo button and sets _lastScan.cleared. Cancel (empty note) and a partial edit (mention remains, panel open) behave as before.",
+      "test": "test/qa11r-fc.test.mjs — 'the label reads as a change: its own verb, verified, and not the settled sentence', 'after a deploy, a row the fresh read settled is marked again as edited; Cancel (no note) changes nothing'"
+     },
+     {
+      "finding": "C1",
+      "status": "fixed",
+      "what": "field-cleaner.js part only. New pure top-level fcCsvCell (apostrophe before a text starting with = + - @ tab or CR, then RFC-4180 quoting incl. CR; numbers/booleans untouched) replaces esc2 in backupFieldValues. New pure fcCsvSafeTargets guards `value` and `was` in copies of the rows before they are handed to sftkCopyValuesCsv for the copy-values receipt (the rows written to the org are not touched). Both the Back up values button and the receipt checkbox carry a title saying the apostrophe is added.",
+      "test": "test/qa11r-fc.test.mjs — 'fcCsvCell: a text that starts with = + - @ tab or CR gets an apostrophe, then the usual quoting', 'fcCsvCell: everything else is as before — a number stays a number, a CR is quoted', 'fcCsvSafeTargets: both org values guarded, in new rows — what is written to the org is untouched', 'both files are built through the guard, and the old raw cell writer is gone', 'both places say the apostrophe is added'"
+     }
+    ],
+    "needsOtherFile": [
+     "sftk-fieldreplace.js (optional hardening, not required for the fix): sftkCopyValuesCsv's own cell writer `q` is still unguarded; the Field Cleaner call site now passes fcCsvSafeTargets(targets), which closes the receipt. If the owner of that file wants the guard at the source, add `if (typeof v === 'string' && /^[=+\\-@\\t\\r]/.test(s)) s = \"'\" + s;` inside q (s made `let`) — then the fcCsvSafeTargets wrap in field-cleaner.js must be dropped to avoid a double apostrophe, and test/field-replace-1004.test.mjs line ~380 stays valid (its values do not start with a formula character)."
+    ],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-fc.test.mjs",
+    "doubts": "1) Not run live (no org allowed): the #9 and #17 paths are covered by source-wiring checks and pure-function tests only, not by a real slow deploy or a real hand edit. 2) #9: other SF_METADATA_DEPLOY writes in field-cleaner.js (around the flow deploys near lines 7154-7253 and the helper near 8910) never pass `submitted` through at all, so they were outside the finding's list and were left alone; a slow deploy there would still read as a plain error. 3) #9: for a submitted deploy the History undo step is kept even though the job may yet fail in Salesforce — this mirrors the two existing sites (delete, code edit). 4) #17: the row's Undo button goes through undoRow, which looks for an Activity entry tied to the row; the XML-editor entry may not carry a row key, in which case the button opens Activity (where the undo is) rather than undoing in place — I did not verify which. 5) C1: a number or boolean value is deliberately left unprefixed (a numeric -5 is harmless and the backup stays loadable); text values that get the apostrophe must have it removed before loading back, which the two tooltips now say. The receipt header and the guard for the other three exports (sftk-fieldreplace.js, dependency-map.js, studio-compare.js) belong to other lanes. 6) I ran the 85 test files that read field-cleaner.js (all pass, 2056 tests) in addition to my own file; I did not run npm run verify. One slip: I used a Python heredoc once to rewrite part of my own test file, which broke a string; it was removed with the edit tool and the file passes."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#9",
+      "holds": true,
+      "why": "All six sites that pass `submitted` through and had no reader now test `!wr.accepted && wr.raw && wr.raw.submitted` before their refusal sentence (_xmlEditorDeploy, fixEdit, fixSearchLayout, fixReportType, both restoreSnapshot deploy branches), and the four History entries keep the undo step on `wr.accepted || wr.raw.submitted`, mirroring the delete and code-edit paths. The XML editor's caller treats the new 'submitted' return like any non-'deployed' result (sync(), text stays in the box). Org text in the editor line goes through esc(); the thrown messages reach appendInlineError / _friendlyErrorUnder as textContent, and sftkFriendlyError leaves the restore sentence unchanged (checked by running it). The checks are inline, so fixReportType loaded by name in test/regress-1115-close-r3.test.mjs calls no new global; that file and nine other Field Cleaner test files that load touched functions pass. No existing test pinned the old `undo: wr && wr.accepted` string. Weakness found: the engineer's tests only pinned source strings and a tautological expression defined in the test itself. Not fixed and outside the finding's named sites: deployLayoutViaMetadataApi (fixLayout), deployFlowViaMetadataApi and the field-delete deploy (`return r?.error ? { error: r.error } : { success: true }`) do not pass `submitted` on at all, so a submitted-but-unfollowed deploy there still reads as a refusal.",
+      "repaired": "test/qa11r-fc.test.mjs only: added behavioural tests that run the real _xmlEditorDeploy and the real fixReportType (sliced out of the module, free names stubbed) on the three background answers. Submitted: returns 'submitted', the line says still running and not 'Salesforce refused the deploy', History undo has one step and no `none`. Refused: keeps the refusal sentence and `none`. Accepted: 'deployed'. These fail on the pre-fix code."
+     },
+     {
+      "finding": "#17",
+      "holds": true,
+      "why": "In `back`, after the fresh toggleXmlInspector read, a set note plus a row that is fc-item-fixed with a label _fixedRowChanged calls unchanged leads to markFixed(componentId, fcHandEditGoneLabel(spec.what)). That label does not match the settled pattern, so markFixed draws the green 'Edited' chip, adds the row Undo and sets _lastScan.cleared; fcDoneParts splits it into verb / detail / verified. Cancel (empty note) returns before the row is touched; a partial edit still gets the note in the open panel; a row already marked as a change is not re-marked. fcHandEditGoneLabel is a pure top-level function called only from the nested _jsonKindEditorOpen, which test/fc-json-kind-edit-1121.test.mjs does not execute in a sandbox (it passes). The label is escaped by markFixed's own esc(). The engineer's test of `back` only pinned the source line.",
+      "repaired": "test/qa11r-fc.test.mjs only: added a describe that runs the real _jsonKindEditorOpen with a stand-in panel and row and calls the `back` it hands to the editor, in four cases: settled by the re-read after a deploy (marked with the edited label, no note in the hidden panel), a mention remains (note inserted, not marked), Cancel (nothing), a row already marked as a change (left alone)."
+     },
+     {
+      "finding": "C1",
+      "holds": true,
+      "why": "field-cleaner.js part. backupFieldValues now writes every cell through fcCsvCell (same rule as histCsvEscape: a string starting with = + - @ tab or CR gets an apostrophe, then RFC-4180 quoting including CR; numbers and booleans untouched), and esc2 is gone. The copy receipt is built from fcCsvSafeTargets(targets), which copies the rows, so the values written to the org are untouched; it is the only caller of sftkCopyValuesCsv. The guard is idempotent (an apostrophe is not a trigger character), so a later guard inside sftkCopyValuesCsv would not double it. The two new tooltips are plain English static text. test/field-replace-1004.test.mjs pins `<input type=\"checkbox\" id=\"fcCopyCsv\" checked>`, which is unchanged (the title went on the label), and passes. The pure-function tests are real and fail without the fix. The third CSV in the file (sftkSweepCsv) was already guarded. node --check field-cleaner.js is clean; test/qa11r-fc.test.mjs passes with 18 tests."
+     }
+    ],
+    "needsOtherFile": [
+     "sftk-fieldreplace.js: sftkCopyValuesCsv still writes its cells raw (`q` has no formula guard). The only caller (field-cleaner.js _copyRun) now guards the rows before the call, so there is no open hole today, but the guard belongs in the builder too if the C1 owner of that file wants it closed at the source; fcCsvSafeTargets is idempotent, so adding it there will not double the apostrophe."
+    ]
+   }
+  },
+  {
+   "lane": "vrpause",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#10",
+      "status": "fixed",
+      "what": "sftkVrPauseMaybeOff now also returns any rule (own or packaged) whose switch-off was not accepted and got no clear answer: a timeout, a dropped connection, a 5xx, or no response from the background. A text holding HTTP 4xx stays a definite refusal. Such a rule lands in `touched` in sftkVrPauseOff, so it is remembered, gets an undo step, and is switched back on when the run does not start. In _sftkVpSwitch the verifyAll re-read now also covers these rules, and their failed line says the switch may have gone through and what the org reads now (ON, OFF, or could not be re-read).",
+      "test": "test/qa11r-vrpause.test.mjs — 'the timed-out rule went off in the org: it is re-read, given an undo step, switched back ON and forgotten'; 'the switch-back gets no answer either: the rule stays REMEMBERED for the Deploy page's still-OFF card'; 'a timeout, on the org's own rule and on a packaged one -> may be off'; 'a definite refusal -> nothing was switched, not remembered'"
+     }
+    ],
+    "needsOtherFile": [],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-vrpause.test.mjs",
+    "doubts": "1) The re-read only informs the log line; it does not decide. A rule the org reads ON right after a timeout is still treated as possibly off and switched back on, because the abandoned request can land after the re-read. 2) One race stays open: if the timed-out switch-off lands AFTER the switch-back was verified ON, the rule ends up off and already forgotten. Closing it would need a later second re-read (a delay), which I did not add. 3) The no-clear-answer test is a text match on the refusal sentence (timed out, timeout, failed to fetch, network error, ERR_*, connection, message port closed, context invalidated, no response, no answer, HTTP 5xx; never when HTTP 4xx is present). A background error worded differently would still read as a plain refusal. A false match only costs a harmless switch-back. 4) A plain HTTP 5xx is now treated as possibly off as well (the finding asked for it). 5) Not run: npm run verify, as instructed. Ran node --check on sftk-vrpause.js and vitest on the new file plus the four existing vrpause test files (46 tests pass). No existing test pinned a changed string; studio-deploy.js only prints pausedR.failed, so the longer line shows in its log unchanged."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#10",
+      "holds": true,
+      "why": "The fix closes the scenario. A non-accepted switch-off whose text is a timeout, dropped connection, 5xx or no response is now returned by sftkVrPauseMaybeOff for own and packaged rules; a text with HTTP 4xx stays a definite refusal. I checked the patterns against the real texts: background.js sfFetch ('Request timed out after 30 s', 'Retry timed out after 30 s'), sfErrorMsg ('HTTP <status>: ...'), and sendBg's 'No response' / lastError text. In sftkVrPauseOff such a rule lands in `touched`, so it is remembered, gets an undo step, and is switched back on when the run does not start; if the switch-back is not confirmed it stays remembered for the Deploy page's card. verifyAll now re-reads these ids too, and sftkWriteVerifiedAll ignores verdicts for non-accepted results, so nothing is wrongly marked ok. No caller breaks: studio-deploy.js only joins pausedR.failed into the log line and reads restored/restoreFailed, whose shapes are unchanged. No new global is called from a test-loaded function (sftkVrPauseMaybeOff was already called from _sftkVpSwitch on the same switch-off-only path). No innerHTML is involved. The test file fails without the fix on behaviour, not only on pinned strings (pure-function cases plus end-to-end sftkVrPauseOff with a fake background). node --check passes; test/qa11r-vrpause.test.mjs passes 12/12; the four sibling files (vrpause-1003, release-qa-1114-vrpause, qa11-reconcile-maybeoff, qa11-deploy-fresh-pause) still pass. Known residue, accepted: a definite 5xx whose switch-back also fails leaves a rule remembered as possibly off although it is on (conservative, the card's switch-back is harmless).",
+      "repaired": "Added one test to C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-vrpause.test.mjs for the untested branch where the re-read itself fails: the line says 'the org could not be re-read for it', the rule still gets its undo step and switch-back, and stays remembered. No change to sftk-vrpause.js."
+     }
+    ],
+    "needsOtherFile": [
+     "background.js sfPatch (optional, low priority): it drops the `resent` mark from sfFetchWithProxy, so a PATCH whose first send got a 5xx (and may have committed) and whose automatic re-send got a 4xx reaches sftk-vrpause.js as a plain 'HTTP 4xx' text and is read as a definite refusal. Throwing through sftkResentError and adding a marker to the text would let sftkVrPauseMaybeOff treat it as possibly off. Very rare; not needed to close finding #10."
+    ]
+   }
+  },
+  {
+   "lane": "owners-rec",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#12",
+      "status": "fixed",
+      "what": "New pure sftkRecOwnerWarnings(o) in studio-reconcile.js builds the update's owner warnings: when the deployment's fallback is a queue (00G) that sftkOwnerFallbackFor dropped for this object, the line now reads \"the fallback queue does not take <Object> records in the target, so N record(s) with no matching owner kept their current target owner\" instead of \"no fallback user set\"; a used fallback queue is called \"the fallback queue\". reconcileOverwrite calls it behind a typeof guard (old two lines kept as the else branch, since tests sandbox-load reconcileOverwrite). Also: when the target's QueueSobject read fails and the fallback is a queue, a new queuesUnread flag makes both that warning and the kept line say the fallback queue was not used / could not be checked, instead of \"go to the fallback\". Payload loop, PII and lookup code untouched. The CHANGELOG.md line 30 half of the finding is not in my lane (see needsOtherFile).",
+      "test": "test/qa11r-owners-rec.test.mjs — \"a fallback queue that does not take the object: named as the reason, never \\\"no fallback user set\\\"\", \"the queues could not be read: the fallback queue is said to be unchecked, not refused\", \"no fallback at all, and a fallback user: the sentences are the ones the run always printed\", \"a fallback queue that takes the object is called a queue; nothing to say → no line\", \"is wired into the update, guarded, with the queue read failure remembered\""
+     },
+     {
+      "finding": "#20",
+      "status": "fixed",
+      "what": "sftkOwnerLineFetch now reads \"SELECT OwnerId, Owner.Name\" and passes srcIsQueue (source OwnerId starts 00G) and fallbackIsQueue (ownerMapping.fallbackUserId starts 00G) to sftkOwnerLineText; a fallback id with no stored name is no longer described as \"no fallback user is set\". sftkOwnerLineText says \"the queue in <target> with the same API name as <src>, when that queue takes this object\" for a queue-owned source record, and \"the fallback queue <name> when it takes this object (otherwise the owner there stays as it is)\" for a queue fallback. The user/user-fallback and no-fallback sentences are byte-identical to before.",
+      "test": "test/qa11r-owners-rec.test.mjs — \"a queue-owned source record: given the queue of the same API name, when it takes the object\", \"a fallback queue is called a queue, with its condition\", \"a user owner with a user fallback reads as before\", \"the read asks for OwnerId and passes what it tells\""
+     }
+    ],
+    "needsOtherFile": [
+     "test/deploy-owner-line-1119.test.mjs line 28 (it 'is read beside the fields, from both orgs, and drawn above them') now FAILS: change  expect(R).toContain('`SELECT Owner.Name FROM ${obj} WHERE Id = ');  to  expect(R).toContain('`SELECT OwnerId, Owner.Name FROM ${obj} WHERE Id = ');  (the other three pins in that test, including the Promise.all line, still pass).",
+     "CHANGELOG.md line 30 (finding #12's second half; I may not edit it): \"on the others the record belongs to you, and the run says so\" should become something like \"on the others a new record belongs to you and a changed record keeps its owner, and the run says so.\""
+    ],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-owners-rec.test.mjs",
+    "doubts": "1) The compare modal does not query whether the fallback queue / matching queue actually takes the object, so the line is worded conditionally (\\\"when it takes this object\\\") rather than stating the outcome; a definite sentence would need an extra QueueSobject read per modal open. 2) Nothing was run against an org: that OwnerId is selectable next to Owner.Name on every owned object is from Salesforce knowledge, not a live check (the update path already selects both together, studio-reconcile.js ~4737); a detail object with no owner still fails the query and yields no line, as before. 3) When a fallback id is saved with no name, the line now says \\\"the fallback user saved in this deployment\\\" (or \\\"the fallback queue saved in this deployment ...\\\"). 4) Ran: node --check studio-reconcile.js OK; vitest on my file plus owner-queue-1120, regress-1115-engine, regress-1115-reconcile-compare-undo, release-qa-1114-reconcile all pass; only the pinned SELECT string in deploy-owner-line-1119 fails, as listed.\""
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#12",
+      "holds": true,
+      "why": "The scenario is closed. With a fallback queue (00G) that sftkOwnerFallbackFor drops for the object, the update now prints \"the fallback queue does not take <Object> records in the target, so N record(s) with no matching owner kept their current target owner\" instead of \"no fallback user set\". The no-fallback and user-fallback sentences are byte-identical to before. reconcileOverwrite calls sftkRecOwnerWarnings behind a typeof guard with the old two lines as the else branch; the seven existing test files that sandbox-load reconcileOverwrite all pass. The queuesUnread wording is accurate: an unread QueueSobject gives an empty takes map, so the fallback queue is dropped and the owner stays. The test drives the real pure chain (sftkQueueOwnerMap, sftkOwnerFallbackFor, sftkRecOwnerThenTyped, sftkRecOwnerWarnings), so it fails without the fix. No innerHTML involved (warnings list only). The CHANGELOG half of the finding is still open, see needsOtherFile."
+     },
+     {
+      "finding": "#20",
+      "holds": false,
+      "why": "The text fix closes the scenario, but it breaks an existing committed test: test/deploy-owner-line-1119.test.mjs line 28 pins the source string `SELECT Owner.Name FROM ${obj} WHERE Id = , and the query is now `SELECT OwnerId, Owner.Name FROM ...`. That test fails now (1 failed, 3 passed); no query that also reads OwnerId can keep the pinned substring, and the file is outside this lane, so it is in needsOtherFile. Second defect, repaired: the builder stores a queue's name as \"<Name> (queue)\" (studio-builder.js qOpt data-name), so the line read \"the fallback queue Support (queue) when it takes this object\". Otherwise sound: the user and no-fallback sentences are unchanged, the line is drawn with textContent (no innerHTML), and sftkOwnerLineText calls no new global.",
+      "repaired": "studio-reconcile.js sftkOwnerLineText: when fallbackIsQueue, a trailing \" (queue)\" is dropped from the stored name (endsWith/slice, no regex), so it reads \"the fallback queue Support when it takes this object\"; a user fallback name is left as is. test/qa11r-owners-rec.test.mjs: two tests added (stored \"Support (queue)\" said once and a user name ending so left alone; queue-owned source with a queue fallback, full sentence). node --check passes; the lane test passes 11/11."
+     }
+    ],
+    "needsOtherFile": [
+     "test/deploy-owner-line-1119.test.mjs line 28: the pin expect(R).toContain('`SELECT Owner.Name FROM ${obj} WHERE Id = ') fails since the #20 fix; change it to '`SELECT OwnerId, Owner.Name FROM ${obj} WHERE Id = ' (the other three assertions in that test still hold).",
+     "CHANGELOG.md line 30 (finding #12, second half): \"on the others the record belongs to you, and the run says so\" is not true on an update; reword to something like \"on the others a new record belongs to you and a changed record keeps its owner, and the run says so.\""
+    ]
+   }
+  },
+  {
+   "lane": "owners-ve",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#13",
+      "status": "fixed",
+      "what": "New pure top-level function sftkVeFallbackSaid in studio-valueedit.js decides what the Owner row may say about the deployment's fallback on this object: a user fallback is always named; a queue fallback (00G id) is named only when the object's owner can be a queue and the target's QueueSobject has a row for this object and that queue. The record editor now runs one target query (SELECT QueueId FROM QueueSobject WHERE SobjectType = obj AND QueueId = fallbackUserId LIMIT 1, only when owners are matched, the fallback is a queue and ownerCanQueue) and passes fbSaid.name to sftkVeOwnerLine, so the existing branches say the truth (running user on New, stays with current owner on Changed); a second plain sentence says why the fallback is not used. If the target cannot be asked, the fallback is named with its condition (\"..., when that queue takes <obj>\"). sftkVeOwnerLine / sftkVeOwnerWill are unchanged; the call is typeof-guarded.",
+      "test": "test/qa11r-owners-ve.test.mjs — 'a fallback queue on an object a queue cannot own is not named', 'a fallback queue that does not take the object is not named', 'a New record goes to the running user', 'a Changed record keeps its owner', 'the fallback queue is looked up in QueueSobject for this object, only when owners are matched'"
+     }
+    ],
+    "needsOtherFile": [
+     "test/qa11-builder-owner-update.test.mjs (it 'a Changed row is an update', about line 72): the pinned source line changed. Replace the toContain string \"const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' });\" with \"const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })\" (no trailing semicolon: the statement now continues on the next line).",
+     "test/value-edit-owner-1108.test.mjs (about line 32): same pinned line, same replacement — \"const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })\"."
+    ],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-owners-ve.test.mjs",
+    "doubts": "Not run against an org or in a browser (forbidden here): node --check passes on studio-valueedit.js and the new test file passes (11 tests), nothing else was run. The two existing tests listed in needsOtherFile pin the old source line and will fail until they are updated. ownerCanQueue comes from the SOURCE org's describe of OwnerId, while the engine decides from the target's QueueSobject; for an object whose owner cannot be a queue the two agree. The editor's extra query runs once per dialog open and only when the fallback is a queue and owners are matched. A saved fallback that has a name but no id is still named as before (the engine would use no fallback then) — outside this finding, left alone."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#13",
+      "holds": true,
+      "why": "The fix in studio-valueedit.js closes the scenario. sftkVeFallbackSaid returns an empty name for a 00G fallback when the object's OwnerId cannot reference Group (Account) or when the target's QueueSobject has no row for this object and queue. With the empty name, sftkVeOwnerLine says the running user on a New record and 'it stays with <owner>' on a Changed one, which matches sftkOwnerFallbackFor in background.js and studio-reconcile.js. The lookup uses the same table and key as the engine, sanitises obj and the id, runs only when owners are matched, the fallback is a queue and the owner can be a queue, and falls back to a conditional wording ('..., when that queue takes <obj>') when the target cannot be asked. The note is joined into dfl before esc(), so no org text reaches innerHTML unescaped. sftkVeOwnerLine and sftkVeOwnerWill are unchanged, and the new helper is called from the non-extracted editor with a typeof guard. node --check passes and test/qa11r-owners-ve.test.mjs passes 11/11; its pure-function cases (including the comparison against the engine's sftkOwnerFallbackFor) fail without the fix, so the test is not only a string pin. One thing is broken outside the lane: two older tests pin the replaced call line and now fail (see needsOtherFile). I ran them and confirmed 2 failures; test/value-edit-owner-will-1119.test.mjs still passes.",
+      "repaired": "Nothing changed in the lane's files; no repair was needed there."
+     }
+    ],
+    "needsOtherFile": [
+     "test/qa11-builder-owner-update.test.mjs line 72: pins the old call `const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' });` and now FAILS. Change the pinned string to `const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })` (no trailing semicolon; the line continues with `+ (mapOn && fbSaid.note ? ' ' + fbSaid.note : '');`).",
+     "test/value-edit-owner-1108.test.mjs line 32: pins the same old call line and now FAILS. Apply the same replacement of the pinned string (fallbackName: fbSaid.name, no trailing semicolon)."
+    ]
+   }
+  },
+  {
+   "lane": "background",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#14",
+      "status": "fixed",
+      "what": "background.js, insert engine, catch of the QueueSobject/Group read: instead of qMap = sftkQueueOwnerMap([], []) it now builds sftkQueueOwnerMap([], fbIsQueue ? [{ QueueId: ownerFallback }] : []), so sftkOwnerFallbackFor keeps a chosen fallback queue when the read failed (Salesforce refuses the row itself if the queue does not take the object) and the 'fallback queue does not take <Object>' note can no longer fire on an unread target. The diagnostics line now adds that the fallback queue is used without a check. The pinned line 'const nodeFallback = sftkOwnerFallbackFor(ownerFallback, qMap);' and both pure functions are unchanged (they must stay identical to the copies in studio-reconcile.js).",
+      "test": "test/qa11r-background.test.mjs — describe '#14 the queues of the target could not be read': 'a fallback queue is kept, in its 15 or 18 character form', 'a fallback user stays, no fallback stays none...', 'the old behaviour (an empty map) is what dropped it...', 'the engine builds that map in the catch and no longer an empty one', 'the run says the fallback queue was used unchecked...'"
+     }
+    ],
+    "needsOtherFile": [
+     "studio-reconcile.js (update path, same finding #14, about line 4837-4841 in sftkRec... owner block): when tq.error is set the fallback queue is still dropped while the warning says 'queue-owned records go to the fallback'. Change `qMap = sftkQueueOwnerMap(sg, (tq && !tq.error && tq.records) || []);` to `qMap = sftkQueueOwnerMap(sg, (tq && tq.error) ? (fbIsQueue ? [{ QueueId: ownerFallback }] : []) : ((tq && tq.records) || []));` (using that scope's own test for a 00G fallback, e.g. /^00G/.test(String(ownerFallback || ''))), and extend the warning with ', and the fallback queue is used without a check that it takes these records' when the fallback is a queue. Leave sftkQueueOwnerMap / sftkOwnerFallbackFor themselves untouched: test/owner-queue-1120.test.mjs requires them to be textually identical to background.js."
+    ],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-background.test.mjs",
+    "doubts": "Behaviour change to be aware of: with a failed queue read and a fallback queue that really does not take the object, the affected rows now fail with Salesforce's own owner error instead of being inserted under the running user (this is the fix the finding recommends; the diagnostics line says so). A Group read failure on the SOURCE side lands in the same catch, so source queues are then not matched by name and go to the fallback too - unchanged from before. node --check background.js passes; test/qa11r-background.test.mjs (5) and the existing test/owner-queue-1120.test.mjs (10) pass. No org touched, nothing committed."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#14",
+      "holds": true,
+      "why": "The insert-path fix in background.js closes the scenario. In the catch of the QueueSobject/Group read, qMap is now built with the chosen fallback queue entered as taking the object, so sftkOwnerFallbackFor returns the queue (15 or 18 character form) and unmatched records get it as OwnerId. The 'fallback queue does not take <Object>' note needs fbIsQueue && !nodeFallback, which a failed read can no longer produce. bySrc stays empty, so no source queue is wrongly matched; a user fallback and no fallback behave as before. fbIsQueue is declared before the try, both pure functions and the pinned 'const nodeFallback = ...' line are unchanged, no new global is called, and no existing test pins the old diagnostics string (grep of test/ found only the new test). node --check background.js passes; test/qa11r-background.test.mjs passes 5/5 and test/owner-queue-1120.test.mjs passes 10/10. The test exercises the pure functions with the map the catch builds, and shows the old empty map returned null, so it fails without the fix; the source-string pins are an addition, not the only check. I repaired nothing. Two things remain open: (1) the update path named in the same finding is not fixed (see needsOtherFile); (2) minor wording, left as is: when the read fails and NO fallback is set, the diagnostics line still says 'queue-owned records go to the fallback' — the later owners summary does add 'no fallback user set'."
+     }
+    ],
+    "needsOtherFile": [
+     "studio-reconcile.js (update path, about line 4837-4841, same finding #14): on tq.error it still warns 'queue-owned records go to the fallback' and then builds qMap = sftkQueueOwnerMap(sg, []) so sftkOwnerFallbackFor returns null for a fallback queue — the records are reported as having no fallback. Apply the same rule as background.js: when tq.error and the fallback is a 00G id, build the map with [{ QueueId: ownerFallback }] as the target rows (keeping the pure function copies and the nodeFallback line identical), and extend the warning to say the fallback queue is used without a check that it takes the object."
+    ]
+   }
+  },
+  {
+   "lane": "sweep",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#18",
+      "status": "fixed",
+      "what": "In sftkSweepKind (sftk-sweep.js), the 'bots' case now uses the folder name only when the path has a folder (seg.length > 2 ? seg[1] : base), so unpackaged/bots/Astro.bot is listed as 'Astro' instead of 'Astro.bot'. The same guard was applied to the 'genAiFunctions' and 'genAiPlannerBundles' cases; folder-shaped paths behave as before.",
+      "test": "test/qa11r-sweep.test.mjs — 'is named without its file suffix'; 'a bot, an action and a plan that arrive as a folder keep the folder name, with the file as the section'; 'an action or a plan that arrives as one file is named without its suffix too'"
+     },
+     {
+      "finding": "#21",
+      "status": "fixed",
+      "what": "In sftkSweepKind, added case 'genAiPlanners' falling through to the 'genAiPlannerBundles' case, so a plan file under genAiPlanners/ gets type GenAiPlannerBundle ('Agentforce agents' group) and is covered by the existing exemption from the descriptive-text relabel. No change to the kind table or the skip list was needed.",
+      "test": "test/qa11r-sweep.test.mjs — 'lands in the Agentforce agents group, named by its file'; 'a field named in the plan's description is not relabelled as descriptive text'; 'the planner type is not skipped by the retrieve list'"
+     }
+    ],
+    "needsOtherFile": [],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-sweep.test.mjs",
+    "doubts": "Both fixes rest on the Metadata API file layout as the QA finding describes it (bots/<Name>.bot as one file; genAiPlanners/<Name>.genAiPlanner at API 62.0). Neither was seen in a live retrieve, since no org may be touched. The code now handles both the single-file and the folder shape for each, so it is right either way. A source-format file named bots/Astro.bot-meta.xml directly under bots/ would still show as 'Astro.bot' (base strips only the last extension and '-meta'); a Metadata API retrieve does not produce that shape, so I left it. node --check passed on sftk-sweep.js; the new test file (6 tests) and the existing test/sweep-agentforce-1121.test.mjs (4 tests) pass. The full suite was not run, per the rules."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#18",
+      "holds": true,
+      "why": "Diff in sftk-sweep.js (sftkSweepKind): the 'bots', 'genAiFunctions' and 'genAiPlannerBundles' cases now use seg.length > 2 ? seg[1] : base. For unpackaged/bots/Astro.bot seg is ['bots','Astro.bot'], so the component is base = 'Astro'; the section is '' -> null. Folder-shaped paths (seg.length > 2) give the same result as before, and the older test/sweep-agentforce-1121.test.mjs still passes. No new global is called from sftkSweepKind, no user-facing string changed, no innerHTML involved. The test 'is named without its file suffix' runs the real sftkSweepRun on the one-file path and expects 'Astro'; the old expression returned 'Astro.bot', so it fails without the fix. node --check passes; all 20 test files that load sftk-sweep.js pass (398 tests)."
+     },
+     {
+      "finding": "#21",
+      "holds": true,
+      "why": "case 'genAiPlanners' falls through to the 'genAiPlannerBundles' case, so unpackaged/genAiPlanners/<Name>.genAiPlanner gets type GenAiPlannerBundle (label 'Agentforce agents'), component = file name without suffix, and is returned before docOnly() by the existing type check, so a field in <description> is not relabelled DocText. GenAiPlanner is not in _sftkSweepSkip and .genAiPlanner is not matched by the binary-file pattern, so the file is retrieved and read. The tests go through sftkSweepRun with a plan whose only mention is inside <description>; before the fix the hit was type Other / DocText, so the first two tests fail without it (the third, on the skip list, is only a pin). The file shape at API 62.0 remains unverified against a live org, as the test header states."
+     }
+    ],
+    "needsOtherFile": []
+   }
+  },
+  {
+   "lane": "popup",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#19",
+      "status": "fixed",
+      "what": "Scenario still held in renderFlowList (the kind sentence was used only with an empty search). Added pure sftkFlowKindSearchEmpty(term, others) and a third branch in renderFlowList: with a search AND a kind tab AND zero visible, it counts rows.filter(hit) (flows of any kind matching the search) and, if any, shows 'No flow of this kind matches \"x\". N flows of other kinds do: see the All tab.' If no flow of any kind matches, the old 'No flow name or API name matches' sentence stays (it is true then). Both existing pinned strings are unchanged.",
+      "test": "test/qa11r-popup.test.mjs — 'says the kind has no match, how many flows of other kinds match, and where they are' and 'the list uses it only with a search, a kind tab and a match elsewhere; the other two sentences stay'"
+     },
+     {
+      "finding": "#22",
+      "status": "fixed",
+      "what": "Scenario still held (all seven redraw gates use _depsFoldOpen(), false under Switches/API versions; setFlowView('versions') drew only for 'deps'). _depsFoldOpen() now sets a new module flag _depsFoldOwed when the fold is open but another view is showing; setFlowView's 'versions' branch reads and clears the flag and calls renderDependenciesTab() when new pure sftkDepsFoldRedrawOnReturn(fold.open, owed) is true. A return with nothing owed leaves the tree as the user had it; the 'deps' path is unchanged (pinned string kept).",
+      "test": "test/qa11r-popup.test.mjs — 'a redraw skipped while Switches or API versions shows is owed', 'the open fold is redrawn on the way back only when a redraw is owed', 'setFlowView pays the debt on a plain return to Flows and clears it', 'the mechanism, run: a scan that ends under Switches leaves a debt that the return pays once'"
+     }
+    ],
+    "needsOtherFile": [],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-popup.test.mjs",
+    "doubts": "Nothing was run in a browser (rule), so both fixes are checked by unit tests and source reading only. node --check popup.js passes; test/qa11r-popup.test.mjs (6 tests) passes, and the three existing files that pin strings near these lines (flows-one-list-1121, flows-one-page-1017, flow-filter-1105) still pass. popup.html needed no change. #22: I chose an 'owed' flag over the QA's suggested 'always redraw when the fold is open' so a plain Switches-and-back does not reset the tree the user had expanded; the flag is set by any gated redraw that was skipped, which covers scan end, rescan and reload, but an org change is covered only if its path goes through one of those _depsFoldOpen() gates — I did not trace the org-switch path end to end (neither did the QA). #19: the count is of flows (rows) matching the search across all kinds; under the All tab a matching flow that sits in a tree shows its whole tree, so the All tab may list more rows than the number quoted. I edited popup.js with a Python script written through a quoted heredoc (no backslashes or regexes in the JS text inserted)."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#19",
+      "holds": true,
+      "why": "Read renderFlowList in C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\popup.js. With a search and a kind tab and visibleCount 0, the new third branch counts rows.filter(hit) (hit and rows are both in scope, hit takes a row) and writes sftkFlowKindSearchEmpty(term, n). The sentence is true whenever it shows: the loop displays any block that has a search hit and a row of the kind, so with zero visible every search-matching row is of another kind. When nothing of any kind matches, the old 'No flow name or API name matches' sentence stays and is true then. Written with textContent, so no escaping issue. The two strings pinned by test/flows-one-list-1121, flows-one-page-1017 and flow-filter-1105 are unchanged. The new helper is a pure top-level function called only from renderFlowList, which no test loads through extractFunctions. The similar sentence in sftkFlowFilterLine (sftk-flowbulk.js) belongs to the Switches panel list in dependency-map.js, not this list, so it is not the same scenario. The test exercises the pure function (singular, plural, thousands separator, null term) and would fail without the fix. node --check popup.js passes; npx vitest run test/qa11r-popup.test.mjs: 6 passed."
+     },
+     {
+      "finding": "#22",
+      "holds": true,
+      "why": "All seven redraw gates (managed-flows load, org load, scan start, scan end, rescan and two others) go through _depsFoldOpen(), which now records _depsFoldOwed when the fold is open but Switches / API versions is showing. setFlowView's 'versions' branch sets _flowView first, then reads and clears the flag and calls renderDependenciesTab() when the fold is open and a redraw is owed. That closes both the scan-finished-under-Switches path and the org-reload variant (the load gate is the same function). The 'deps' path still opens the fold and draws, and its pinned string in test/flows-one-page-1017 is intact. A closed fold clears the debt and draws on its toggle event when opened; the fold cannot be opened while hidden, so no debt is lost. A gate called at scan start under Switches can cause at most one extra redraw on return, which is harmless. _depsFoldOpen and setFlowView are not loaded by name by any other test (grep of test/), and the new helper sftkDepsFoldRedrawOnReturn is pure. The test runs the real _depsFoldOpen body and the pure function in a sandbox (drawn at once on Flows, no redraw when nothing ended, debt paid once after a scan ends under Switches), so it fails without the fix. popup.html has no diff and needs none."
+     }
+    ],
+    "needsOtherFile": []
+   }
+  },
+  {
+   "lane": "depmap",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#23",
+      "status": "fixed",
+      "what": "In dependency-map.js, the Switches panel's empty-subflow note (the string shown when calledBy is empty and no scan is running) no longer says 'run it in the Dependencies view'; it now reads 'run it on the 🗂 Flows view (🔗 Scan dependencies) to see them here.' The other two on-screen strings in this file (the 'not scanned' badge title and the 'Unknown' panel line) already named the Flows tab and were left alone; only code comments still mention a Dependencies tab/view.",
+      "test": "test/qa11r-depmap.test.mjs — 'no on-screen string sends the user to a Dependencies view or tab' and 'the empty subflow note points at the Flows view and its scan button'"
+     },
+     {
+      "finding": "C1",
+      "status": "fixed",
+      "what": "The Flows dependency report CSV is written in this file by depReportCsv. Its inline cell() now prefixes an apostrophe to any cell starting with = + - @ tab or carriage return before the RFC-4180 quoting, the same rule as histCsvEscape in studio-history.js. Kept inline (no new global) because depReportCsv is extracted by name in tests; its only caller, exportReport, is unaffected.",
+      "test": "test/qa11r-depmap.test.mjs — 'a cell that starts with = + - @ or a tab gets a leading apostrophe; quoting is kept', 'no cell of the file starts with a formula character', 'an ordinary cell is written as before, and the rule is the one of the History export'"
+     }
+    ],
+    "needsOtherFile": [
+     "popup.js (scan offer strip, the two template strings containing '🔗 subflow markers, flow types and the Dependencies tab cover only those' and '🔗 subflow markers, refined flow types and the Dependencies tab have no data yet'): replace 'the Dependencies tab' with 'the 🔗 Dependencies section' — the popup.js half of finding #23",
+     "apex-debugger.js (two tooltips: 'Map which flows call or re-trigger this one in the Dependencies tab' and \"Map this flow's subflow call chain — and what re-triggers it — in the Dependencies tab\"): replace 'in the Dependencies tab' with 'in the 🔗 Dependencies section of the Flows page' — optional part of #23",
+     "field-cleaner.js (tooltip \"Map this flow's subflow call chain in the Dependencies tab before trimming it\"): same replacement — optional part of #23",
+     "C1 remaining exports not in my lane: field-cleaner.js value-backup CSV (esc2), sftk-fieldreplace.js receipt CSV (q), studio-compare.js CSV (cell) — each needs the same leading-apostrophe guard before quoting"
+    ],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-depmap.test.mjs",
+    "doubts": "The apostrophe guard also applies to a legitimate cell that starts with a minus or plus (for example a flow label '-5'); that is the product's existing rule in histCsvEscape, but the export status line in exportReport does not tell the user that such cells are altered (studio-history's export UI does). I ran node --check on dependency-map.js and vitest on my new file plus test/deps-n4.test.mjs (the existing depReportCsv tests) — both pass; the full suite was not run, per the rules. I chose the wording 'Flows view' (matching the view button '🗂 Flows' and the QA fix text) rather than 'Flows tab', which two neighbouring strings in the same file use."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#23",
+      "holds": true,
+      "why": "The uncommitted diff in dependency-map.js changes only the Switches panel's empty-subflow note; it now reads 'run it on the 🗂 Flows view (🔗 Scan dependencies) to see them here', which is the wording the JSON asks for. '🔗 Scan dependencies' is the real label showScanOfferBar gives the button in popup.js when no version has been read (it reads '🔗 Resume dependency scan' after a partial scan, a small mismatch I left alone). No other on-screen string in this file names a Dependencies view or tab; the remaining mentions are comments. No existing test pins the old string, the string is static so no escaping question arises, and it sits inside the DependencyMap closure, not in a function tests load by name. node --check passes; the lane's test file passes 5 of 5, and deps-n4, flows-one-list-1121 and flows-one-page-1017 still pass (54 tests). The test's first #23 case scans every non-comment line for the stale phrase, so it fails without the fix. Not fixed by this lane: the popup.js half of the same finding (see needsOtherFile). Seen in passing and left alone as outside the finding: when a completed scan finds no subflow links at all, the same note still tells the user to run the scan."
+     },
+     {
+      "finding": "C1 (dependency-map.js part)",
+      "holds": true,
+      "why": "depReportCsv's inline cell() now puts an apostrophe before any cell starting with = + - @ tab or CR, before the RFC-4180 quoting; this is the same regex and order as histCsvEscape in studio-history.js. Every row goes through cell(), so org label, notes, flow labels, statuses and caller details are all covered. It stays inline, so the extracted function calls no new global. Its only caller is exportReport, which just downloads the text. The tests exercise the pure function on =, +, -, @ and tab cells, on a quoted HYPERLINK cell and on parity with histCsvEscape, so they fail without the fix; ordinary cells and the header are pinned unchanged. The existing deps-n4 tests of this function still pass."
+     }
+    ],
+    "needsOtherFile": [
+     "popup.js (showScanOfferBar, the two template strings near line 1200-1201): both still say 'the Dependencies tab'; finding #23 asks for 'the 🔗 Dependencies section' instead.",
+     "Optional, named in #23's fix: the tooltips in apex-debugger.js (about lines 2337 and 2364) and field-cleaner.js (about line 5251) reportedly still say 'in the Dependencies tab' - not checked in this lane."
+    ]
+   }
+  },
+  {
+   "lane": "compare",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "C1 (studio-compare.js part)",
+      "status": "fixed",
+      "what": "Scenario confirmed in today's code: _ocExportCsv's local cell() only quoted, so the object and detail columns (org error text, skip reason) went out raw. Added a pure top-level sftkOcCsvCell(v) mirroring histCsvEscape (studio-history.js) / sftkSweepCsv: a cell opening with = + - @ tab or CR gets a leading apostrophe, then RFC-4180 quoting (now also quoting a lone CR). _ocExportCsv calls it behind a typeof guard, with the same guard inline as the fallback, because test/regress-1115-reconcile-compare-undo.test.mjs loads _ocExportCsv alone in a sandbox.",
+      "test": "test/qa11r-compare.test.mjs: 'prefixes an apostrophe to a cell that opens with = + - @, a tab or a carriage return', 'guards first and quotes second...', 'leaves ordinary cells as they were...', 'still quotes commas, quotes and line breaks...', 'gives the same result as the History export guard for every case', 'the export uses the guarded cell writer and no unguarded one of its own'"
+     }
+    ],
+    "needsOtherFile": [
+     "eslint-globals.json (generated list of globals): if it is regenerated by a script, the new top-level function sftkOcCsvCell in studio-compare.js should be added by that regeneration; I did not touch it. It is only called inside studio-compare.js, behind a typeof guard, so lint should not need it."
+    ],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-compare.test.mjs",
+    "doubts": "node --check studio-compare.js passes; test/qa11r-compare.test.mjs (6 tests) and the existing test/regress-1115-reconcile-compare-undo.test.mjs (34 tests, which runs _ocExportCsv in a sandbox) both pass. The full suite and npm run verify were not run, per the rules. The guard logic exists twice in studio-compare.js (the pure function and the inline fallback) on purpose, for the sandbox-loading rule. The older comment block 'Export the current result set as a CSV file...' now sits above the new helper's comment instead of directly above _ocExportCsv; cosmetic only. The other C1 files (field-cleaner.js, sftk-fieldreplace.js, dependency-map.js) are outside this lane and untouched."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "C1 (studio-compare.js part)",
+      "holds": true,
+      "why": "Checked the uncommitted diff of studio-compare.js. _ocExportCsv is the only CSV writer in the file; every data cell (object name, status, match field, counts, detail from r.error / r.reason / r.note) goes through cell(), which is now sftkOcCsvCell behind a typeof guard, with an identical inline fallback. The guard regex and quoting are character-for-character the same as histCsvEscape in studio-history.js (apostrophe before = + - @ tab CR, then RFC-4180 quoting including a lone CR). The header row is static text. No innerHTML is involved, no user-facing string changed, and the one existing test that loads _ocExportCsv alone in a sandbox (test/regress-1115-reconcile-compare-undo.test.mjs, 34 tests) still passes, as its cells are plain numbers and names. node --check studio-compare.js passes. The engineer's tests of the pure function would fail without the fix (the function did not exist), but the only check on the export itself was a source-string pin, so nothing proved the downloaded file is guarded.",
+      "repaired": "Test only, in C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-compare.test.mjs: added two end-to-end cases that run the real _ocExportCsv in a sandbox (once with sftkOcCsvCell in scope, once alone so the inline fallback runs) on rows whose object name, error, skip reason and note open with = + @ -, and assert the exact CSV lines, that the pending row is left out, and that no data cell opens with a formula character. Against the old cell writer these fail. 8 tests pass; studio-compare.js was not changed by me."
+     }
+    ],
+    "needsOtherFile": []
+   }
+  },
+  {
+   "lane": "scripts",
+   "fix": {
+    "fixes": [
+     {
+      "finding": "#24",
+      "status": "fixed",
+      "what": "The scenario still held: popup.html has no [data-view=\"deps\"] button and the map draws only when #flowDepsFold is opened (toggle listener in popup.js). scripts/dev/video/sections.mjs ('dependencies' chapter) now scrolls to the fold and does rec.click('#flowDepsFold > summary'), and its kind-filter step uses the Flows list's kind tabs (#flowTypeFilter .flow-type-btn[data-ftype=...], which the map follows via _flowDepsFollowKind) instead of the .dep-filter-btn buttons that styles.css hides in the fold; narration reworded to match. scripts/dev/live/screenshots.mjs, flows-page-look.mjs and flows-views.mjs now click the fold's summary when it is closed (flows-page-look closes the fold again afterwards instead of the no-op click on Versions; flows-views scrolls the fold into view before its screenshot). scripts/dev/live/dependencies.mjs uses setFlowView('deps'), which popup.js still maps to opening the fold, so it was left alone.",
+      "test": "test/qa11r-scripts.test.mjs: 'no dev script clicks the removed Dependencies view button', 'the three live scripts click the summary of the fold, once, when it is closed', 'the video chapter clicks the summary on camera, before it waits for the map', 'the video chapter filters by kind with the tabs of the list, not the hidden buttons of the map'"
+     }
+    ],
+    "needsOtherFile": [],
+    "testFile": "C:\\Users\\yonas\\OneDrive\\Desktop\\Saleforce Toolkit\\test\\qa11r-scripts.test.mjs",
+    "doubts": "None of the four scripts could be run (they need an org); they pass node --check and the selectors were checked against popup.html, popup.js and styles.css only. In the video chapter the kind-tab click also filters the Flows list above the map, and the reworded narration line ('Pick a kind in the tabs above ... and the map follows.') has not been seen on camera; the fold body is capped at 46vh with its own scroll, so later rec.scrollTo calls on #depRefSearch / #depRescanBtn rely on scrollIntoView working through the nested scroller. The three scripts under scripts/dev/live were edited because the finding names them (lane: 'the dev scripts named in finding #24')."
+   },
+   "check": {
+    "verdicts": [
+     {
+      "finding": "#24",
+      "holds": true,
+      "why": "The four named scripts are fixed correctly. In scripts/dev/video/sections.mjs the 'dependencies' chapter clicks '#flowDepsFold > summary' (recorder's click does el.click(), which toggles the details and fires the toggle listener in popup.js that calls renderDependenciesTab); the kind step now uses the #flowTypeFilter tabs, whose click handler calls _flowDepsFollowKind, and skips a greyed tab via :not(.flow-type-none); rec.scrollTo and c.has exist. screenshots.mjs, flows-page-look.mjs and flows-views.mjs click the summary only when the fold is closed; the fold sits above the flow list in popup.html so the screenshots still frame it. No existing test pins the old strings; no extension code was touched (dev scripts only, so no innerHTML or test-loaded-function concerns). What the fixer missed: two more live scripts had the same defect in a form their literal search could not see - scripts/dev/live/qa-theme-sweep.mjs and scripts/dev/live/flows-one-page.mjs loop over ['deps', ...] and did document.querySelector('#flowViews [data-view=\"${v}\"]').click() with no optional chaining, so they threw on null at the first iteration. The claim 'no dev script clicks the removed Dependencies view button' was therefore false until repaired. Nothing was run against an org or a browser; verification is node --check on the six scripts and npx vitest run test/qa11r-scripts.test.mjs (7 of 7 pass).",
+      "repaired": "scripts/dev/live/qa-theme-sweep.mjs and scripts/dev/live/flows-one-page.mjs: for v === 'deps' the loop now evaluates setFlowView('deps') (popup.js maps it to the Flows view with the fold opened and drawn) instead of clicking the missing button; other views unchanged. test/qa11r-scripts.test.mjs: added a test that finds every script line building '#flowViews [data-view=\"${' from a variable, requires it to be exactly those two files and to carry the deps guard, and pins that setFlowView('deps') still opens and draws the fold in popup.js. The new test fails without the repair."
+     }
+    ],
+    "needsOtherFile": []
+   }
+  }
+ ],
+ "needsOtherFile": [
+  "modals: test/match-rule-1120.test.mjs line ~88: the it() title 'one switch for small differences; a rule never set starts with it on, a saved rule keeps its own' still passes (the pinned source line exists, now inside the [data-mq-field] handler) but its wording is no longer true. Change the title to: 'one switch for small differences; a rule never set opens exact as the scan reads it and turns forgiving at the first field picked, a saved rule keeps its own'.",
+  "modals: CHANGELOG.md (2026-11-20 entry, around line 28, not mine to edit): the sentence that the switch 'is on for a rule that was never set' is no longer what the app does. It should say: a rule that was never set is shown as the scan reads it (exact); the switch turns on when the first field of a new rule is picked, and is saved with it.",
+  "modals: scripts/dev/live/qa-match-chapter.mjs and scripts/dev/video/sections.mjs (around line 1109) use #dsMqForgive: if either expects the switch to be already ticked on a never-configured object, that expectation must flip (it is unticked until a field is picked or the switch is pressed). I did not run or read them in full.",
+  "modals: CHANGELOG.md (2026-11-20 entry, about line 28): it says the switch 'Ignore small differences' is on for a rule that was never set. After the #5/#11 fix it is off when a never-set rule opens and turns on at the first field the user picks. The sentence needs rewording by whoever owns CHANGELOG.md.",
+  "modals: test/match-rule-1120.test.mjs line 94 pins the cache-hit line `if (matchLive && matchLive.sig === sig) { el0.innerHTML = matchLive.html; wireLive(); return; }`. That line paints the cached result without matchLive.reco, so an already shown 'Use it' offer disappears on any same-rule re-render (each letter typed in the search box) until the rule changes. This is older than the lane's fix and the QA fix text for #6 suggested `matchLive.html + (matchLive.reco || '')`; changing it needs that pin updated in the same step. Not changed here because the test file is outside the lane.",
+  "deploy: studio-reconcile.js line 1364 (Reconcile view health card): sftkRecDupsHtml(scan, p) emits the same root button data-dep-tab-go=\"amb\" ('Show them with their merge', title 'Opens the Needs a decision tab of the Deploy page'), but the only listener for [data-dep-tab-go] is in studio-deploy.js _depWireChrome, which is wired by the Deploy page. Read from the code only (grep of root *.js), not run: on the Reconcile view the button appears to have no handler. Either wire it there to open the Deploy page on the root's amb tab, or do not emit the button outside the Deploy page. Pre-existing, outside finding #16's scenario.",
+  "fc: sftk-fieldreplace.js (optional hardening, not required for the fix): sftkCopyValuesCsv's own cell writer `q` is still unguarded; the Field Cleaner call site now passes fcCsvSafeTargets(targets), which closes the receipt. If the owner of that file wants the guard at the source, add `if (typeof v === 'string' && /^[=+\\-@\\t\\r]/.test(s)) s = \"'\" + s;` inside q (s made `let`) — then the fcCsvSafeTargets wrap in field-cleaner.js must be dropped to avoid a double apostrophe, and test/field-replace-1004.test.mjs line ~380 stays valid (its values do not start with a formula character).",
+  "fc: sftk-fieldreplace.js: sftkCopyValuesCsv still writes its cells raw (`q` has no formula guard). The only caller (field-cleaner.js _copyRun) now guards the rows before the call, so there is no open hole today, but the guard belongs in the builder too if the C1 owner of that file wants it closed at the source; fcCsvSafeTargets is idempotent, so adding it there will not double the apostrophe.",
+  "vrpause: background.js sfPatch (optional, low priority): it drops the `resent` mark from sfFetchWithProxy, so a PATCH whose first send got a 5xx (and may have committed) and whose automatic re-send got a 4xx reaches sftk-vrpause.js as a plain 'HTTP 4xx' text and is read as a definite refusal. Throwing through sftkResentError and adding a marker to the text would let sftkVrPauseMaybeOff treat it as possibly off. Very rare; not needed to close finding #10.",
+  "owners-rec: test/deploy-owner-line-1119.test.mjs line 28 (it 'is read beside the fields, from both orgs, and drawn above them') now FAILS: change  expect(R).toContain('`SELECT Owner.Name FROM ${obj} WHERE Id = ');  to  expect(R).toContain('`SELECT OwnerId, Owner.Name FROM ${obj} WHERE Id = ');  (the other three pins in that test, including the Promise.all line, still pass).",
+  "owners-rec: CHANGELOG.md line 30 (finding #12's second half; I may not edit it): \"on the others the record belongs to you, and the run says so\" should become something like \"on the others a new record belongs to you and a changed record keeps its owner, and the run says so.\"",
+  "owners-rec: test/deploy-owner-line-1119.test.mjs line 28: the pin expect(R).toContain('`SELECT Owner.Name FROM ${obj} WHERE Id = ') fails since the #20 fix; change it to '`SELECT OwnerId, Owner.Name FROM ${obj} WHERE Id = ' (the other three assertions in that test still hold).",
+  "owners-rec: CHANGELOG.md line 30 (finding #12, second half): \"on the others the record belongs to you, and the run says so\" is not true on an update; reword to something like \"on the others a new record belongs to you and a changed record keeps its owner, and the run says so.\"",
+  "owners-ve: test/qa11-builder-owner-update.test.mjs (it 'a Changed row is an update', about line 72): the pinned source line changed. Replace the toContain string \"const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' });\" with \"const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })\" (no trailing semicolon: the statement now continues on the next line).",
+  "owners-ve: test/value-edit-owner-1108.test.mjs (about line 32): same pinned line, same replacement — \"const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })\".",
+  "owners-ve: test/qa11-builder-owner-update.test.mjs line 72: pins the old call `const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' });` and now FAILS. Change the pinned string to `const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })` (no trailing semicolon; the line continues with `+ (mapOn && fbSaid.note ? ' ' + fbSaid.note : '');`).",
+  "owners-ve: test/value-edit-owner-1108.test.mjs line 32: pins the same old call line and now FAILS. Apply the same replacement of the pinned string (fallbackName: fbSaid.name, no trailing semicolon).",
+  "background: studio-reconcile.js (update path, same finding #14, about line 4837-4841 in sftkRec... owner block): when tq.error is set the fallback queue is still dropped while the warning says 'queue-owned records go to the fallback'. Change `qMap = sftkQueueOwnerMap(sg, (tq && !tq.error && tq.records) || []);` to `qMap = sftkQueueOwnerMap(sg, (tq && tq.error) ? (fbIsQueue ? [{ QueueId: ownerFallback }] : []) : ((tq && tq.records) || []));` (using that scope's own test for a 00G fallback, e.g. /^00G/.test(String(ownerFallback || ''))), and extend the warning with ', and the fallback queue is used without a check that it takes these records' when the fallback is a queue. Leave sftkQueueOwnerMap / sftkOwnerFallbackFor themselves untouched: test/owner-queue-1120.test.mjs requires them to be textually identical to background.js.",
+  "background: studio-reconcile.js (update path, about line 4837-4841, same finding #14): on tq.error it still warns 'queue-owned records go to the fallback' and then builds qMap = sftkQueueOwnerMap(sg, []) so sftkOwnerFallbackFor returns null for a fallback queue — the records are reported as having no fallback. Apply the same rule as background.js: when tq.error and the fallback is a 00G id, build the map with [{ QueueId: ownerFallback }] as the target rows (keeping the pure function copies and the nodeFallback line identical), and extend the warning to say the fallback queue is used without a check that it takes the object.",
+  "depmap: popup.js (scan offer strip, the two template strings containing '🔗 subflow markers, flow types and the Dependencies tab cover only those' and '🔗 subflow markers, refined flow types and the Dependencies tab have no data yet'): replace 'the Dependencies tab' with 'the 🔗 Dependencies section' — the popup.js half of finding #23",
+  "depmap: apex-debugger.js (two tooltips: 'Map which flows call or re-trigger this one in the Dependencies tab' and \"Map this flow's subflow call chain — and what re-triggers it — in the Dependencies tab\"): replace 'in the Dependencies tab' with 'in the 🔗 Dependencies section of the Flows page' — optional part of #23",
+  "depmap: field-cleaner.js (tooltip \"Map this flow's subflow call chain in the Dependencies tab before trimming it\"): same replacement — optional part of #23",
+  "depmap: C1 remaining exports not in my lane: field-cleaner.js value-backup CSV (esc2), sftk-fieldreplace.js receipt CSV (q), studio-compare.js CSV (cell) — each needs the same leading-apostrophe guard before quoting",
+  "depmap: popup.js (showScanOfferBar, the two template strings near line 1200-1201): both still say 'the Dependencies tab'; finding #23 asks for 'the 🔗 Dependencies section' instead.",
+  "depmap: Optional, named in #23's fix: the tooltips in apex-debugger.js (about lines 2337 and 2364) and field-cleaner.js (about line 5251) reportedly still say 'in the Dependencies tab' - not checked in this lane.",
+  "compare: eslint-globals.json (generated list of globals): if it is regenerated by a script, the new top-level function sftkOcCsvCell in studio-compare.js should be added by that regeneration; I did not touch it. It is only called inside studio-compare.js, behind a typeof guard, so lint should not need it."
+ ],
+ "notHolding": [
+  "modals #6: The scenario of the finding is closed: the bump and clearTimeout sit above both early returns, so an older rule's read stops at its seq checks. But the fix broke something: the search box re-renders the whole modal on every letter (wireModal -> runMatchLive -> cache hit), and the same happens when the fold is closed and opened. That cache hit now advanced the sequence and ended the same rule's own search for a better rule ('Use it' offer), which was guarded by the same seq; the result is cached without an offer, so it never came back for that rule. Before the fix that loop survived a same-rule re-render.",
+  "owners-rec #20: The text fix closes the scenario, but it breaks an existing committed test: test/deploy-owner-line-1119.test.mjs line 28 pins the source string `SELECT Owner.Name FROM ${obj} WHERE Id = , and the query is now `SELECT OwnerId, Owner.Name FROM ...`. That test fails now (1 failed, 3 passed); no query that also reads OwnerId can keep the pinned substring, and the file is outside this lane, so it is in needsOtherFile. Second defect, repaired: the builder stores a queue's name as \"<Name> (queue)\" (studio-builder.js qOpt data-name), so the line read \"the fallback queue Support (queue) when it takes this object\". Otherwise sound: the user and no-fallback sentences are unchanged, the line is drawn with textContent (no innerHTML), and sftkOwnerLineText calls no new global."
+ ],
+ "noReturn": []
+}

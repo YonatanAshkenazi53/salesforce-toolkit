@@ -506,7 +506,9 @@ function sftkCopyValuesCheck(intended, afterRows, newApi) {
 // The receipt: every record that is about to be written, what it gets and
 // what was there. The way back at any size (Data Loader takes it as it is).
 function sftkCopyValuesCsv(newApi, targets) {
-  const q = v => { const s = v == null ? '' : String(v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  // a text cell that would open as a formula in a spreadsheet gets a leading apostrophe (QA 2026-11-21, C1); a cell
+  // that already carries it is left alone, so a caller that guarded its rows is not doubled
+  const q = v => { let s = v == null ? '' : String(v); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const lines = [`Id,${newApi} (written),${newApi} (before)`];
   for (const t of (targets || [])) lines.push([q(t.Id), q(t.value), q(t.was)].join(','));
   return lines.join('\r\n');

@@ -511,6 +511,33 @@ function fcDepKey(type, id) {
   const s = String(id == null ? '' : id);
   return `${type}|${/^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$/.test(s) ? s.substring(0, 15) : s}`;
 }
+// QA 1.1 regression (finding 9): a deploy the background SUBMITTED but could not follow to its end (the session ran
+// out, the status polls failed, the job ran past the wait) answers { error, submitted: true, jobId }. sftkWriteVerified
+// reads any answer with an error as "not accepted", yet Salesforce may still apply the job — it is not a refusal.
+// Every deploy write of this file that passes `submitted` on therefore tests `wr.raw.submitted` before its refusal
+// sentence and keeps the undo step of its History entry on `wr.accepted || wr.raw.submitted`. The test is written
+// out at each place (tests load fixReportType and its like by name, with no other function of this file in scope).
+// QA 1.1 regression (C1): a spreadsheet runs a cell that starts with = + - @ (or a tab / carriage return) as a
+// formula, and the values of a field are org text. Same rule as histCsvEscape (studio-history.js) and sftkSweepCsv:
+// such a TEXT gets a leading apostrophe, which a spreadsheet reads as "this is text". A number or a boolean is left
+// as it is (-5 of a number field is a number, not a formula). Then RFC-4180 quoting. PURE.
+function fcCsvCell(v) {
+  let s = v == null ? '' : String(v);
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+// The receipt of a copy of values is built by sftkCopyValuesCsv from { Id, value, was }: the same rows with the two
+// org values guarded. New objects — the rows that are written to the org are not touched. PURE.
+function fcCsvSafeTargets(targets) {
+  const g = v => (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? "'" + v : v;
+  return (targets || []).map(t => ({ ...t, value: g(t.value), was: g(t.was) }));
+}
+// QA 1.1 regression (finding 17): the row's done line after a hand edit in the XML editor took every use of the
+// field out of a page layout or a Lightning page. It reads as a change (not as "Nothing uses the field here"), so
+// the row gets the green chip and its Undo. PURE.
+function fcHandEditGoneLabel(what) {
+  return `✅ Edited — your edit is in the org and nothing in this ${what || 'component'} uses the field any more — verified by re-reading the org`;
+}
 // What a read answered, as an error to report: '' when it answered, else why not. The background resolves a failed
 // call with { error } instead of throwing, so a leg that reads `r.listviews || []` took a refused or timed-out read
 // for "none" (QA 1.1 finding 19). wantArray: the answer must be a list (the REST quick-action list). PURE.
@@ -4574,7 +4601,7 @@ const FieldCleaner = (() => {
         needsCheckbox: true,
         ack: overN ? `I understand ${N(overN)} existing value${overN === 1 ? '' : 's'} in ${to} ${overN === 1 ? 'is' : 'are'} overwritten` : `I understand ${N(targets.length)} record${targets.length === 1 ? ' is' : 's are'} updated`,
       },
-      extraHtml: `<label class="sftk-confirm-ack"><input type="checkbox" id="fcCopyCsv" checked> ⬇ Save a receipt first: a CSV of every record, the value written and the value that was there</label>`,
+      extraHtml: `<label class="sftk-confirm-ack" title="A text value that starts with = + - or @ is written with an apostrophe (') in front, so a spreadsheet shows it as text and does not run it as a formula. Take the apostrophe off before loading such a value back."><input type="checkbox" id="fcCopyCsv" checked> ⬇ Save a receipt first: a CSV of every record, the value written and the value that was there</label>`,
       onRender: () => { const cb = eid('fcCopyCsv'); cb?.addEventListener('change', () => { wantCsv = !!cb.checked; }); },
       confirmLabel: `📦 Copy ${N(targets.length)} value${targets.length === 1 ? '' : 's'}`,
       production: gate.production ? { label: gate.label } : null,
@@ -4582,7 +4609,7 @@ const FieldCleaner = (() => {
     if (!sure) return;
 
     if (wantCsv) {
-      const blob = new Blob([sftkCopyValuesCsv(to, targets)], { type: 'text/csv;charset=utf-8' });
+      const blob = new Blob([sftkCopyValuesCsv(to, fcCsvSafeTargets(targets))], { type: 'text/csv;charset=utf-8' });   // a formula-like text gets a leading apostrophe (QA 1.1 regression, C1)
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url; a.download = `${obj}.${to}-copy-receipt-${targets.length}.csv`;
@@ -5248,7 +5275,7 @@ const FieldCleaner = (() => {
             <span class="fc-item-name">${esc(c.name)}</span>
             <span class="fc-item-btns">
               ${xlinkHtml('dependencies', '↗ Deps',
-                "Map this flow's subflow call chain in the Dependencies tab before trimming it")}
+                "Map this flow's subflow call chain in the 🔗 Dependencies section of the Flows page before trimming it")}
               <button class="btn btn-sm fc-inspect-btn" title="View the XML of ${esc(seen)}"
                       data-id="${esc(id)}" data-type="Flow">🔍</button>
               <span class="${c.pb ? 'fc-del-pair' : 'fc-fix-pair'}" data-id="${esc(id)}" data-type="Flow" data-name="${esc(c.name)}">${_fixBtnsHtml('Flow', id, c.name)}</span>
@@ -7292,9 +7319,10 @@ const FieldCleaner = (() => {
       });
       if (wr.accepted && wr.ok) return `✅ Search layout updated · ${swap ? (ed.newAlreadyThere ? `${swapTo} was already a column, so the old one was removed` : `${swapTo} now sits where ${field} was`) : 'the column is removed'} — verified by re-reading the org`;
       if (wr.accepted) throw fail(`The deploy was accepted, but on re-read the “${componentName}” search layout still lists ${field} — check it in Setup.`);
+      if (!wr.accepted && wr.raw && wr.raw.submitted) throw fail(`The update of the “${componentName}” search layout was sent and Salesforce is still running it. Check Setup → Deployment Status, then re-scan. The restore point is kept and Undo is in Activity.`);
       throw fail(`Salesforce won't accept the search layout update (${_feText(String((wr.raw && wr.raw.error) || 'refused'))}). Nothing was changed — take the column out in Setup.`);
     } finally {
-      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+      await sftkHistoryEnd(j, { undo: wr && (wr.accepted || (wr.raw && wr.raw.submitted))
         ? { steps: [{
             describe: `Put the “${componentName}” search layout of ${obj} back the way it was`,
             // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the SOAP re-read below
@@ -7371,9 +7399,10 @@ const FieldCleaner = (() => {
       if (wr.accepted) throw fail(swap
         ? `"${componentName}" was deployed, but on re-read it does not show ${swapTo} in place of the column — check it in Setup → Report Types.`
         : `"${componentName}" was deployed but still lists the column on re-read — check it in Setup → Report Types.`);
+      if (!wr.accepted && wr.raw && wr.raw.submitted) throw fail(`The update of the report type "${componentName}" was sent and Salesforce is still running it. Check Setup → Deployment Status, then re-scan. The restore point is kept and Undo is in Activity.`);
       throw fail(`Salesforce won't accept the report type update for "${componentName}" (${_feText(String((wr.raw && wr.raw.error) || 'refused'))}). Click "Open in Setup" to remove the column by hand.`);
     } finally {
-      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+      await sftkHistoryEnd(j, { undo: wr && (wr.accepted || (wr.raw && wr.raw.submitted))
         ? { steps: [{
             describe: `Put "${componentName}" report type back the way it was before this fix`,
             // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the
@@ -7904,9 +7933,10 @@ const FieldCleaner = (() => {
       if (wr.accepted) throw new Error(handAdded
         ? `"${componentName}" — the deploy was accepted, but on re-read the ${spec.what} does not hold your edit (three reads). It is NOT counted as done. Open 🔍 to see what the org holds, then try again.`
         : `"${componentName}" — the deploy was accepted, but on re-read the ${spec.what} still names ${field}. Re-scan, and check it in Setup.`);
+      if (!wr.accepted && wr.raw && wr.raw.submitted) throw new Error(`The edited ${spec.what} "${componentName}" was sent and Salesforce is still running the deploy. Check Setup → Deployment Status, then re-scan. The restore point is kept and Undo is in Activity.`);
       throw new Error(`Salesforce refused the edited ${spec.what} "${componentName}": ${_feText(String((wr.raw && wr.raw.error) || 'refused'))}. Nothing was changed — 🗑 delete it, or edit it in Setup.`);
     } finally {
-      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+      await sftkHistoryEnd(j, { undo: wr && (wr.accepted || (wr.raw && wr.raw.submitted))
         ? { steps: [{
             describe: `Put the ${spec.what} "${componentName}" back as it was before the ${verb.toLowerCase()}`,
             // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read in `verify`
@@ -8753,7 +8783,7 @@ const FieldCleaner = (() => {
         <div class="fc-backup-offer">
           💾 <strong>${_dataVerdict.filled.toLocaleString('en-US')}${_dataVerdict.sampled ? '+' : ''}</strong>
           record(s) still hold a value. Download them first?
-          <button class="btn btn-secondary btn-sm" id="fcBackupBtn" style="margin-left:6px">💾 Back up values (CSV)</button>
+          <button class="btn btn-secondary btn-sm" id="fcBackupBtn" style="margin-left:6px" title="A text value that starts with = + - or @ is written with an apostrophe (') in front, so a spreadsheet shows it as text and does not run it as a formula. Take the apostrophe off before loading such a value back.">💾 Back up values (CSV)</button>
         </div>` : '',
       onRender: () => {
         eid('fcBackupBtn')?.addEventListener('click', e => backupFieldValues(e.currentTarget));
@@ -8789,12 +8819,9 @@ const FieldCleaner = (() => {
         return;
       }
       const rows = q.records || [];
-      const esc2 = v => {
-        const s = v == null ? '' : String(v);
-        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-      };
+      // fcCsvCell: a text value that a spreadsheet would run as a formula gets a leading apostrophe (QA 1.1 regression, C1)
       const header = cols.join(',');
-      const body = rows.map(r => cols.map(c => esc2(r[c])).join(',')).join('\r\n');
+      const body = rows.map(r => cols.map(c => fcCsvCell(r[c])).join(',')).join('\r\n');
       const csv = header + '\r\n' + body;
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -9524,10 +9551,11 @@ const FieldCleaner = (() => {
       });
       if (wr.accepted && wr.ok) { say('fc-xml-ed-ok', '✅ Deployed — every line you changed is in the org, verified by re-reading it. ↩ Undo in Activity puts the previous XML back.'); return 'deployed'; }
       if (wr.accepted) { say('fc-xml-ed-err', `⚠ Salesforce accepted the deploy, but on re-read not every line you wrote is there — Salesforce may have normalised it. Open 🔍 again to see what the org holds.`); return 'odd'; }
+      if (!wr.accepted && wr.raw && wr.raw.submitted) { say('fc-xml-ed-err', `⚠ The deploy was sent and Salesforce is still running it — it is not refused. Check Setup → Deployment Status, then open 🔍 again to see what the org holds. The restore point is kept and ↩ Undo is in Activity. Its words: <span class="fc-xml-ed-raw">${esc(String((wr.raw && wr.raw.error) || ''))}</span>`); return 'submitted'; }
       say('fc-xml-ed-err', `❌ Salesforce refused the deploy — nothing was changed. Its words: <span class="fc-xml-ed-raw">${esc(String((wr.raw && wr.raw.error) || 'refused'))}</span>`);
       return 'refused';
     } finally {
-      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+      await sftkHistoryEnd(j, { undo: wr && (wr.accepted || (wr.raw && wr.raw.submitted))
         ? { steps: [{
             describe: `Put the ${spec.what} "${componentName}" back as it was before the XML edit`,
             // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read in `verify`
@@ -9550,7 +9578,13 @@ const FieldCleaner = (() => {
       panel.style.display = 'none';
       if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
       await toggleXmlInspector(type, componentId, componentName, fieldId);
-      if (note) panel.querySelector('.fc-xml-hdr')?.insertAdjacentHTML('afterend', `<div class="fc-xml-ed-ok fc-xml-ed-done">${esc(note)}</div>`);
+      if (!note) return;
+      // QA 1.1 regression (finding 17): the edit took every use of the field out, so the fresh read settled the row
+      // as "Nothing uses the field here … Nothing to remove" and hid the panel with the Deployed note in it. The
+      // row says what happened instead: a change, with its Undo, and the next ask gives Salesforce time to catch up.
+      const row = eid(`fcItem_${componentId}`);
+      if (row && row.classList.contains('fc-item-fixed') && !_fixedRowChanged(row.querySelector('.fc-item-ok')?.dataset.label)) { markFixed(componentId, fcHandEditGoneLabel(spec.what)); return; }
+      panel.querySelector('.fc-xml-hdr')?.insertAdjacentHTML('afterend', `<div class="fc-xml-ed-ok fc-xml-ed-done">${esc(note)}</div>`);
     };
     panel.innerHTML = `
       <div class="fc-xml-hdr">
@@ -10754,6 +10788,7 @@ const FieldCleaner = (() => {
               return { ok: !!r.ok, text: null };
             },
           });
+          if (!wr.accepted && wr.raw && wr.raw.submitted) throw new Error('The restore was sent and Salesforce is still running it — it is not refused. Check Setup → Deployment Status and look at the component in Setup before pressing Restore again. The restore point is kept.');
           if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
           if (!wr.ok) throw new Error('restored, but the org could not be re-read to confirm it — check it in Setup');
         } finally {
@@ -10781,6 +10816,7 @@ const FieldCleaner = (() => {
               catch (_) { return { ok: false, text: null }; }
             },
           });
+          if (!wr.accepted && wr.raw && wr.raw.submitted) throw new Error('The restore was sent and Salesforce is still running it — it is not refused. Check Setup → Deployment Status and look at the report type in Setup → Report Types before pressing Restore again. The restore point is kept.');
           if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
           if (!wr.ok) throw new Error('restored, but the org could not be re-read to confirm it — check it in Setup → Report Types');
         } finally {

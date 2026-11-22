@@ -323,12 +323,15 @@ export const SECTIONS = [
   { id: 'dependencies', title: 'Dependencies', run: async c => {
     const { h, rec } = c;
     await c.popup('flows');
-    await rec.click('#flowViews [data-view="deps"]', 700);
+    // the dependency map is a fold of the Flows page since 2026-11-21 (the Dependencies view button is gone): opening it draws the map
+    await rec.scrollTo('#flowDepsFold', 'start');
+    await rec.click('#flowDepsFold > summary', 700);
     await rec.say('Dependencies. The flows of the org as a tree: which flow calls which.');
     await depScanGate(c, true);
     await rec.fast(() => h.waitFor("!!document.querySelector('#depExportBtn') && document.querySelectorAll('.dep-node').length > 0", 300000, 1000));
     await rec.pause(3000);
-    if (await c.has('.dep-filter-btn[data-type="RecordTriggeredFlow"]')) { await rec.click('.dep-filter-btn[data-type="RecordTriggeredFlow"]', 1500); await rec.say('Filter by kind, for example only record-triggered flows.', 3000); await rec.click('.dep-filter-btn[data-type="all"]', 1000); }
+    // the map's own kind buttons are hidden inside the fold: it follows the kind tabs of the Flows list above it
+    if (await c.has('#flowTypeFilter .flow-type-btn[data-ftype="RecordTriggeredFlow"]:not(.flow-type-none)')) { await rec.click('#flowTypeFilter .flow-type-btn[data-ftype="RecordTriggeredFlow"]', 1500); await rec.say('Pick a kind in the tabs above, for example only record-triggered flows, and the map follows.', 3000); await rec.click('#flowTypeFilter .flow-type-btn[data-ftype="all"]', 1000); await rec.scrollTo('#flowDepsFold', 'start'); }
     if (await c.has('#depRefSearch')) {
       // User 2026-10-10 on the first cut: "i dont really see the example on the screen of what
       // uses this … didn't show how a full scan goes". So: the search ON camera, its partial

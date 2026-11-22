@@ -497,10 +497,15 @@ function sftkSweepKind(path, text, hit, forms) {
     // Agentforce (owner 2026-11-19: "what about agentforce components like … actions"). An action is a folder
     // (its -meta.xml and the input / output schema.json), so is an agent's plan and a bot; a topic is one file.
     // File shapes read 2026-11-21 from Salesforce's public sample app (trailheadapps/coral-cloud).
-    case 'genAiFunctions': return K('GenAiFunction', seg[1] || base, seg.slice(2).join('/'));
+    // QA 1.1 #18: the folder names the component only when there IS a folder. A Metadata API retrieve returns a bot
+    // as ONE file, bots/<Name>.bot — seg[1] is then the file itself and the bot was listed as "<Name>.bot".
+    // QA 1.1 #21: at the API version the scan retrieves, an agent's plan may be the older type GenAiPlanner and
+    // arrive under genAiPlanners/ — the same group, and the same "an agent acts on this text" rule below.
+    case 'genAiFunctions': return K('GenAiFunction', seg.length > 2 ? seg[1] : base, seg.slice(2).join('/'));
     case 'genAiPlugins': return K('GenAiPlugin', base);
-    case 'genAiPlannerBundles': return K('GenAiPlannerBundle', seg[1] || base, seg.slice(2).join('/'));
-    case 'bots': return K('Bot', seg[1] || base, seg.slice(2).join('/'));
+    case 'genAiPlanners':
+    case 'genAiPlannerBundles': return K('GenAiPlannerBundle', seg.length > 2 ? seg[1] : base, seg.slice(2).join('/'));
+    case 'bots': return K('Bot', seg.length > 2 ? seg[1] : base, seg.slice(2).join('/'));
     default: return K('Other', `${dir} › ${base}`);
   }
   };

@@ -1,4 +1,4 @@
-// Read only: the Flows page, its Versions list and its Dependencies view, as they are drawn on a real org.
+// Read only: the Flows page, its Versions list and its Dependencies fold, as they are drawn on a real org.
 // VIEW=versions|deps (default both), DARK=1.
 export default async function (h) {
   await h.login(process.env.ORG || 'npc2'); await h.popup('flows');
@@ -15,7 +15,9 @@ export default async function (h) {
     await h.shot(h.shots + '/flows-after-steps.png');
   }
   if (process.env.VIEW !== 'versions') {
-    await h.eval("document.querySelector('#flowViews .flow-view-btn[data-view=\"deps\"]')?.click()"); await h.sleep(6000);
+    // the dependency map is a fold of the Flows page since 2026-11-21 (the Dependencies view button is gone): opening it draws the map
+    await h.eval("(() => { const d = document.getElementById('flowDepsFold'); if (d && !d.open) d.querySelector('summary').click(); return !!d; })()"); await h.sleep(6000);
+    await h.eval("(() => { document.getElementById('flowDepsFold')?.scrollIntoView({ block: 'start' }); return true; })()"); await h.sleep(300);
     h.log('deps html head:', await h.eval("(document.getElementById('depTreeContainer')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 900)"));
     await h.shot(h.shots + '/flows-deps.png');
   }

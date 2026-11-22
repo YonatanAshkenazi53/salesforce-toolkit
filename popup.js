@@ -1197,8 +1197,8 @@ function showScanOfferBar(loadOrgUrl, loadSid) {
   note.className = 'scan-offer-note';
   note.style.cssText = 'font-size:11px;color:var(--subtext,#706E6B);display:block;margin-bottom:4px';
   note.textContent = st.done > 0
-    ? `Dependency scan covers ${st.done} of ${allFlows.length} flow versions. 🔗 subflow markers, flow types and the Dependencies tab cover only those — ${left.reads} version(s) left to read, ${left.calls} batched call(s) (${left.estLabel}).`
-    : `${allFlows.length} flow versions loaded. The dependency scan reads ${left.reads} of them in ${left.calls} batched API call(s) (${left.estLabel}) and has not been run, so 🔗 subflow markers, refined flow types and the Dependencies tab have no data yet.`;
+    ? `Dependency scan covers ${st.done} of ${allFlows.length} flow versions. 🔗 subflow markers, flow types and the 🔗 Dependencies section cover only those — ${left.reads} version(s) left to read, ${left.calls} batched call(s) (${left.estLabel}).`
+    : `${allFlows.length} flow versions loaded. The dependency scan reads ${left.reads} of them in ${left.calls} batched API call(s) (${left.estLabel}) and has not been run, so 🔗 subflow markers, refined flow types and the 🔗 Dependencies section have no data yet.`;
 
   const btn = document.createElement('button');
   btn.id = 'scanSubflowBtn';
@@ -1452,6 +1452,11 @@ let _flowTypeFilter = 'all';
 function sftkFlowKindSelectable(filter, row, trigMap) {
   return !filter || filter === 'all' || sftkFlowKindTab(sftkFlowKindOfRow(row, trigMap)) === filter;
 }
+// PURE. The empty list's sentence when a search under a kind tab matches flows of other kinds only.
+function sftkFlowKindSearchEmpty(term, others) {
+  const n = Number(others) || 0;
+  return `No flow of this kind matches “${String(term == null ? '' : term)}”. ${n.toLocaleString('en-US')} flow${n === 1 ? '' : 's'} of other kinds ${n === 1 ? 'does' : 'do'}: see the All tab.`;
+}
 let _flowDepsFollowT = null;
 // The dependency map in the fold shows the kind picked on the list's tabs (its own tabs are hidden there — one row
 // of tabs for the page). "Other" has no tab in the map: it shows all.
@@ -1525,6 +1530,11 @@ function renderFlowList() {
   // a search that matches nothing says so — it is not an empty org (QA 2026-10-18)
   if (visibleCount === 0 && sortedLabels.length > 0) emptyState.textContent = `No flow name or API name matches “${document.getElementById('searchInput').value.trim()}”.`;
   if (visibleCount === 0 && sortedLabels.length > 0 && !search && _flowTypeFilter !== 'all') emptyState.textContent = 'No flow of this kind in the org.';
+  // a search under a kind tab that matches flows of other kinds only says that, not that the name is unknown (QA 1.1 regression #19)
+  if (visibleCount === 0 && sortedLabels.length > 0 && search && _flowTypeFilter !== 'all') {
+    const others = rows.filter(hit).length;
+    if (others) emptyState.textContent = sftkFlowKindSearchEmpty(document.getElementById('searchInput').value.trim(), others);
+  }
   if (allFlows.length === 0) {
     emptyState.style.display = '';
     emptyState.textContent = 'No flows found in this org.';
@@ -2501,9 +2511,17 @@ function setupModeToggle() {
 let _flowView = 'versions';
 // One list (owner 2026-11-20: "maybe versions and dependecies can be one page?"): the dependency map is a fold of the
 // Flows view. It is "on screen" — worth re-drawing after a scan — only while that fold is open.
+// A redraw asked for while ⏻ Switches or ⚙ API versions is showing is not lost: it is owed, and paid on the way back
+// to the Flows view (QA 1.1 regression #22: the fold kept the finished progress strip, or the map of the org before).
+let _depsFoldOwed = false;
 function _depsFoldOpen() {
   const d = document.getElementById('flowDepsFold');
+  if (d && d.open && _flowView !== 'versions') _depsFoldOwed = true;
   return !!(d && d.open && _flowView === 'versions');
+}
+// PURE. Is the open fold redrawn on a plain return to the Flows view?
+function sftkDepsFoldRedrawOnReturn(foldOpen, owed) {
+  return !!(foldOpen && owed);
 }
 function setFlowView(view) {
   const wantDeps = view === 'deps';   // every old link to the Dependencies view: the Flows view, its fold opened
@@ -2525,10 +2543,12 @@ function setFlowView(view) {
   if (tree) tree.style.display = tool ? 'none' : '';
   if (banner && tool) banner.style.display = 'none';   // renderDependenciesTab sets it again on the Dependencies view
   if (v === 'versions') {
+    const fold = document.getElementById('flowDepsFold');
+    const owed = _depsFoldOwed;
+    _depsFoldOwed = false;   // a closed fold draws itself when it is opened (its toggle listener)
     if (wantDeps) {
-      const fold = document.getElementById('flowDepsFold');
       if (fold) { fold.open = true; renderDependenciesTab(); try { fold.scrollIntoView({ block: 'start' }); } catch (_) { /* not laid out */ } }
-    }
+    } else if (fold && sftkDepsFoldRedrawOnReturn(fold.open, owed)) renderDependenciesTab();
     return;
   }
   // ⏻ Switches and ⚙ API versions draw their panel at the top of the view at once — no dependency scan is

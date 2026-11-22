@@ -429,7 +429,10 @@ function depReportMarkdown(report) {
 function depReportCsv(report) {
   const r = (report && typeof report === 'object') ? report : {};
   const cell = (v) => {
-    const s = (v === null || v === undefined) ? '' : String(v);
+    let s = (v === null || v === undefined) ? '' : String(v);
+    // a flow label or an item detail comes from the org: a cell that starts with = + - @ (or tab / CR) is run as a
+    // formula by Excel and Sheets, quoted or not, so it gets a leading apostrophe (the rule of histCsvEscape)
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const rows = [['Section', 'Flow API Name', 'Flow Label', 'Status', 'Item', 'Detail']];
@@ -2929,7 +2932,7 @@ const DependencyMap = (() => {
     const scanSt = getScanStatus();
     const mapKnown = Object.keys(calledBy).length > 0;
     const subNote = !mapKnown
-      ? (scanSt.running ? 'Subflow links appear when the dependency scan finishes.' : 'Subflow links (which flow calls which) come from the dependency scan — run it in the Dependencies view to see them here.')
+      ? (scanSt.running ? 'Subflow links appear when the dependency scan finishes.' : 'Subflow links (which flow calls which) come from the dependency scan — run it on the 🗂 Flows view (🔗 Scan dependencies) to see them here.')
       : (!scanSt.complete ? `Subflow links cover the ${scanSt.done} of ${scanSt.total} flow versions the dependency scan has read.` : '');
     const cell = (r, o) => {
       const c = r.cells[o.key];

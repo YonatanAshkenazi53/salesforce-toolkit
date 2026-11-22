@@ -69,7 +69,7 @@ describe('the sentence is what the update engine does', () => {
 
 describe('the Owner row is told the mode and the target’s owner', () => {
   it('a Changed row is an update', () => {
-    expect(VE).toContain("const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' });");
+    expect(VE).toContain("const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })");
     expect(VE).not.toContain("'Will belong to ' + sftkVeOwnerWill({ many,");
   });
 });

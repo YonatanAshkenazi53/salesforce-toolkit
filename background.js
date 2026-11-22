@@ -1998,8 +1998,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             }
             qMap = sftkQueueOwnerMap(sg, (tq && tq.records) || []);
           } catch (e) {
-            qMap = sftkQueueOwnerMap([], []);
-            diagnostics.push(`${objType}: the queues could not be read (${(e && e.message) || e}) — queue-owned records go to the fallback.`);
+            // The read failed, so nothing is known about which queues take this object. A fallback QUEUE the user
+            // chose is kept (entered as taking the object) instead of being dropped without a word: if it does not
+            // take the object, the target refuses the record with its own error (QA 1.1 regression #14).
+            qMap = sftkQueueOwnerMap([], fbIsQueue ? [{ QueueId: ownerFallback }] : []);
+            diagnostics.push(`${objType}: the queues could not be read (${(e && e.message) || e}) — queue-owned records go to the fallback${fbIsQueue ? `, and the fallback queue is used without a check that it takes ${objType} records (the target refuses a record if it does not)` : ''}.`);
           }
         }
       }

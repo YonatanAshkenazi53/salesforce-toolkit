@@ -85,7 +85,7 @@ describe('a better rule is offered only on evidence', () => {
 });
 
 describe('the rest of the panel', () => {
-  it('one switch for small differences; a rule never set starts with it on, a saved rule keeps its own', () => {
+  it('one switch for small differences; a rule never set opens exact as the scan reads it and turns forgiving at the first field picked, a saved rule keeps its own', () => {
     expect(BM).toContain('<span><strong>Ignore small differences</strong> — capitals, extra spaces, phone punctuation</span>');
     expect(BM).toContain('if (!node.matching) matchNormalize = { caseFold: true, trim: true, collapseWs: true, emailLower: true, phoneDigits: true };');
     expect(BM).toContain('for (const [k] of NORM_OPTS) matchNormalize[k] = e.target.checked;');

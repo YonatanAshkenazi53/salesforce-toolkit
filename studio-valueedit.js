@@ -47,6 +47,22 @@ function sftkVeOwnerLine(o) {
   if (x.src.queue) return `Will be given to the queue in ${tl} with the same API name as ${x.src.name}, when it takes this object — and when there is none, ${fb || `it stays with ${cur}`}.`;
   return `Will be given to the active user in ${tl} named ${x.src.name} — and when there is no such user, ${fb || `it stays with ${cur}`}.`;
 }
+// WHAT THE OWNER ROW MAY SAY ABOUT THE FALLBACK on THIS object (QA 1.1 regression, finding 13: the row promised
+// "the fallback owner Support (queue)" on an Account, which that queue does not take). The engine
+// (background.js, sftkOwnerFallbackFor) uses a fallback USER on every object, and a fallback QUEUE only on an
+// object that queue takes — elsewhere a new record goes to the running user and a changed one keeps its owner. PURE.
+//   o: { id (the fallback's id), name, canQueue (this object's owner can be a queue),
+//        takes (true | false | null = the target could not be asked), obj, tgtL }
+//   → { name ('' = the fallback is not used on this object), note (a sentence that says why, or '') }
+function sftkVeFallbackSaid(o) {
+  const x = o || {}, name = String(x.name || ''), obj = x.obj || 'this object', tl = x.tgtL || 'the target';
+  if (!name) return { name: '', note: '' };
+  if (!/^00G/.test(String(x.id || ''))) return { name, note: '' };
+  if (!x.canQueue) return { name: '', note: `The fallback owner ${name} is not used here — ${obj} records cannot be owned by a queue.` };
+  if (x.takes === true) return { name, note: '' };
+  if (x.takes === false) return { name: '', note: `The fallback owner ${name} is not used here — that queue does not take ${obj} in ${tl}.` };
+  return { name: `${name}, when that queue takes ${obj}`, note: '' };
+}
 // The name of the user who runs the deployment, in that org ('' when it cannot be read). One read per org AND
 // session: Login As, or signing in as someone else, puts another user's sid on the same org URL, and the name is
 // then read again (QA 1.1, finding 64: keyed by the org alone, the row kept naming the user before the switch).
@@ -235,6 +251,21 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   // the user who runs the deployment, by name in the target — said on the Owner row
   let runMe = '';
   try { const all = (typeof _buildAllSessions === 'function') ? _buildAllSessions() : null; const ts = all && typeof _resolveSession === 'function' ? _resolveSession(p.targetOrg, all) : null; runMe = await sftkVeRunningUser(ts); } catch (_) { runMe = ''; }
+  // the deployment's fallback owner, as far as it applies to THIS object: a fallback queue is asked for in the
+  // target's QueueSobject — the same table the engine reads — and only when owners are matched at all
+  const om = p.ownerMapping || {};
+  const fbId = String(om.fallbackUserId || ''), fbName = om.fallbackUserName || '';
+  let fbTakes = null;
+  if (hasOwner && om.mode === 'match' && fbName && /^00G/.test(fbId) && ownerCanQueue && tgtSess && tgtSess.sid) {
+    try {
+      const r = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true, query: `SELECT QueueId FROM QueueSobject WHERE SobjectType = '${String(obj).replace(/[^A-Za-z0-9_]/g, '')}' AND QueueId = '${fbId.replace(/[^A-Za-z0-9]/g, '')}' LIMIT 1` });
+      if (r && !r.error && Array.isArray(r.records)) fbTakes = r.records.length > 0;
+    } catch (_) { fbTakes = null; }
+    if (!host.isConnected) return;
+  }
+  const fbSaid = (typeof sftkVeFallbackSaid === 'function')
+    ? sftkVeFallbackSaid({ id: fbId, name: fbName, canQueue: ownerCanQueue, takes: fbTakes, obj, tgtL })
+    : { name: fbName, note: '' };
   const ownerOf = rec => { const o = rec && rec.Owner; return o && o.Name != null ? { name: o.Name, queue: String(o.Type || '').toLowerCase() === 'queue' || /^00G/.test(String(rec.OwnerId || '')) } : null; };
   const ownerText = o => o ? `${o.queue ? '👥' : '👤'} ${o.name}${o.queue ? ' (queue)' : ''}` : null;
   const ownerRow = () => {
@@ -246,7 +277,10 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     // and then a USER is matched by name — a queue is not
     const mapOn = !!(p.ownerMapping && p.ownerMapping.mode === 'match');
     // a Changed row is an update: it says what the update does to the owner the record already has in the target
-    const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || '', tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' });
+    // the fallback is named only where the engine uses it: a fallback queue that does not take this object is
+    // left out of the sentence, and a second sentence says so (sftkVeFallbackSaid)
+    const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })
+      + (mapOn && fbSaid.note ? ' ' + fbSaid.note : '');
     const curName = cur && cur !== '__mixed__' ? nameOf(cur) : '';
     return `<tr class="ds-ve-row ds-ve-owner${cur && cur !== '__mixed__' ? ' ds-ve-row-on' : ''}" data-ve-row="OwnerId" data-ve-search="owner ownerid user queue"><th scope="row">Owner<div class="ds-dep-muted">OwnerId · a user${ownerCanQueue ? ' or a queue' : ''} in ${esc(tgtL)}</div></th>${many ? '' : `<td class="ds-ve-src">${src ? val(ownerText(src)) : val(null)}</td>`}${many || !tgtId ? '' : `<td class="ds-ve-tgt">${tgtOwn ? val(ownerText(tgtOwn)) : val(null)}</td>`}<td class="ds-ve-cell">
       <div class="ds-ve-lkp ds-ve-own" data-ve-own="1" data-ve-own-dfl="${esc(dfl)}">

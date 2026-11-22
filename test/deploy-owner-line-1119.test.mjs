@@ -25,7 +25,7 @@ describe('the owner line', () => {
   it('is read beside the fields, from both orgs, and drawn above them', () => {
     expect(R).toContain('const ownerP = sftkOwnerLineFetch(prof, obj, srcId, tgtId);');
     expect(R).toContain("const [src, tgt] = await Promise.all([one(prof.sourceOrg, srcId), one(prof.targetOrg, tgtId)]);");
-    expect(R).toContain('`SELECT Owner.Name FROM ${obj} WHERE Id = ');
+    expect(R).toContain('`SELECT OwnerId, Owner.Name FROM ${obj} WHERE Id = ');
     expect(R).toContain('<div class="ds-dc-owner" id="dsDcOwner" hidden></div>');
   });
 });

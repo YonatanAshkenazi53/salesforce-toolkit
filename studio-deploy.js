@@ -1583,8 +1583,17 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
 // so the scan files every copy under 🔴 Missing (a run creates each) or 🔵 Only in the target. Here they are read
 // back out of those two lists, grouped by name, so the tab can show them and offer the merge.
 // → [{ name, side: 'src' | 'tgt', ids }] — source names first, each in the order the scan listed it
+// A group also carries `paired` (a count, only when it is not 0): records of the same name the scan already paired
+// — an answer remembered for one copy takes that copy and its target record out of key matching, so the copies left
+// over look one-sided while the other org does hold the record (QA 1.1 regression #8).
 function sftkDepOneSidedDups(scan, keyOf) {
   const out = [];
+  const pairedIds = new Map();
+  for (const bucket of ['changed', 'identical', 'linkMismatch']) for (const r of ((scan && scan[bucket]) || [])) {
+    if (!r || !r.sourceId || !r.targetId) continue;
+    const k = keyOf(r); if (!pairedIds.has(k)) pairedIds.set(k, new Set());
+    pairedIds.get(k).add(r.sourceId);
+  }
   const collect = (rows, side, idOf) => {
     const groups = new Map();
     for (const r of (rows || [])) {
@@ -1592,22 +1601,36 @@ function sftkDepOneSidedDups(scan, keyOf) {
       const k = keyOf(r); if (!groups.has(k)) groups.set(k, []);
       if (!groups.get(k).includes(id)) groups.get(k).push(id);
     }
-    for (const [name, ids] of groups) if (ids.length > 1) out.push({ name, side, ids });
+    for (const [name, ids] of groups) if (ids.length > 1) {
+      const g = { name, side, ids }, paired = pairedIds.has(name) ? pairedIds.get(name).size : 0;
+      if (paired) g.paired = paired;
+      out.push(g);
+    }
   };
   collect(scan && scan.missingInTarget, 'src', r => r.sourceId);
   collect(scan && scan.onlyInTarget, 'tgt', r => r.targetId);
   return out;
 }
 // The same groups, drawn: the name, its copies as links, what a run does with them, and the merge.
+// A group marked `pairsCut` (by the caller): the scan's lists of paired records were cut at the scan's cap, so a paired
+// copy of a name may not be in them — nothing here may then say the other org holds none.
 function _depOneSidedHtml(p, groups, total) {
   if (!groups.length) return '';
+  const pairsCut = groups.some(g => g.pairsCut);
   const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
   const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
   const mergeTitle = 'Merge these records into one: you choose which one stays and which values it keeps; the others are merged into it and deleted.';
   const row = g => {
     const here = g.side === 'src' ? srcL : tgtL, there = g.side === 'src' ? tgtL : srcL, org = g.side === 'src' ? p.sourceOrg : p.targetOrg;
-    const n = g.ids.length;
-    const what = g.side === 'src'
+    const n = g.ids.length, k = g.paired || 0;
+    // a copy of the name that is already paired: the other org is not without the record, and the line must not say so
+    const what = k
+      ? (g.side === 'src'
+        ? `<b>${n} copies in ${here}</b> have no pair in ${there} — a run creates all ${n} there, beside the ${k.toLocaleString('en-US')} of this name already paired.`
+        : `<b>${n} copies in ${here}</b> have no pair in ${there} — a run leaves them as they are. ${k.toLocaleString('en-US')} of this name ${k === 1 ? 'is' : 'are'} already paired.`)
+      : pairsCut
+      ? `<b>${n} copies in ${here}</b> have no pair in ${there} — a run ${g.side === 'src' ? `creates all ${n} there` : 'leaves them as they are'}.`
+      : g.side === 'src'
       ? `<b>${n} copies in ${here}</b>, none in ${there} — a run creates all ${n} there.`
       : `<b>${n} copies in ${here}</b>, none in ${there} — a run leaves them as they are.`;
     return `<div class="ds-amb-group ds-amb-one">
@@ -1616,9 +1639,14 @@ function _depOneSidedHtml(p, groups, total) {
           <span class="ds-dep-sp"></span><button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-dup-merge="${g.side}" data-dep-dup-key="${esc(g.name)}" title="${mergeTitle}">🔀 Merge the ${n} copies in ${here}</button></div>
       </div>`;
   };
+  // "the other org has no record of the name" is said only when it is known for every name: none of the listed ones
+  // has a paired copy, no name is cut off the list, and the scan's lists of paired records are whole
+  const head = pairsCut || groups.some(g => g.paired) || total > groups.length
+    ? `<b>${total.toLocaleString('en-US')} name${total === 1 ? '' : 's'} with more than one copy in one org and no record left to pair in the other.</b> There is nothing to decide here: the other org has no unpaired record of the name.`
+    : `<b>${total.toLocaleString('en-US')} name${total === 1 ? '' : 's'} that only one org holds, more than once.</b> There is nothing to decide here: the other org has no record of the name.`;
   return `<div class="ds-amb-onesided">
       <div class="ds-dep-note ds-dep-amb-intro">
-        <div class="ds-amb-intro-head"><b>${total.toLocaleString('en-US')} name${total === 1 ? '' : 's'} that only one org holds, more than once.</b> There is nothing to decide here: the other org has no record of the name. They are listed so you can merge copies of the same record before a run creates every one of them.</div>
+        <div class="ds-amb-intro-head">${head} They are listed so you can merge copies of the same record before a run creates every one of them.</div>
         <ul class="ds-amb-intro-ways">
           <li>🔀 <b>Copies of the same record?</b> Merge them here; both orgs are read again afterwards.</li>
           <li>✏ <b>Different records that share a name?</b> Leave them: each is deployed as its own record. To tell them apart on the next run, add a field to the matching rule.</li>
@@ -1668,10 +1696,12 @@ function _depGoOrigin(p) {
 }
 
 function _depWireChrome(p) {
-  // a note that points at a tab opens it (the ⚠ Needs a decision note, 2026-10-25)
+  // a note that points at a tab opens it (the ⚠ Needs a decision note, 2026-10-25). Both notes that carry the
+  // button are about the ROOT object (a child's card has none), so it opens the root's tab whichever object the
+  // records panel shows — the tab buttons carry no object, and a click on one kept a child selected (QA 1.1 regression #16).
   document.querySelectorAll('[data-dep-tab-go]').forEach(b => b.addEventListener('click', () => {
-    const t = document.querySelector(`.ds-dep-tabs [data-dep-obj=""][data-dep-tab="${b.dataset.depTabGo}"]`) || document.querySelector(`.ds-dep-tabs [data-dep-tab="${b.dataset.depTabGo}"]`);
-    if (t) { t.click(); setTimeout(() => eid('dsDepRecords')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 150); }
+    _depObjPath = ''; _depTab = b.dataset.depTabGo; _depFilter = '';
+    renderDeploy().then(() => eid('dsDepRecords')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
   }));
   eid('dsDepBack')?.addEventListener('click', () => { _currentView = 'profiles'; renderProfiles(); });
   eid('dsDepBackOrigin')?.addEventListener('click', () => _depGoOrigin(p));
@@ -1984,6 +2014,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const ambPick = r => _depAmbPick.has(r.sourceId) ? _depAmbPick.get(r.sourceId) : (ambMem(r) || r.suggest || '');
   const ambRoot = tabDef.k === 'amb' && isRoot;
   const oneSidedAll = ambRoot ? sftkDepOneSidedDups(s, key).filter(g => !q || g.name.toLowerCase().includes(q)) : [];
+  if (oneSidedAll.length && ['changed', 'identical'].some(b => sftkScanBucketInfo(s, b).capped)) oneSidedAll.forEach(g => { g.pairsCut = true; });
   const oneSided = oneSidedAll.slice(0, 50);
   if (wkey !== _depWindowKey) { _depWindowKey = wkey; _depWindow = SFTK_DEPLOY_WINDOW; }
   const shown = rows.slice(0, _depWindow);

@@ -2334,7 +2334,7 @@ const ApexDebugger = (() => {
                         // exactly the what-references-what question the
                         // Dependencies tab answers.
                         ? _xlink('dependencies', 'Deps',
-                            'Map which flows call or re-trigger this one in the Dependencies tab')
+                            'Map which flows call or re-trigger this one in the Dependencies section of the Flows page')
                         : ''}
                   </div>`).join('')}
               </div>
@@ -2361,7 +2361,7 @@ const ApexDebugger = (() => {
                   // (version cleaner) for faulted flows, where remediation
                   // (inspect versions / deactivate a bad one) lives.
                   _xlink('dependencies', 'Deps',
-                    "Map this flow's subflow call chain — and what re-triggers it — in the Dependencies tab")}
+                    "Map this flow's subflow call chain — and what re-triggers it — in the Dependencies section of the Flows page")}
                 ${!info.recordTriggered
                   ? _xlink('flow-access', 'Access',
                       'See who can run this flow in the Flow Access tool (screen flows only) — list prefiltered to this name', name)

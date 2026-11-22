@@ -29,7 +29,8 @@ export default async function (h) {
   await h.eval("document.querySelector('[data-tab=\"flows\"]')?.click()"); await h.sleep(800);
   await h.eval("(() => { const g = [...document.querySelectorAll('.flow-group')].find(g => /SFTK Dep Test/.test(g.dataset.label)); if (g) g.querySelector('.flow-group-header').click(); return true; })()");
   await shot('toolkit-flows');
-  await h.eval("document.querySelector('#flowViews [data-view=\"deps\"]')?.click()");
+  // the dependency map is a fold of the Flows page since 2026-11-21 (the Dependencies view button is gone): opening it draws the map
+  await h.eval("(() => { const d = document.getElementById('flowDepsFold'); if (d && !d.open) d.querySelector('summary').click(); return !!d; })()");
   // above 150 flow versions the page waits for "Scan dependencies (N calls)" (the extra fixture flows, 2026-10-10)
   await h.sleep(2500);
   await h.eval("(() => { const b = [...document.querySelectorAll('button')].find(b => /Scan dependencies/.test(b.textContent)); if (b) b.click(); return !!b; })()");

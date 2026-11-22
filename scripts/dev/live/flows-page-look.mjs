@@ -7,10 +7,11 @@ export default async function (h) {
   await h.login('npc'); await h.popup('flows'); await h.watchErrors();
   await h.waitFor("document.querySelectorAll('.flow-group').length > 0", 240000, 1000);
   // the dependency scan, so the ↘ calls and "+ subflows" chips can be drawn
-  await h.eval("document.querySelector('#flowViews [data-view=\"deps\"]')?.click()"); await h.sleep(2500);
+  // (the dependency map is a fold of the Flows page since 2026-11-21 (the Dependencies view button is gone): opening it draws the map)
+  await h.eval("(() => { const d = document.getElementById('flowDepsFold'); if (d && !d.open) d.querySelector('summary').click(); return !!d; })()"); await h.sleep(2500);
   await h.eval("(() => { const b = [...document.querySelectorAll('button')].find(b => /Scan dependencies/.test(b.textContent)); if (b) b.click(); return !!b; })()");
   await h.waitFor("!!document.querySelector('#depExportBtn')", 240000, 1000); await h.sleep(800);
-  await h.eval("document.querySelector('#flowViews [data-view=\"versions\"]')?.click()"); await h.sleep(1500);
+  await h.eval("(() => { const d = document.getElementById('flowDepsFold'); if (d) d.open = false; return true; })()"); await h.sleep(1500);   // the list again, the fold closed
   h.log('TOOLBAR:', await dump(h, '#toolbar', 400));
   h.log('tree chips:', await h.eval(`[...document.querySelectorAll('.flow-tree-btn')].map(b => b.closest('.flow-group').dataset.label + ' → ' + b.textContent).join(' | ')`));
   await h.eval("(() => { const g = [...document.querySelectorAll('.flow-group')].find(g => /Account Trigger/.test(g.dataset.label)); g?.scrollIntoView({ block: 'center' }); return true; })()"); await h.sleep(300);

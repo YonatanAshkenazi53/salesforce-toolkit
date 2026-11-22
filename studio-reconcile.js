@@ -4822,7 +4822,8 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 
   // Queues (owner 2026-11-20): a queue-owned record keeps its queue when the target has one of the same API name
   // that takes this object; a fallback QUEUE is used only on an object it takes.
-  let qMap = null;
+  let qMap = null, queuesUnread = false;
+  const fbIsQueue = /^00G/.test(String(ownerFallback || ''));
   if (wantOwners) {
     const srcQ = [...new Set(srcRecs.map(r => String(r.OwnerId || '')).filter(id => /^00G/.test(id)))];
     if (srcQ.length || /^00G/.test(String(ownerFallback || ''))) {
@@ -4834,7 +4835,14 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
           query: `SELECT Id, DeveloperName FROM Group WHERE Type = 'Queue' AND Id IN (${srcQ.slice(i, i + 200).map(id => `'${id.replace(/[^A-Za-z0-9]/g, '')}'`).join(',')})` });
         sg.push(...((q && !q.error && q.records) || []));
       }
-      if (tq && tq.error) warnings.push(`⚠ owners: the target's queues could not be read (${tq.error}) — queue-owned records go to the fallback`);
+      // QA 1.1 regression, finding 12: with a fallback QUEUE this read is also what says the queue takes the object,
+      // so "go to the fallback" was not true then — the fallback is not used and the owner stays.
+      if (tq && tq.error) {
+        queuesUnread = true;
+        warnings.push(fbIsQueue
+          ? `⚠ owners: the target's queues could not be read (${tq.error}) — queue owners are not matched and the fallback queue is not used on ${objType}, so those records keep their current target owner`
+          : `⚠ owners: the target's queues could not be read (${tq.error}) — queue-owned records go to the fallback`);
+      }
       qMap = sftkQueueOwnerMap(sg, (tq && !tq.error && tq.records) || []);
     }
   }
@@ -4964,8 +4972,13 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   if (piiActive) {
     warnings.push(`🔒 PII: ${piiCounts.hashed + piiCounts.nulled + piiCounts.fixed} value(s) masked before writing (${piiCounts.hashed} hashed, ${piiCounts.nulled} nulled${piiCounts.fixed ? `, ${piiCounts.fixed} fixed` : ''})${piiCounts.emptied ? ` · ${piiCounts.emptied} covered field(s) the source holds empty were written empty` : ''}`);
   }
-  if (ownerFellBack) warnings.push(`⚠ owners: ${ownerFellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
-  if (ownerKept)     warnings.push(`⚠ owners: ${ownerKept} record(s) kept their current target owner (no name match and no fallback user set)`);
+  // QA 1.1 regression, finding 12: a fallback QUEUE that does not take this object is not "no fallback user set".
+  if (typeof sftkRecOwnerWarnings === 'function') {
+    warnings.push(...sftkRecOwnerWarnings({ fellBack: ownerFellBack, kept: ownerKept, fallbackId: ownerFallback, nodeFallback, objType, queuesUnread }));
+  } else {
+    if (ownerFellBack) warnings.push(`⚠ owners: ${ownerFellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
+    if (ownerKept)     warnings.push(`⚠ owners: ${ownerKept} record(s) kept their current target owner (no name match and no fallback user set)`);
+  }
 
   for (const rp of refPairs) {
     if (rp.unresolved) {
@@ -5093,7 +5106,11 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 // of the field compare on purpose when the deployment does not copy owners (a different owner there is expected, and
 // listing it as a difference kept every record "changed" for ever) — so the window never said who owns the record.
 // It says it now, in one line above the fields, with what the deployment does about it. PURE.
-//   o: { src, tgt (owner names; '' = not read), mode: 'match' | 'skip', fallbackName, srcLabel, tgtLabel }
+//   o: { src, tgt (owner names; '' = not read), mode: 'match' | 'skip', fallbackName, srcLabel, tgtLabel,
+//        srcIsQueue (the source owner is a queue), fallbackIsQueue (the deployment's fallback is a queue) }
+// A queue is matched by its API name and only where it takes the object, and a fallback queue is used only where it
+// takes the object (sftkRecOwnerThenTyped, sftkOwnerFallbackFor) — the line said "the user that matches" and "the
+// fallback user" for both (QA 1.1 regression, finding 20).
 function sftkOwnerLineText(o) {
   const x = o || {}, src = String(x.src || ''), tgt = String(x.tgt || '');
   if (!src && !tgt) return '';
@@ -5101,8 +5118,16 @@ function sftkOwnerLineText(o) {
   const who = `${src ? `${src} in ${sl}` : `not read in ${sl}`} · ${tgt ? `${tgt} in ${tl}` : `not read in ${tl}`}`;
   if (x.mode !== 'match') return `${who}. This deployment does not copy owners — the record keeps ${tgt || 'its owner'} in ${tl}.`;
   if (src && tgt && src.toLowerCase() === tgt.toLowerCase()) return `${who}. The same owner on both sides.`;
-  const fb = x.fallbackName ? `the fallback user ${x.fallbackName}` : 'no fallback user is set, so the owner there stays as it is';
-  return `${who}. This deployment matches owners: on ▶ Deploy the record is given the user in ${tl} that matches ${src || 'the source owner'} — when there is none, ${fb}.`;
+  // the builder stores a queue's name as "<Name> (queue)" (studio-builder.js, qOpt): said once, not twice
+  const fbRaw = String(x.fallbackName || ''), QS = ' (queue)';
+  const fbQName = fbRaw.endsWith(QS) && fbRaw.length > QS.length ? fbRaw.slice(0, -QS.length) : fbRaw;
+  const fb = !x.fallbackName ? 'no fallback user is set, so the owner there stays as it is'
+    : x.fallbackIsQueue ? `the fallback queue ${fbQName} when it takes this object (otherwise the owner there stays as it is)`
+    : `the fallback user ${x.fallbackName}`;
+  const given = x.srcIsQueue
+    ? `the queue in ${tl} with the same API name as ${src || 'the source queue'}, when that queue takes this object`
+    : `the user in ${tl} that matches ${src || 'the source owner'}`;
+  return `${who}. This deployment matches owners: on ▶ Deploy the record is given ${given} — when there is none, ${fb}.`;
 }
 // The two owners, read from the two orgs. A detail record of a master-detail has no owner of its own: then nothing.
 async function sftkOwnerLineFetch(prof, obj, srcId, tgtId) {
@@ -5110,15 +5135,19 @@ async function sftkOwnerLineFetch(prof, obj, srcId, tgtId) {
     const all = _buildAllSessions();
     const one = async (url, id) => {
       const sess = _resolveSession(url, all);
-      if (!sess || !sess.sid || !id) return '';
+      if (!sess || !sess.sid || !id) return { name: '', isQueue: false };
+      // OwnerId: read only, tells a queue (00G) from a user
       const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
-        query: `SELECT Owner.Name FROM ${obj} WHERE Id = '${String(id).replace(/[^A-Za-z0-9]/g, '')}' LIMIT 1` });
+        query: `SELECT OwnerId, Owner.Name FROM ${obj} WHERE Id = '${String(id).replace(/[^A-Za-z0-9]/g, '')}' LIMIT 1` });
       const r = q && !q.error && q.records && q.records[0];
-      return (r && r.Owner && r.Owner.Name) || '';
+      return { name: (r && r.Owner && r.Owner.Name) || '', isQueue: /^00G/.test(String((r && r.OwnerId) || '')) };
     };
     const [src, tgt] = await Promise.all([one(prof.sourceOrg, srcId), one(prof.targetOrg, tgtId)]);
     const om = prof.ownerMapping || {};
-    return sftkOwnerLineText({ src, tgt, mode: om.mode === 'match' ? 'match' : 'skip', fallbackName: om.fallbackUserName || '',
+    const fbIsQueue = /^00G/.test(String(om.fallbackUserId || ''));
+    return sftkOwnerLineText({ src: src.name, tgt: tgt.name, mode: om.mode === 'match' ? 'match' : 'skip',
+      fallbackName: om.fallbackUserName || (om.fallbackUserId ? 'saved in this deployment' : ''),   // an id with no stored name is still a fallback
+      srcIsQueue: src.isQueue, fallbackIsQueue: fbIsQueue,
       srcLabel: orgLabel(prof.sourceOrg || ''), tgtLabel: orgLabel(prof.targetOrg || '') });
   } catch (_) { return ''; }
 }
@@ -5573,6 +5602,27 @@ function sftkOwnerFallbackFor(fallbackId, qMap) {
   if (!id) return null;
   if (!/^00G/.test(id)) return id;
   return qMap && qMap.takes && qMap.takes[id.slice(0, 15)] ? id : null;
+}
+// What the update says about owners it could not match (QA 1.1 regression, finding 12). A fallback QUEUE that does
+// not take this object is dropped for it (sftkOwnerFallbackFor), the owner stays — and the run said "no fallback user
+// set" while one was. PURE. → the warning lines.
+//   o: { fellBack, kept (record counts), fallbackId (the deployment's), nodeFallback (what this object can take),
+//        objType, queuesUnread (the target's queues could not be read) }
+function sftkRecOwnerWarnings(o) {
+  const x = o || {}, out = [];
+  const fellBack = Number(x.fellBack) || 0, kept = Number(x.kept) || 0;
+  const isQueue = /^00G/.test(String(x.fallbackId || ''));
+  const obj = String(x.objType || 'this object');
+  if (fellBack) out.push(isQueue
+    ? `⚠ owners: ${fellBack} record(s) reassigned to the fallback queue (owner had no match in the target)`
+    : `⚠ owners: ${fellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
+  if (kept) {
+    if (isQueue && !x.nodeFallback) out.push(x.queuesUnread
+      ? `⚠ owners: ${kept} record(s) with no matching owner kept their current target owner (the fallback queue could not be checked for ${obj}, so it was not used)`
+      : `⚠ owners: the fallback queue does not take ${obj} records in the target, so ${kept} record(s) with no matching owner kept their current target owner`);
+    else out.push(`⚠ owners: ${kept} record(s) kept their current target owner (no name match and no fallback user set)`);
+  }
+  return out;
 }
 // PURE. One update payload: the owner mapping first, the values typed in the record editor after it — the insert
 // engine's order (background.js). The other way round, an owner PICKED in the editor was replaced by the name match

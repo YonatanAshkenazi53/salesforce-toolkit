@@ -13,7 +13,8 @@ export default async function (h) {
   h.log('1. sidebar has no Dependencies button:', await h.eval(`!document.querySelector('.tab-btn[data-tab="dependencies"]')`), '| view strip:', await h.eval(`[...document.querySelectorAll('#flowViews .flow-view-btn')].map(b => b.dataset.view).join(',')`));
   // the views
   for (const v of ['deps', 'switches', 'apiver', 'versions']) {
-    await h.eval(`document.querySelector('#flowViews [data-view="${v}"]').click()`);
+    // the dependency map is a fold of the Flows page since 2026-11-21 (no Dependencies view button): setFlowView('deps') opens it
+    await h.eval(v === 'deps' ? `setFlowView('deps')` : `document.querySelector('#flowViews [data-view="${v}"]').click()`);
     if (v === 'switches' || v === 'apiver') await h.waitFor("(document.getElementById('flowToolHost')?.innerText || '').length > 20", 60000, 500).catch(() => {});
     await h.sleep(v === 'versions' ? 800 : 1500);
     h.log(`2. view ${v}:`, 'versions shown', await h.eval(`document.getElementById('flowViewVersions').style.display !== 'none'`), '| deps shown', await h.eval(`document.getElementById('tab-dependencies').style.display !== 'none'`), '| tool panel:', (await h.eval(`(document.getElementById('depToolPanel')?.innerText || '').slice(0, 60).replace(/\\n/g, ' ')`)));

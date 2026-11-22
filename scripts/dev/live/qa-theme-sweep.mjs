@@ -23,7 +23,8 @@ export default async function (h) {
       await h.eval(`(() => { const b = document.querySelector('#modalCancel'); if (b) b.click(); return true; })()`); await h.sleep(400);
     }
     for (const v of ['deps', 'switches', 'apiver']) {
-      await h.eval(`document.querySelector('#flowViews [data-view="${v}"]').click()`);
+      // the dependency map is a fold of the Flows page since 2026-11-21 (no Dependencies view button): setFlowView('deps') opens it
+      await h.eval(v === 'deps' ? `setFlowView('deps')` : `document.querySelector('#flowViews [data-view="${v}"]').click()`);
       await h.sleep(v === 'deps' ? 2500 : 6000);
       await h.shot(`${SHOTS}/theme-${theme}-flows-${v}.png`);
     }

@@ -816,9 +816,22 @@ async function openRecordPickerModal(pathStr) {
   };
   // W1 — per-node upsert rides the external-Id key. Session state mirrors
   // node.upsert; persisted on Apply alongside the matching config.
-// A key that was never set starts forgiving: capitals, spaces, e-mail capitals and phone punctuation are not what
-  // makes two records different (owner 2026-11-20). A saved key keeps exactly what it was saved with.
-  if (!node.matching) matchNormalize = { caseFold: true, trim: true, collapseWs: true, emailLower: true, phoneDigits: true };
+  // A rule that was never set is shown, and checked live, with what the scan really uses for it (an exact
+  // comparison): Apply saves no rule the user did not touch, so nothing else may be on screen (QA 1.1 #5/#11).
+  // The forgiving start of a new rule (owner 2026-11-20) happens at the first field the user picks - see the
+  // [data-mq-field] handler - where it is saved in the same step. A saved key keeps exactly what it was saved with.
+  // An object the legacy field does not exist on (Case, Task, CaseComment: no Name) starts from the key the scan
+  // falls back to, not from a Name it does not have (QA 1.1 #15).
+  {
+    const seed = bldMatchSeedNoName(desc && desc.fields, node, (typeof sftkMatchingFallback === 'function') ? sftkMatchingFallback : null);
+    if (seed) {
+      matchStrategy  = seed.strategy;
+      matchFields    = [...seed.fields];
+      matchNormalize = { caseFold: false, trim: false, collapseWs: false, emailLower: false, phoneDigits: false, ...(seed.normalize || {}) };
+    } else if (!node.matching && !node.matchField && defaultField && !((desc && desc.fields) || []).some(f => f && f.name === 'Name') && ((desc && desc.fields) || []).length) {
+      matchFields = [defaultField];
+    }
+  }
   let upsertOn = !!(node.upsert && node.upsert.field);
   // Most specific first (user 2026-10-23): a composite key that falls back to the fields a record
   // has (sftkTieredPairs). A NEW composite key starts with it on; a saved one keeps its own choice.
@@ -840,7 +853,7 @@ async function openRecordPickerModal(pathStr) {
   let matchFoldOpen    = null;
   let matchSuggestOpen = false;
   // the live result of the rule on screen ({ sig, html }), and the folds as the user left them
-  let matchLive = null, matchLiveSeq = 0, matchLiveTimer = null;
+  let matchLive = null, matchLiveSeq = 0, matchLiveTimer = null, matchLiveShown = null;
   let matchMoreOpen = false, matchFineOpen = false;
   const gradeCache     = new Map();   // suggestion sig → rendered mini-grade
   // 💡 Suggestions of a chosen depth (user 2026-10-23): 1 field = how many records hold it in
@@ -1281,7 +1294,7 @@ async function openRecordPickerModal(pathStr) {
           const cfgd = !!(node.matching && node.matching.fields && node.matching.fields.length);
           const summary = cfgd
             ? `the same <strong>${esc(node.matching.fields.map(matchLabelOf).join(' and '))}</strong>${node.upsert || upsertOn ? ' · a second run updates' : ''}`
-            : 'the same <strong>Name</strong> — not checked yet';
+            : `the same <strong>${esc(matchFields.filter(Boolean).map(matchLabelOf).join(' and ') || 'Name')}</strong> — not checked yet`;
           return `<details class="ds-match-fold" ${matchFoldOpen === null ? (cfgd ? '' : 'open') : (matchFoldOpen ? 'open' : '')}>
             <summary style="cursor:pointer;font-size:12.5px;padding:4px 0">
               <strong>Already in the target when it has</strong> <span>${summary}</span>
@@ -1460,6 +1473,9 @@ async function openRecordPickerModal(pathStr) {
       let next = [...new Set(vals)].slice(0, 4);
       if (!next.length) next = [displayField || 'Name'];
       const was = matchStrategy;
+      // the first field picked for a rule that was never set: the new rule starts forgiving, and matchCfgChanged
+      // below saves it with the rule, so the switch on screen is the switch in the deployment (QA 1.1 #5/#11)
+      if (!node.matching) matchNormalize = { caseFold: true, trim: true, collapseWs: true, emailLower: true, phoneDigits: true };
       if (next[0] !== matchFields[0]) node.matchFieldTgt = null;   // another first field: its target name follows the field mapping again
       matchFields   = next;
       matchStrategy = bldMatchStrategyOf(next, extIdCandidates.map(f => f.name));
@@ -1702,14 +1718,20 @@ async function openRecordPickerModal(pathStr) {
       const tmp = { ...node, matching: { strategy: matchStrategy, fields, normalize: { ...matchNormalize }, ...(matchStrategy === 'composite' && matchTiered ? { tiered: true } : {}) } };
       const m = sftkMatchingFromNode(tmp);
       const tgtUrl = _editingProfile && _editingProfile.targetOrg;
-      if (!tgtUrl) { el0.innerHTML = '<div class="ds-mq-res ds-mq-idle">Pick a target org in the deployment to see what this rule finds.</div>'; return; }
+      // every call is a newer rule on screen: a read still on its way for an older one must not paint, also when
+      // this call ends at the cache or at the missing target (QA 1.1 #6)
+      const seq = ++matchLiveSeq;
+      clearTimeout(matchLiveTimer);
+      if (!tgtUrl) { matchLiveShown = null; el0.innerHTML = '<div class="ds-mq-res ds-mq-idle">Pick a target org in the deployment to see what this rule finds.</div>'; return; }
       const nodeT = (typeof sftkResolveMappings === 'function') ? { ...tmp, fieldMappings: sftkResolveMappings(node.fieldMappings, node.fieldMappingOverrides, _orgKey(tgtUrl)) } : tmp;
       const tgtF = sftkMatchingTgtFields(nodeT, m);
       const sig = JSON.stringify([objType, m.fields, tgtF, m.normalize, m.strategy, m.tiered === true, tgtUrl]);
+      // the rule now on screen. The search for a better rule that follows a finished read belongs to its rule, not to
+      // one call: a re-render of the same rule (a letter typed in the search box, the fold closed and opened) is
+      // answered from the cache below and must not end it - only another rule on screen does.
+      matchLiveShown = sig;
       if (matchLive && matchLive.sig === sig) { el0.innerHTML = matchLive.html; wireLive(); return; }
-      const seq = ++matchLiveSeq;
       el0.innerHTML = '<div class="ds-mq-res ds-mq-idle"><span class="ds-mq-spin" aria-hidden="true"></span> Checking this rule against the records of both orgs…</div>';
-      clearTimeout(matchLiveTimer);
       await new Promise(r => { matchLiveTimer = setTimeout(r, 350); });
       if (seq !== matchLiveSeq) return;
       let res;
@@ -1717,22 +1739,28 @@ async function openRecordPickerModal(pathStr) {
       catch (e) { res = { srcErr: (e && e.message) || String(e) }; }
       if (seq !== matchLiveSeq) return;
       const keyWords = fields.map(matchLabelOf).join(' and ');
+      const exLabel = k => String(k == null ? '' : k).split(String.fromCharCode(1)).map((p, i) => p === '' ? `no ${matchLabelOf(fields[i] || '') || 'value'}` : p).join(' · ');
       const live = bldMatchLive({
         cross: res.cross, srcErr: res.srcErr, tgtErr: res.tgtErr, sampled: !!(res.src && res.src.sampled),
         srcStats: res.src ? sftkKeyStats(res.src) : null,
-        ex: bldMatchExamples(res.src, res.tgt, k => String(k == null ? '' : k).split(String.fromCharCode(1)).map((p, i) => p === '' ? `no ${matchLabelOf(fields[i] || '') || 'value'}` : p).join(' · ')),
+        // a rule matched by the fields a record has: the examples come from that same pairing, not from equal full keys (QA 1.1 #7)
+        ex: (res.cross && res.cross.tiered && res.src && res.tgt && res.src.parts && res.tgt.parts && typeof sftkTieredPairs === 'function')
+          ? bldMatchTieredExamples(res.src.parts, res.tgt.parts, exLabel, sftkTieredPairs)
+          : bldMatchExamples(res.src, res.tgt, exLabel),
       }, { tgt: orgLabel(tgtUrl), src: orgLabel(_editingProfile.sourceOrg || ''), key: keyWords });
       const html = bldMatchLiveHtml(live, esc);
       matchLive = { sig, html, score: (typeof sftkMatchKeyScore === 'function') ? sftkMatchKeyScore(res, []) : null, reco: '' };
-      const paint = () => { const el = eid('dsMatchLive'); if (el && matchLive && matchLive.sig === sig) { el.innerHTML = matchLive.html + (matchLive.reco || ''); wireLive(); } };
+      const mine = matchLive;
+      const stale = () => matchLive !== mine || matchLiveShown !== sig;
+      const paint = () => { const el = eid('dsMatchLive'); if (el && !stale()) { el.innerHTML = matchLive.html + (matchLive.reco || ''); wireLive(); } };
       paint();
       // a rule that leaves records it cannot tell apart: look for a better one, by the same live check
       if (live.tone !== 'bad' && live.tone !== 'warn') return;
       const curSig = JSON.stringify(fields);
       const cands = [..._suggestionsAt(1).slice(0, 3), ...(fields.length < 4 ? _suggestionsAt(fields.length + 1).slice(0, 2) : [])]
         .filter(c => JSON.stringify(c.fields) !== curSig);
-      for (const c of cands) { if (seq !== matchLiveSeq) return; await _gradeSuggestion(c); }
-      if (seq !== matchLiveSeq) return;
+      for (const c of cands) { if (stale()) return; await _gradeSuggestion(c); }
+      if (stale()) return;
       const best = bldMatchBetter(matchLive.score, cands);
       if (!best) return;
       matchLive.best = best;
@@ -2227,6 +2255,44 @@ function bldMatchExamples(src, tgt, labelOf) {
     if (out.both && out.onlySrc && out.clash) break;
   }
   return out;
+}
+// The same three examples for a rule that matches a record by the fields it has (tiered): taken from the pairing the
+// counts come from, so a record counted as already in the target is never the example of one that is not.
+// srcParts / tgtParts: one list of normalized key parts per record; pairsFn: sftkTieredPairs. PURE.
+function bldMatchTieredExamples(srcParts, tgtParts, labelOf, pairsFn) {
+  const out = { both: '', onlySrc: '', clash: null };
+  if (typeof pairsFn !== 'function') return out;
+  const S = Array.isArray(srcParts) ? srcParts : [], T = Array.isArray(tgtParts) ? tgtParts : [];
+  let n = 0;
+  for (const p of S) n = Math.max(n, (p || []).length);
+  for (const p of T) n = Math.max(n, (p || []).length);
+  const fields = Array.from({ length: n }, (_, i) => 'p' + i);
+  const rec = (parts, i) => { const o = { Id: String(i) }; fields.forEach((f, k) => { o[f] = (parts && parts[k]) || ''; }); return o; };
+  const r = pairsFn(S.map(rec), T.map(rec), { fields, normalize: {} }, { fields, normalize: {} }) || {};
+  const lab = k => String(typeof labelOf === 'function' ? labelOf(k) : k);
+  if (r.pairs && r.pairs.length) out.both = lab(r.pairs[0][0]);
+  if (r.inserts && r.inserts.length) out.onlySrc = lab(r.inserts[0][0]);
+  if (r.groups && typeof r.groups.entries === 'function') {
+    for (const [anchor, g] of r.groups.entries()) { out.clash = { label: lab(anchor), src: (g.srcs || []).length, tgt: (g.tgts || []).length }; break; }
+  }
+  return out;
+}
+// The rule a never-configured node opens with when its legacy field (node.matchField, else Name) is not on the object:
+// what the scan uses for such a node - the object's own name field when it is not an org-generated number, else the
+// describe's fallback key (fallbackFn: sftkMatchingFallback). null = keep the legacy rule (the field exists, the node
+// has a rule, or there is no describe to judge by). PURE.
+function bldMatchSeedNoName(fields, node, fallbackFn) {
+  const nd = node || {};
+  if (nd.matching && Array.isArray(nd.matching.fields) && nd.matching.fields.filter(Boolean).length) return null;
+  const fs = (Array.isArray(fields) ? fields : []).filter(Boolean);
+  if (!fs.length) return null;
+  const legacy = nd.matchField || 'Name';
+  if (fs.some(f => f.name === legacy)) return null;
+  const nameF = fs.find(f => f.nameField === true);
+  if (nameF && !nameF.autoNumber) return { strategy: 'field', fields: [nameF.name], normalize: {} };
+  const fb = typeof fallbackFn === 'function' ? fallbackFn(fs, { lookupResolutions: nd.lookupResolutions }) : null;
+  if (!fb || !Array.isArray(fb.fields) || !fb.fields.filter(Boolean).length) return null;
+  return { strategy: fb.strategy === 'composite' || fb.strategy === 'externalId' ? fb.strategy : 'field', fields: fb.fields.filter(Boolean).slice(0, 4), normalize: { ...(fb.normalize || {}) } };
 }
 // What a rule does to the records, in words. PURE.
 //   r: { cross: { sourceTotal, matchedUnique, ambiguous, unmatched } | null, srcErr, tgtErr, sampled,

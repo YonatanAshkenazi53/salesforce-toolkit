@@ -171,13 +171,22 @@ function _sftkVpBody(rule, active) {
 //     rule ON proves it is not off);
 //   · a packaged rule whose deploy was submitted but not followed to its end (sfMetadataDeploy: "Deployment <id>
 //     was submitted but its result could not be read … It MAY STILL FINISH") — Salesforce may still switch it off.
+//   · any rule whose switch-off got NO CLEAR ANSWER (QA 1.1 regression run, finding 10): the request timed out
+//     (background.js sfFetch: "Request timed out after 30 s"), the connection dropped after it was sent, the server
+//     answered 5xx, or the background gave no response. Giving up on the answer does not cancel the request —
+//     Salesforce may still apply it, even after a re-read that shows the rule ON. Only a definite refusal (HTTP 4xx,
+//     a named Salesforce error) means nothing was switched. Switching back on a rule that never went off is harmless:
+//     the switch-back sends the rule's own definition with active: true.
 // results: sftkWriteVerifiedAll's, aligned with rules. → [rule]
 function sftkVrPauseMaybeOff(rules, results) {
   return (rules || []).filter((r, k) => {
     const x = (results || [])[k];
     if (!x || x.ok) return false;
     if (x.accepted) return !(x.verified && x.detail && x.detail.isOn === true);
-    return !!r.pkg && /was submitted|may still finish/i.test(String(x.text || ''));
+    const t = String(x.text || '');
+    if (r.pkg && /was submitted|may still finish/i.test(t)) return true;
+    if (/HTTP 4[0-9][0-9]/.test(t)) return false;
+    return /timed out|timeout|failed to fetch|networkerror|network error|ERR_[A-Z_]+|connection|message port closed|context invalidated|no response|no answer|HTTP 5[0-9][0-9]/i.test(t);
   });
 }
 
@@ -186,6 +195,8 @@ function sftkVrPauseMaybeOff(rules, results) {
 // possibly off (sftkVrPauseMaybeOff).
 async function _sftkVpSwitch(sess, rules, wantOn, journal, send) {
   const bg = typeof send === 'function' ? send : sendBg;
+  // what the one re-read showed, by 15-character id (null: the org was not re-read, or could not be)
+  let seen = null;
   // confirmed-by: runReconcile's confirmation (the ⏸ step is listed in it) or the Deploy page's ▶ Switch back on dialog
   const batch = await sftkWriteVerifiedAll(rules.map(r => ({
     describe: `${r.name} (${r.object})`,
@@ -197,12 +208,15 @@ async function _sftkVpSwitch(sess, rules, wantOn, journal, send) {
   })), {
     journal,
     verifyAll: async results => {
-      const ids = rules.filter((r, k) => results[k] && results[k].accepted).map(r => r.id);
+      // a switch-off that got no clear answer is re-read too: it may have gone through (sftkVrPauseMaybeOff)
+      const unsure = wantOn ? [] : sftkVrPauseMaybeOff(rules, results);
+      const ids = rules.filter((r, k) => results[k] && (results[k].accepted || unsure.includes(r))).map(r => r.id);
       if (!ids.length) return [];
       const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: true, _silentError: true,
         query: `SELECT Id, Active FROM ValidationRule WHERE Id IN (${ids.map(_sftkVpLit).join(',')})` });
       if (!q || q.error) throw new Error((q && q.error) || 'no answer');
       const on = new Map((q.records || []).map(x => [String(x.Id).slice(0, 15), !!x.Active]));
+      seen = on;
       return rules.map(r => {
         const isOn = on.get(String(r.id).slice(0, 15));
         return { ok: isOn === wantOn, detail: { isOn }, text: isOn === wantOn
@@ -211,8 +225,16 @@ async function _sftkVpSwitch(sess, rules, wantOn, journal, send) {
       });
     },
   });
-  return { done: rules.filter((r, k) => batch.results[k] && batch.results[k].ok), failed: batch.results.filter(r => !r.ok).map(r => r.text),
-    maybe: wantOn ? [] : sftkVrPauseMaybeOff(rules, batch.results) };
+  const maybe = wantOn ? [] : sftkVrPauseMaybeOff(rules, batch.results);
+  // a switch-off Salesforce did not clearly answer: the line says it may have gone through, and what the org reads now
+  const failed = [];
+  batch.results.forEach((x, k) => {
+    if (x.ok) return;
+    if (x.accepted || !maybe.includes(rules[k])) { failed.push(x.text); return; }
+    const isOn = seen ? seen.get(String(rules[k].id).slice(0, 15)) : undefined;
+    failed.push(`${x.text} — it may still have gone through, so it is treated as possibly OFF (${isOn === undefined ? 'the org could not be re-read for it' : `the org reads it ${isOn ? 'ON' : 'OFF'} now`})`);
+  });
+  return { done: rules.filter((r, k) => batch.results[k] && batch.results[k].ok), failed, maybe };
 }
 
 // ⏸ Switch the rules off for a run. All must be confirmed off, or the ones that
