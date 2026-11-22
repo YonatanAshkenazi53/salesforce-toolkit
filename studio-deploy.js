@@ -2847,6 +2847,6 @@ function _depSummary(p, objTypeOrNull, objByPathOrNull) {
     const covered = sc.total ? sftkDeployPiiCovered(p.piiPolicy, Object.keys(sc.byObj)) : 0;
     piiBtn.disabled = !sc.total || !!window._sftkRunActive || !!p.ephemeral;
     piiBtn.textContent = sc.total ? `🎭 Disguise the ${sc.total.toLocaleString('en-US')} selected` : '🎭 Disguise';
-    if (el && sc.total && covered) el.insertAdjacentHTML('beforeend', ` <span class="ds-rec-tag ds-dep-pii-chip" title="Fields of the selected objects that are never written as they are — the target gets a look-alike fake. 🎭 Disguise shows and changes them.">🎭 ${covered} field${covered === 1 ? '' : 's'} disguised</span>`);
+    if (el && sc.total && covered) el.insertAdjacentHTML('beforeend', ` <span class="ds-rec-tag ds-dep-pii-chip" title="Fields of the selected objects that are never written as they are — the target gets a blended look-alike value. 🎭 Disguise shows and changes them.">🎭 ${covered} field${covered === 1 ? '' : 's'} disguised</span>`);
   }
 }

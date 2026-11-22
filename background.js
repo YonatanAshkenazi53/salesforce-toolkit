@@ -122,6 +122,63 @@ function sftkBuildOwnerIndex(users, matching) {
   return { byKey, dups: [...dup] };
 }
 
+// ── OWNER MATCHING ON ITS OWN (owner 2026-11-22: "i dont think its a correct logic to match owners. just check and
+// find the owner from the source, this matching is confusing we need to check for it alone"). No setting: a source
+// user is looked for in the target by the strongest identity first — Federation ID, then email and name together,
+// then email, then name. A rule that finds MORE than one target user never guesses: the next rule is tried, and an
+// owner no rule settles gets the fallback. The same four functions are in background.js (inserts) and
+// studio-reconcile.js (updates); test/owner-auto-1122.test.mjs fails when the two copies differ.
+const SFTK_OWNER_AUTO_RULES = [
+  { id: 'fed', label: 'Federation ID' },
+  { id: 'emailName', label: 'email and name' },
+  { id: 'email', label: 'email' },
+  { id: 'name', label: 'name' },
+];
+// PURE. The four keys of one user ('' = this rule cannot be used for it). Capitals and outer spaces never matter;
+// ".invalid", which a sandbox refresh adds to every email, is dropped.
+function sftkOwnerAutoKeys(u) {
+  const t = v => String(v == null ? '' : v).trim();
+  const email = t(u && u.Email).toLowerCase().replace(/\.invalid$/, '');
+  const name = t(u && u.Name).toLowerCase().replace(/\s+/g, ' ');
+  const fed = t(u && u.FederationIdentifier).toLowerCase();
+  return { fed, emailName: email && name ? email + '\n' + name : '', email, name };
+}
+// PURE. users: the target's active users [{ Id, Name, Email, FederationIdentifier }] → { ruleId: { key: userId | null } }
+// (null = more than one user carries the key).
+function sftkOwnerAutoIndex(users) {
+  const idx = {};
+  for (const r of SFTK_OWNER_AUTO_RULES) idx[r.id] = Object.create(null);
+  for (const u of (users || [])) {
+    if (!u || !u.Id) continue;
+    const k = sftkOwnerAutoKeys(u);
+    for (const r of SFTK_OWNER_AUTO_RULES) {
+      const key = k[r.id];
+      if (!key) continue;
+      idx[r.id][key] = (key in idx[r.id]) ? (idx[r.id][key] === u.Id ? u.Id : null) : u.Id;
+    }
+  }
+  return idx;
+}
+// PURE. One source user → { id, by } (the rule that found it) or { id: '', by: '', several } — several: at least one
+// rule found more than one target user and no later rule settled it.
+function sftkOwnerAutoFind(idx, srcUser) {
+  const k = sftkOwnerAutoKeys(srcUser);
+  let several = false;
+  for (const r of SFTK_OWNER_AUTO_RULES) {
+    const key = k[r.id];
+    if (!key || !idx || !idx[r.id] || !(key in idx[r.id])) continue;
+    const id = idx[r.id][key];
+    if (id) return { id, by: r.id };
+    several = true;
+  }
+  return { id: '', by: '', several };
+}
+// PURE. "8 by email and name, 3 by email" from { ruleId: count }, in the order of the rules.
+function sftkOwnerAutoByText(by) {
+  return SFTK_OWNER_AUTO_RULES.filter(r => by && by[r.id]).map(r => `${by[r.id]} by ${r.label}`).join(', ');
+}
+// ── end of OWNER MATCHING ON ITS OWN
+
 // sftkPii* — PII masking library (PII MASKING v1). These are BYTE-FOR-BYTE
 // copies of the canonical implementations in sftk-pii.js (which studio loads
 // as a classic script), inlined for the same reason as sftkOrgKey above
@@ -1529,23 +1586,15 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // are cached across nodes. Default mode: owners are never copied.
   const ownerMode     = profile?.ownerMapping?.mode === 'match';
   const ownerFallback = ownerMode ? (profile.ownerMapping.fallbackUserId || null) : null;
-  const ownerByName   = new Map();   // source Owner.Name → target User Id
-  const ownerMisses   = new Set();   // names known to have no target match
-  // O1 — smart owner matching: when the profile carries a matching config,
-  // owners resolve by sftkMatchKey over the picked fields (e.g. Email + Name)
-  // instead of the legacy Name-only lookup above. Sanitized like
-  // sftkMatchingFromNode (max 4 fields); names must be identifier-shaped —
-  // they are interpolated into SOQL and read as Owner.<field>, so anything
-  // else is dropped. No usable fields → null → the legacy path, unchanged.
-  const _omRaw = ownerMode ? profile.ownerMapping.matching : null;
-  const _omFields = _omRaw && Array.isArray(_omRaw.fields)
-    ? _omRaw.fields.filter(f => typeof f === 'string' && /^[A-Za-z][A-Za-z0-9_]*$/.test(f)).slice(0, 4)
-    : [];
-  const ownerMatching = _omFields.length
-    ? { fields: _omFields, normalize: { ...(_omRaw.normalize || {}) } }
-    : null;
-  let ownerIndex   = null;   // { byKey, dups } — built ONCE per run, first node that needs it
-  let ownerDupKeys = null;   // Set of ambiguous keys (O(1) checks in the payload loop)
+  // Owners are found in the target ON THEIR OWN (sftkOwnerAuto*, 2026-11-22): the target's active users are indexed
+  // once per run, each source owner is read once. The "match by" fields a deployment may still carry are not read.
+  let ownerAutoIdx = null;             // sftkOwnerAutoIndex of the target's active users
+  const srcOwnerInfo = new Map();      // source user id (15) → { Name, Email, FederationIdentifier }
+  // Federation ID is asked for first; an org or a user that cannot read it is asked again without it.
+  const ownerUsers = async (org, osid, where) => {
+    try { return (await sfQueryAll(org, osid, `SELECT Id, Name, Email, FederationIdentifier FROM User WHERE ${where}`, false)).records || []; }
+    catch (_) { return (await sfQueryAll(org, osid, `SELECT Id, Name, Email FROM User WHERE ${where}`, false)).records || []; }
+  };
 
   // Depth-first flattening. Default: every parent is processed before its
   // children. A child node marked insertOrder:'childFirst' (and its own
@@ -1685,9 +1734,6 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       const wantOwners = ownerMode && (descRes.fields || []).some(f => f.name === 'OwnerId');
       if (wantOwners) {
         fields.push('Owner.Name');
-        for (const f of (ownerMatching ? ownerMatching.fields : [])) {
-          if (!fields.includes('Owner.' + f)) fields.push('Owner.' + f);
-        }
         if (!fields.includes('OwnerId')) fields.push('OwnerId');   // read only: tells a queue from a user (never copied as is)
       }
 
@@ -1955,30 +2001,20 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // whole table. LIMIT 4000 keeps a giant org from unbounded paging;
       // exactly 4000 rows means the cap may have bitten, so say so honestly.
       if (wantOwners && recs.length) {
-        if (ownerMatching) {
-          if (!ownerIndex) {
-            const cols = [...new Set(['Id', 'Name', ...ownerMatching.fields])];
-            const q = await sfQueryAll(tgtOrgUrl, tgtSid,
-              `SELECT ${cols.join(', ')} FROM User WHERE IsActive = true LIMIT 4000`, false);
-            const users = q.records || [];
-            ownerIndex   = sftkBuildOwnerIndex(users, ownerMatching);
-            ownerDupKeys = new Set(ownerIndex.dups);
-            if (users.length === 4000) {
-              diagnostics.push(`owner matching: the target org returned exactly 4000 active users — the owner index may be capped and some owners could fall back as unmatched.`);
-            }
+        if (!ownerAutoIdx) {
+          // every active user of the target, once per run. LIMIT 4000 keeps a giant org from unbounded paging;
+          // exactly 4000 rows means the cap may have bitten, so say so.
+          const users = await ownerUsers(tgtOrgUrl, tgtSid, 'IsActive = true LIMIT 4000');
+          ownerAutoIdx = sftkOwnerAutoIndex(users);
+          if (users.length === 4000) {
+            diagnostics.push(`owner matching: the target org returned exactly 4000 active users — the list may be cut and some owners could be reported as not found.`);
           }
-        } else {
-          const names = [...new Set(recs
-            .map(r => r.Owner ? r.Owner.Name : null)
-            .filter(n => n && !ownerByName.has(n) && !ownerMisses.has(n)))];
-          for (let ci = 0; ci < names.length; ci += 100) {
-            const lit = names.slice(ci, ci + 100)
-              .map(n => `'${String(n).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
-            const q = await sfQueryAll(tgtOrgUrl, tgtSid,
-              `SELECT Id, Name FROM User WHERE IsActive = true AND Name IN (${lit})`, false);
-            for (const u of (q.records || [])) if (!ownerByName.has(u.Name)) ownerByName.set(u.Name, u.Id);
-          }
-          names.forEach(n => { if (!ownerByName.has(n)) ownerMisses.add(n); });
+        }
+        // this node's source owners (users), read once each — active or not
+        const need = [...new Set(recs.map(r => String(r.OwnerId || '')).filter(id => /^005[A-Za-z0-9]{12,15}$/.test(id) && !srcOwnerInfo.has(id.slice(0, 15))))];
+        for (let ci = 0; ci < need.length; ci += 200) {
+          const got = await ownerUsers(srcOrgUrl, srcSid, `Id IN (${need.slice(ci, ci + 200).map(id => `'${id}'`).join(',')})`);
+          for (const u of got) srcOwnerInfo.set(String(u.Id).slice(0, 15), u);
         }
       }
 
@@ -2305,6 +2341,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // O1 adds: ownerKeyMatched (index hit), ownerKeyDup (ambiguous key —
       // excluded from the index, fell back rather than guessed).
       let ownerFellBack = 0, ownerDefaulted = 0, ownerKeyMatched = 0, ownerKeyDup = 0, ownerQueueMatched = 0;
+      const ownerBy = {};   // rule id → how many owners it found (sftkOwnerAutoByText)
 
       // Person Accounts (user 2026-09-15, trailheads2 → trailheads4: every
       // insert failed with "Unable to create/update fields: Name"): on a person
@@ -2415,24 +2452,16 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             const oid = mq || nodeFallback;
             if (oid && (!tgtCreatable.size || tgtCreatable.has('OwnerId'))) p.OwnerId = oid;
             if (mq) ownerQueueMatched++; else if (nodeFallback) ownerFellBack++; else ownerDefaulted++;
-          } else if (ownerMatching) {
-            const shim = {};
-            for (const f of ownerMatching.fields) shim[f] = r.Owner ? r.Owner[f] : null;
-            const key = sftkMatchKey(shim, ownerMatching);
-            const matched = key && ownerIndex ? ownerIndex.byKey[key] : undefined;
-            const oid = matched || nodeFallback;
+          } else if (srcOid || r.Owner) {
+            // a user: found in the target on its own (sftkOwnerAutoFind). Found by no rule, or by a rule that
+            // gives more than one user and no later rule settles it → the fallback; never a guess.
+            const su = srcOwnerInfo.get(srcOid.slice(0, 15)) || (r.Owner && r.Owner.Name ? { Name: r.Owner.Name } : null);
+            const found = su ? sftkOwnerAutoFind(ownerAutoIdx, su) : { id: '', by: '', several: false };
+            const oid = found.id || nodeFallback;
             if (oid && (!tgtCreatable.size || tgtCreatable.has('OwnerId'))) p.OwnerId = oid;
-            if (matched) ownerKeyMatched++;
-            else if (key && ownerDupKeys && ownerDupKeys.has(key)) ownerKeyDup++;
+            if (found.id) { ownerKeyMatched++; ownerBy[found.by] = (ownerBy[found.by] || 0) + 1; }
+            else if (found.several) ownerKeyDup++;
             else if (nodeFallback) ownerFellBack++; else ownerDefaulted++;
-          } else {
-            const oname = r.Owner ? r.Owner.Name : null;
-            if (oname) {
-              const matched = ownerByName.get(oname);
-              const oid = matched || nodeFallback;
-              if (oid && (!tgtCreatable.size || tgtCreatable.has('OwnerId'))) p.OwnerId = oid;
-              if (!matched) { if (nodeFallback) ownerFellBack++; else ownerDefaulted++; }
-            }
           }
         }
         // ✏ TYPED VALUES — written in place of the source's, under the mapped
@@ -2947,13 +2976,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // legacy Name-only notes below are untouched (shipped deployments read
       // them).
       if (fbIsQueue && !nodeFallback && ownerDefaulted) errors.push(`⚠ ${objType}: the fallback queue does not take ${objType} records in the target, so ${ownerDefaulted} record(s) with no matching owner belong to the user who ran the deployment.`);
-      if (ownerMatching) {
-        if (ownerKeyMatched || ownerKeyDup || ownerFellBack || ownerDefaulted) {
-          errors.push(`⚠ ${objType}: owners: ${ownerKeyMatched} matched by ${ownerMatching.fields.join('+')}, ${ownerKeyDup} dup-key → fallback, ${ownerFellBack + ownerDefaulted} unmatched → fallback${nodeFallback ? '' : ' (no fallback user set — the target org assigned its default owner)'}${ownerQueueMatched ? `, ${ownerQueueMatched} kept their queue` : ''}.`);
-        }
-      } else {
-        if (ownerFellBack)  errors.push(`⚠ ${objType}: ${ownerFellBack} record(s) had owners with no name match in the target — assigned the fallback user.`);
-        if (ownerDefaulted) errors.push(`⚠ ${objType}: ${ownerDefaulted} record(s) had owners with no name match and no fallback user is set — the target org assigned its default owner.`);
+      // said only when an owner was NOT found: a run whose owners were all found has nothing to warn about
+      if (ownerKeyDup || ownerFellBack || ownerDefaulted) {
+        const byTxt = sftkOwnerAutoByText(ownerBy);
+        errors.push(`⚠ ${objType}: owners: ${ownerKeyMatched} found in the target${byTxt ? ` (${byTxt})` : ''}, ${ownerKeyDup} found more than once → fallback, ${ownerFellBack + ownerDefaulted} not found → fallback${nodeFallback ? '' : ' (no fallback user set — the target org assigned its default owner)'}${ownerQueueMatched ? `, ${ownerQueueMatched} kept their queue` : ''}.`);
       }
       // Source IDs that successfully inserted in target — cap at 2000 to keep
       // chrome.storage payloads sane on huge transfers. The picker reads this

@@ -106,3 +106,17 @@ describe('debug logs: the loading cat is the full one', () => {
     expect(D).not.toMatch(/adbg-list-ph">'? ?\+? ?\$?\{?sftkCatSm/);
   });
 });
+
+describe('a managed package flow is marked on every view of the Flows page', () => {
+  const DM = rd('dependency-map.js');
+  it('⏻ Switches: the row carries the flag and draws it', () => {
+    const matrix = extractFunction('sftk-flowbulk.js', 'sftkFlowBulkMatrix');
+    const rows = matrix([{ key: 'a' }], { a: [{ apiName: 'pkg__F', label: 'F', kind: 'Screen', managed: true }, { apiName: 'Mine', label: 'Mine', kind: 'Screen', managed: false }] }, {});
+    expect(rows.find(r => r.apiName === 'pkg__F').managed).toBe(true);
+    expect('managed' in rows.find(r => r.apiName === 'Mine')).toBe(false);
+    expect(DM).toContain('class="dep-fb-subtag dep-fb-pkgtag"');
+    expect(DM).toContain('🔒 managed package</span>');
+  });
+  it('⚙ API versions: the chip it always had', () => { expect(DM).toMatch(/dep-pill dep-pill-hint" title="Managed package flow/); });
+  it('🗂 Flows: their own section at the end of the list', () => { expect(PJ).toContain('🔒 Managed package flows <b>'); });
+});

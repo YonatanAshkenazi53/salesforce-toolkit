@@ -1774,7 +1774,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
   // Owner-mapping sanity: matching without a fallback is allowed but easy
   // to pick by accident — say what will happen to unmatched owners.
   if (ownerMapping?.mode === 'match' && !ownerMapping.fallbackUserId) {
-    logRow('⚠', 'Owner matching is ON but no fallback user is picked — owners with no name match get the target default on inserts, and keep their current owner on updates.', 'ds-prog-warn');
+    logRow('⚠', 'Owner matching is ON but no fallback user is picked — owners not found in the target get the target default on inserts, and keep their current owner on updates.', 'ds-prog-warn');
   }
 
   // PII MASKING v1 — masking vs matching collisions. Deterministic masking
@@ -1783,7 +1783,7 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
   // issues: re-seeding into a same-salt masked target works by design.
   if (piiKeys.length) {
     if (ownerMapping?.mode === 'match') {
-      for (const ownerField of (ownerMapping.matching?.fields || ['Name'])) {
+      for (const ownerField of ['Email', 'Name', 'FederationIdentifier']) {   // what an owner is found by (sftkOwnerAutoKeys)
         if (sftkPiiRuleFor(piiPolicy, 'User', ownerField)) {
           logRow('⚠', `Owner matching uses User.${ownerField}, which this policy masks — deterministic masking only matches targets seeded with the same salt, so against an unmasked target no owner matches and every record falls back.`, 'ds-prog-warn');
         }

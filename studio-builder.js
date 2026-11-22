@@ -150,25 +150,12 @@ function renderBuilder() {
                the inline value. -->
         </div>
         ${(() => {
-          // "Match owners by" — visible only in 'match' mode. Renders from
-          // bldOwnerMatchingDisplay so a legacy match-profile WITHOUT a
-          // matching config shows the Name-only path the engine will really
-          // run; nothing is written back until a control here is touched.
-          const m = bldOwnerMatchingDisplay(p.ownerMapping);
-          // the hover text of each option: what it does and a worked example (bldOwnerMatchHelp); the example is
-          // re-written with a real user of the target once its users are loaded (loadOwnerFallbackUsers)
-          const help = k => esc(bldOwnerMatchHelp(k, null));
-          const fld = (name, label) => `<label class="ds-bld-chk" data-owner-help="${name}" data-help="${help(name)}" title="${help(name)}"><input type="checkbox" data-owner-match-field="${name}" ${m.fields.includes(name) ? 'checked' : ''}> ${label}</label>`;
-          const tgl = (key, label) => `<label class="ds-bld-chk" data-owner-help="${key}" data-help="${help(key)}" title="${help(key)}"><input type="checkbox" data-owner-match-norm="${key}" ${m.normalize[key] ? 'checked' : ''}> ${label}</label>`;
+          // 2026-11-22 (owner: "i dont think its a correct logic to match owners. just check and find the owner from
+          // the source, this matching is confusing we need to check for it alone"): no "match by" boxes — the engine
+          // finds the owner on its own (sftkOwnerAuto*), and this line says how.
           return `
         <div id="dsOwnerMatchBlock" class="ds-bld-owner-match" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
-          <div class="ds-bld-owner-row">
-            <span>Match owners by</span>
-            ${fld('Email', 'Email')}${fld('Name', 'Name')}${fld('Username', 'Username')}${fld('Alias', 'Alias')}${fld('FederationIdentifier', 'Federation ID')}
-            <span class="ds-bld-owner-sep" aria-hidden="true">·</span>
-            ${tgl('caseFold', 'case-insensitive')}${tgl('trim', 'trim spaces')}${tgl('emailLower', 'lowercase emails')}
-          </div>
-          <div class="ds-bld-owner-note">1. A user is looked up in the target by these fields, a queue by its API name. Usernames are org-suffixed, so Email usually survives sandbox refreshes best.</div>
+          <div class="ds-bld-owner-note">1. Each owner is looked for in the target on its own: by Federation ID, then by email and name, then by email, then by name. A queue is found by its API name. Nothing to set.</div>
           <label id="dsProfileOwnerFallbackWrap" class="ds-builder-owner-fb">
             <span class="ds-builder-owner-fb-lbl">2. Only when that finds no one, give the record to</span>
             <select id="dsProfileOwnerFallback" class="ds-select" aria-label="Who gets a record whose owner is not in the target">
@@ -358,10 +345,6 @@ function renderBuilder() {
       `<optgroup label="Users">` + (pinned ? opt(pinned) : '') + list.shown.map(opt).join('') + `</optgroup>` +
       (queues.length ? `<optgroup label="Queues — used on the objects each queue takes">${queues.map(qOpt).join('')}</optgroup>` : '');
     if (hint) hint.textContent = bldOwnerFallbackHint(list, orgLabel(_editingProfile.targetOrg), saved);
-    // the hover examples now speak of a real user of this target
-    const ex = list.shown.find(u => u.Email && u.Name && !/noreply|@example\.|integration|automated|platform/i.test(u.Email + ' ' + u.Name))   // a person, not a system user
-      || list.shown.find(u => u.Email && u.Name) || null;
-    if (ex) document.querySelectorAll('[data-owner-help]').forEach(l => { l.dataset.help = bldOwnerMatchHelp(l.dataset.ownerHelp, ex, orgLabel(_editingProfile.targetOrg)); const b = l.querySelector('input'); if (!(b && b.disabled)) l.title = l.dataset.help; });
   }
   // Match-owners-by controls. Selection is capped at 4 fields (matches the
   // sftk-matching key-builder cap); at the cap, unchecked boxes disable
@@ -2503,7 +2486,7 @@ function bldOpenPiiListModal(objectApi) {
   const what = key => bldPiiRuleWords((p.piiPolicy || {})[key]);
   showModal(`<div class="ds-modal-header">${dsIcon('lock')} Masked fields of ${esc(objectApi)}<button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
     <div class="ds-modal-body">
-      <div class="ds-pii-how"><b>What a treatment does.</b> When ▶ Deploy writes a record, a treated field never gets the real value: it gets a <b>fabricated</b> value of the same kind (a name that is a name, a phone in the same shape, an e-mail made from the fabricated name on a domain that cannot receive mail), a <b>pseudonym</b> (a hash, same shape) or it is <b>written empty</b>. Every fake derives from a hash of the real value with a key kept on this PC — the same value always becomes the same fake, so re-runs still match — and nothing in the target can be turned back without the key. The source org is never changed. After the write the run reads a sample back and says whether anything still looks like PII.</div>
+      <div class="ds-pii-how"><b>What a treatment does.</b> When ▶ Deploy writes a record, a treated field never gets the real value: it gets a <b>blended</b> value of the same kind (a name that is a name, a phone in the same shape, an e-mail made from the blended name on a domain that cannot receive mail), a <b>pseudonym</b> (a code made from the value) or it is <b>written empty</b>. Every blended value derives from a hash of the real value with a key kept on this PC — the same value always becomes the same blended value, so re-runs still match — and nothing in the target can be turned back without the key. The source org is never changed. After the write the run reads a sample back and says whether anything still looks like PII.</div>
       <div class="ds-pii-list" id="dsPiiList">${rules.length ? rules.map(r => `<div class="ds-pii-row" data-pii-row="${esc(r.key)}"><code>${esc(r.field)}</code><span class="ds-dep-muted">${esc(what(r.key))}</span><button class="ds-btn ds-btn-xs" data-pii-unmask="${esc(r.key)}" title="Write the real value again">✕ Unmask</button><span class="ds-pii-row-ex" data-pii-ex="${esc(r.key)}"><span class="ds-pii-prev-none">reading an example…</span></span></div>`).join('') : '<div class="ds-dep-muted">No field of this object is masked.</div>'}</div>
       <div class="ds-pii-foot">${rules.length ? `<button class="ds-btn ds-btn-sm" id="dsPiiUnmaskAll">✕ Unmask all ${rules.length} — write the real values</button>` : ''}<span class="ds-dep-sp"></span><span class="ds-dep-muted">Pick fields: 🎭 in Fields &amp; mapping, or Suggest PII treatments. Changes count when you Save the deployment.</span></div>
     </div>`);
@@ -2553,7 +2536,7 @@ function bldPiiTreatmentOptions(fieldType) {
     const p = list.find(x => x.id === id);
     if (p) out.push({ value: id, label: `🎭 ${p.label}`, title: p.caveat || '' });
   }
-  if (sftkPiiMaskable({ type: t })) out.push({ value: 'hash', label: '# pseudonym — a hash, same shape', title: 'A deterministic hash shaped to the field\'s type — safe and joinable, but it reads as noise.' });
+  if (sftkPiiMaskable({ type: t })) out.push({ value: 'hash', label: '# pseudonym — a code made from the value', title: 'The value is replaced by a code computed from it. The same value always gives the same code, so records still match and join, and the code cannot be turned back into the value. A text becomes letters and digits, an email stays an email (at masked.invalid), a phone stays digits, a number stays a number.' });
   out.push({ value: 'null', label: '∅ write empty', title: 'The field is written empty. A required field cannot be emptied — the run says so.' });
   return out;
 }
@@ -2573,7 +2556,7 @@ function bldPiiTreatmentOfRule(rule) {
 function bldPiiRuleWords(rule) {
   const t = bldPiiTreatmentOfRule(rule);
   if (!t) return 'written as is';
-  if (t === 'hash') return 'written as a pseudonym — a hash of the value, same shape, the same every run on this PC';
+  if (t === 'hash') return 'written as a pseudonym — a code made from the value: the same value gives the same code on every run from this PC, and it cannot be turned back';
   if (t === 'null') return 'written empty';
   if (t === 'fixed') return `written as a fixed value${rule.value != null ? ` (${rule.value})` : ''}`;
   const p = (typeof sftkPiiPatternListV2 === 'function' ? sftkPiiPatternListV2() : []).find(x => x.id === t);
@@ -2762,9 +2745,9 @@ async function bldOpenPiiSuggestModal(opts) {
     <div class="ds-modal-header">🎭 Suggest PII treatments — ${esc(o.scope || p.name)}</div>
     <div class="ds-modal-body ds-pii-sug-body">
       <div class="ds-pii-sug-top">
-        <div class="ds-pii-sug-lead"><strong>Tick the fields to disguise.</strong> A ticked field is never written as it is — the target gets a look-alike fake.${o.selected ? ' A treatment belongs to the field: it covers every record this deployment writes — the ones you selected and any you select later.' : ''}</div>
-        <details class="ds-pii-sug-more"><summary>How the fakes are made</summary>
-          <div class="ds-pii-sug-honesty"><strong>Fabricated, not erased.</strong> Every treatment derives from a hash of the real value with a key kept on this PC: the same value always becomes the same fake (joins, match keys and re-seeds survive), a record's name parts and e-mail agree, the Contacts of one Account share a domain. E-mails land on <code>.invalid</code> domains that cannot receive mail. A fake that is shape-valid can still coincide with someone's real number where a country reserves no test range — each treatment's hover text says so.</div>
+        <div class="ds-pii-sug-lead"><strong>Tick the fields to disguise.</strong> A ticked field is never written as it is — the target gets a blended look-alike value.${o.selected ? ' A treatment belongs to the field: it covers every record this deployment writes — the ones you selected and any you select later.' : ''}</div>
+        <details class="ds-pii-sug-more"><summary>How data blending works</summary>
+          <div class="ds-pii-sug-honesty"><strong>Blended, not erased.</strong> Every treatment derives from a hash of the real value with a key kept on this PC: the same value always becomes the same blended value (joins, match keys and re-seeds survive), a record's name parts and e-mail agree, the Contacts of one Account share a domain. E-mails land on <code>.invalid</code> domains that cannot receive mail. A blended value that is shape-valid can still coincide with someone's real number where a country reserves no test range — each treatment's hover text says so.</div>
           <div class="ds-pii-sug-note-line">Pre-ticked = a strong signal: the values themselves, the field type, a name part, the label or a compliance group. Each field shows two real values and what they become.</div>
           ${anyCompliance ? '' : '<div class="ds-pii-sug-note-line">This org has no compliance classification on these objects (FieldDefinition.ComplianceGroup is empty or unreadable).</div>'}
         </details>

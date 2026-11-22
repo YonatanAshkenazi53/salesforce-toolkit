@@ -20,8 +20,10 @@ export default async function (h) {
   await h.eval("document.querySelector('.ds-builder-name-row').scrollIntoView({ block: 'start' })");
   const col = () => h.eval("(() => { const a = document.querySelector('.ds-autocomplete-item-api'); return a ? a.textContent + ' ' + getComputedStyle(a).color + ' on ' + getComputedStyle(document.querySelector('.ds-autocomplete-list')).backgroundColor : 'no suggestion'; })()");
   h.log('card heights:', JSON.stringify(await h.eval("[...document.querySelectorAll('.ds-builder-org-col')].map(c => Math.round(c.getBoundingClientRect().height))")));
-  h.log('hover Email:', await h.eval("document.querySelector('[data-owner-help=Email]').title"));
-  h.log('hover lowercase emails:', await h.eval("document.querySelector('[data-owner-help=emailLower]').title"));
+  // 2026-11-22: no match-by boxes; the block is one sentence. Names are not logged — only whether the two marks are there.
+  h.log('owner block:', await h.eval("(document.querySelector('#dsOwnerMatchBlock .ds-bld-owner-note')?.textContent || '').trim()"), '| boxes:', await h.eval("document.querySelectorAll('#dsOwnerMatchBlock input[type=checkbox]').length"));
+  h.log('You says who:', await h.eval("/\(today: .+\)/.test(document.querySelector('#dsProfileOwnerFallback option')?.text || '')"), '| own row marked:', await h.eval("[...document.querySelectorAll('#dsProfileOwnerFallback option')].filter(o => /you today/.test(o.text)).length"));
+  await h.eval("document.querySelector('.ds-builder-owner-row')?.scrollIntoView({ block: 'center' })");
   for (const dark of [false, true]) {
     await h.eval(`document.documentElement.classList.toggle('ds-dark', ${dark})`); await h.sleep(500);
     h.log(dark ? 'dark' : 'light', 'suggestion:', await col());

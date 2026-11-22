@@ -25,10 +25,9 @@ describe('the hover text of a match option', () => {
     expect(help('emailLower', U, 'npc2')).toContain('"Omer.paz@north.co" in the source matches "omer.paz@north.co"');
     expect(help('Username', U, 'npc2')).toContain('it rarely matches');
   });
-  it('is on the label, survives the four-field cap, and is re-written from the loaded users', () => {
-    expect(BL).toContain('data-owner-help="${name}" data-help="${help(name)}" title="${help(name)}"');
-    expect(BL).toContain("lbl.title = b.disabled ? 'Up to 4 match fields — untick one to add this' : (lbl.dataset.help || '');");
-    expect(BL).toContain('l.dataset.help = bldOwnerMatchHelp(l.dataset.ownerHelp, ex, orgLabel(_editingProfile.targetOrg));');
+  it('the options are gone from the Builder (owner 2026-11-22): no label carries it, and no real user is named in a help text', () => {
+    expect(BL).not.toContain('data-owner-help="${name}"');
+    expect(BL).not.toContain('l.dataset.help = bldOwnerMatchHelp(');
     expect(BL).toContain('SELECT Id, Name, Username, Email, Alias FROM User');
   });
 });

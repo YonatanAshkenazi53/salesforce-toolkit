@@ -15,6 +15,9 @@ extensions containing root files that start with `_`).
 
 ## 1.1.0 — 2026-11-22
 
+- **Deploy: the owner is found on its own** (2026-11-22). The "Match owners by" boxes are gone. Each owner of the source is looked for in the target by Federation ID, then by email and name, then by email, then by name; a rule that finds more than one user is never taken as an answer, and an owner no rule settles gets the fallback. Inserts and updates use the same rule (an update used to look by name only). The run speaks of owners only when one was not found.
+- **Flows: a managed package flow is marked on Switches too** (2026-11-22), as it already was on API versions and, in its own section, on the list.
+- **PII: plainer words** (2026-11-22). The screen speaks of data blending and blended values; the pseudonym option says what it writes: a code made from the value, the same code for the same value, which cannot be turned back.
 - **Flows: the list is the only view, and it carries the dependency tools** (2026-11-22). The separate Dependencies section is gone. On the list: a "What uses…" search that narrows the list to the flows whose metadata mentions a field, an object or a value, each with its count and with a line that says how much of the org was read; Export report and Rescan beside it; on every flow a blast radius button and a chain button; on every version who created and changed it, when, and its API version; and the flows of managed packages at the end of the list, read-only.
 - **Deploy: who "You" is as the fallback owner** (2026-11-22). The fallback owner list says who "You" is today, and marks that person's own row: "You" is whoever runs the deployment, the row by name stays that user.
 - **Debug logs: a bigger loading cat** (2026-11-22). The log list shows the full-size cat while it loads, purges or deletes.
@@ -185,7 +188,7 @@ extensions containing root files that start with `_`).
   stays Hebrew), e-mails made from the fabricated name on a .invalid domain the Contacts of one Account
   share, phones in the same shape, Luhn-valid cards with the last four kept, IBANs, Israeli IDs, SSNs,
   streets, dates moved 1–180 days, free text with the PII inside it replaced — or a pseudonym, or
-  empty. The same value always becomes the same fake (a key kept on this PC), the source org is never
+  empty. The same value always becomes the same blended value (a key kept on this PC), the source org is never
   changed, and after the write the run reads a sample back and says whether anything still looks like
   PII outside the fields the policy fabricates.
 

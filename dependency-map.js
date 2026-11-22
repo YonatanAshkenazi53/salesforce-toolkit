@@ -3011,6 +3011,7 @@ const DependencyMap = (() => {
                   ${(() => { const lu = labelUrl(f); return lu
                     ? `<span class="dep-fb-open" data-open-url="${escHtml(lu.url)}" title="${escHtml(f.apiName)} \u2014 open in Flow Builder">${escHtml(f.label)}</span>`
                     : `<span title="${escHtml(f.apiName)}">${escHtml(f.label)}</span>`; })()}
+                  ${f.managed ? `<span class="dep-fb-subtag dep-fb-pkgtag" title="${escHtml(`Installed by a managed package${String(f.apiName).includes('__') ? ` (${String(f.apiName).split('__')[0]})` : ''}. Salesforce hides its contents, and the package decides whether it can be switched.`)}">🔒 managed package</span>` : ''}
                   ${isRecordGroup(g) || inTree ? `<span class="dep-list-kind">${escHtml(f.kind)}</span>` : ''}
                   ${chips}
                 </span>

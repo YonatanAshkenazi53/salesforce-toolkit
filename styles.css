@@ -2350,6 +2350,8 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .flow-dep-btn:hover { border-color: var(--brand); color: var(--brand); }
 .flow-uses-count { margin-left: 6px; padding: 0 6px; border-radius: 9px; background: var(--brand-bg); color: var(--brand); font-size: 11px; font-weight: 600; }
 .version-dates { color: var(--subtext); font-size: 11px; margin-left: 10px; white-space: nowrap; }
+/* 2026-11-22: a managed package flow is marked on ⏻ Switches too */
+.dep-fb-pkgtag { color: var(--subtext); border-color: var(--border); text-transform: none; letter-spacing: 0; margin-left: 6px; }
 /* 2026-11-22: the flows of managed packages, read-only, at the end of the Flows list */
 .flow-managed { margin: 8px 0 0; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
 .flow-managed > summary { cursor: pointer; padding: 7px 11px; font-size: 12.5px; font-weight: 600; color: var(--text); }

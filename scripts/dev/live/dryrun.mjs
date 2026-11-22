@@ -32,6 +32,8 @@ export default async function (h) {
   const id = await h.eval(`_profiles.find(p => p.name === ${JSON.stringify(NAME)})?.id`);
   if (!id) throw new Error('fixture profile missing');
   h.log('deployment:', NAME);
+  // OWNERS=1: owners are kept (found in the target on their own), in this throwaway browser profile only
+  if (process.env.OWNERS === '1') h.log('owner mapping on:', await h.eval(`(() => { const p = _profiles.find(x => x.id === ${JSON.stringify(id)}); p.ownerMapping = { mode: 'match', fallbackUserId: null, fallbackUserName: null }; return p.ownerMapping.mode; })()`));
   await h.eval(`window.runProfile(${JSON.stringify(id)})`);
   await h.sleep(1500);
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);

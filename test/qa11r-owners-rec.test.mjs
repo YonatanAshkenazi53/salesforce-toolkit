@@ -30,9 +30,9 @@ describe('#12 the update says why an unmatched owner was kept', () => {
   });
   it('no fallback at all, and a fallback user: the sentences are the ones the run always printed', () => {
     expect(warn({ kept: 2, fallbackId: null, nodeFallback: null, objType: 'Account' }))
-      .toEqual(['⚠ owners: 2 record(s) kept their current target owner (no name match and no fallback user set)']);
+      .toEqual(['⚠ owners: 2 record(s) kept their current target owner (not found in the target and no fallback user set)']);
     expect(warn({ fellBack: 4, kept: 0, fallbackId: USER, nodeFallback: USER, objType: 'Account' }))
-      .toEqual(['⚠ owners: 4 record(s) reassigned to the fallback user (owner had no name match in the target)']);
+      .toEqual(['⚠ owners: 4 record(s) reassigned to the fallback user (the owner was not found in the target)']);
   });
   it('a fallback queue that takes the object is called a queue; nothing to say → no line', () => {
     expect(warn({ fellBack: 4, fallbackId: QUEUE, nodeFallback: QUEUE, objType: 'Case' }))

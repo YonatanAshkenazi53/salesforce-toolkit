@@ -337,7 +337,7 @@ function sftkSeedPiiModal(onlyObj) {
           Email &nbsp;<code>dana@acme.co.il</code> → <code>k3f9x2q1a7@masked.invalid</code> <span class="ds-oc-sub">— undeliverable by design</span><br>
           Hash &nbsp;<code>Dana Levi</code> → <code>4n98bcncg23</code> <span class="ds-oc-sub">— scrambled, no shape kept: use it where nothing validates the format</span>
         </div>
-        <div style="margin-top:5px">The same source value always produces the same fake, so records still join across objects and a re-seed stays idempotent. This is <strong>pseudonymization, not anonymization</strong>.</div>
+        <div style="margin-top:5px">The same source value always produces the same blended value, so records still join across objects and a re-seed stays idempotent. This is <strong>pseudonymization, not anonymization</strong>.</div>
       </div>
       ${body}
       <details style="margin-top:10px"><summary style="cursor:pointer">What each pattern guarantees — and what it doesn't</summary>

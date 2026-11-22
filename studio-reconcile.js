@@ -4801,22 +4801,35 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     }
   }
 
-  // Resolve source owner names against the target's active users.
-  const ownerByName = new Map();
+  // Owners are found in the target on their own — the insert engine's rule (sftkOwnerAuto*, 2026-11-22; before it an
+  // update looked a user up by name only while an insert used the deployment's "match by" fields).
+  const ownerBySrc = Object.create(null);   // source owner id (15) → target user id ('' = not found, or found more than once)
   let ownerFellBack = 0, ownerKept = 0;
   if (wantOwners) {
-    const names = [...new Set(srcRecs.map(r => r.Owner ? r.Owner.Name : null).filter(Boolean))];
-    for (let i = 0; i < names.length; i += 100) {
-      const lit = names.slice(i, i + 100)
-        .map(n => `'${String(n).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
-      const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-        query: `SELECT Id, Name FROM User WHERE IsActive = true AND Name IN (${lit})` });
-      if (q?.error) {
-        warnings.push(`⚠ owners: couldn't load target users (${q.error}) — owner matching skipped`);
-        wantOwners = false;
-        break;
+    const ownerUsers = async (sess, where) => {
+      const ask = cols => sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true, query: `SELECT ${cols} FROM User WHERE ${where}` });
+      let q = await ask('Id, Name, Email, FederationIdentifier');
+      if (!q || q.error) q = await ask('Id, Name, Email');   // Federation ID not readable here
+      return q;
+    };
+    const tq = await ownerUsers(tgtSess, 'IsActive = true LIMIT 4000');
+    if (!tq || tq.error) {
+      warnings.push(`⚠ owners: couldn't load target users (${(tq && tq.error) || 'no response'}) — owner matching skipped`);
+      wantOwners = false;
+    } else {
+      const idx = sftkOwnerAutoIndex(tq.records || []);
+      const srcU = new Map();
+      const ids = [...new Set(srcRecs.map(r => String(r.OwnerId || '')).filter(id => /^005[A-Za-z0-9]{12,15}$/.test(id)))];
+      for (let i = 0; i < ids.length; i += 200) {
+        const sq = await ownerUsers(srcSess, `Id IN (${ids.slice(i, i + 200).map(id => `'${id}'`).join(',')})`);
+        for (const u of ((sq && !sq.error && sq.records) || [])) srcU.set(String(u.Id).slice(0, 15), u);
       }
-      for (const u of (q.records || [])) if (!ownerByName.has(u.Name)) ownerByName.set(u.Name, u.Id);
+      for (const r of srcRecs) {
+        const k = String(r.OwnerId || '').slice(0, 15);
+        if (!k || k in ownerBySrc || /^00G/.test(k)) continue;
+        const su = srcU.get(k) || (r.Owner && r.Owner.Name ? { Name: r.Owner.Name } : null);
+        ownerBySrc[k] = su ? sftkOwnerAutoFind(idx, su).id : '';
+      }
     }
   }
 
@@ -4955,7 +4968,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     // untouched. THEN the ✏ typed values: written in place of the source's, under the mapped name; a PII-covered
     // field keeps its masked value. In that order, so an owner picked in the record editor is the one written.
     const valForRec = valOv && valOv[sr.Id] && typeof valOv[sr.Id] === 'object' ? valOv[sr.Id] : null;
-    const ot = sftkRecOwnerThenTyped(p, { wantOwners, ownerName: sr.Owner ? sr.Owner.Name : null, ownerByName, ownerFallback: nodeFallback, srcOwnerId: sr.OwnerId, queueBySrc: qMap ? qMap.bySrc : null },
+    const ot = sftkRecOwnerThenTyped(p, { wantOwners, ownerName: sr.Owner ? sr.Owner.Name : null, ownerBySrc, ownerFallback: nodeFallback, srcOwnerId: sr.OwnerId, queueBySrc: qMap ? qMap.bySrc : null },
       valForRec ? pl => sftkValOvApply(pl, valForRec, fm, tgtUpdOk, sf => piiActive && !!piiRules[String(sf).toLowerCase()]) : null);
     valOvUsed += ot.used; valOvMasked += ot.masked;
     ownerFellBack += ot.fellBack; ownerKept += ot.kept;
@@ -4976,8 +4989,8 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   if (typeof sftkRecOwnerWarnings === 'function') {
     warnings.push(...sftkRecOwnerWarnings({ fellBack: ownerFellBack, kept: ownerKept, fallbackId: ownerFallback, nodeFallback, objType, queuesUnread }));
   } else {
-    if (ownerFellBack) warnings.push(`⚠ owners: ${ownerFellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
-    if (ownerKept)     warnings.push(`⚠ owners: ${ownerKept} record(s) kept their current target owner (no name match and no fallback user set)`);
+    if (ownerFellBack) warnings.push(`⚠ owners: ${ownerFellBack} record(s) reassigned to the fallback user (the owner was not found in the target)`);
+    if (ownerKept)     warnings.push(`⚠ owners: ${ownerKept} record(s) kept their current target owner (not found in the target and no fallback user set)`);
   }
 
   for (const rp of refPairs) {
@@ -5607,6 +5620,62 @@ function sftkOwnerFallbackFor(fallbackId, qMap) {
   if (!/^00G/.test(id)) return id;
   return qMap && qMap.takes && qMap.takes[id.slice(0, 15)] ? id : null;
 }
+// ── OWNER MATCHING ON ITS OWN (owner 2026-11-22: "i dont think its a correct logic to match owners. just check and
+// find the owner from the source, this matching is confusing we need to check for it alone"). No setting: a source
+// user is looked for in the target by the strongest identity first — Federation ID, then email and name together,
+// then email, then name. A rule that finds MORE than one target user never guesses: the next rule is tried, and an
+// owner no rule settles gets the fallback. The same four functions are in background.js (inserts) and
+// studio-reconcile.js (updates); test/owner-auto-1122.test.mjs fails when the two copies differ.
+const SFTK_OWNER_AUTO_RULES = [
+  { id: 'fed', label: 'Federation ID' },
+  { id: 'emailName', label: 'email and name' },
+  { id: 'email', label: 'email' },
+  { id: 'name', label: 'name' },
+];
+// PURE. The four keys of one user ('' = this rule cannot be used for it). Capitals and outer spaces never matter;
+// ".invalid", which a sandbox refresh adds to every email, is dropped.
+function sftkOwnerAutoKeys(u) {
+  const t = v => String(v == null ? '' : v).trim();
+  const email = t(u && u.Email).toLowerCase().replace(/\.invalid$/, '');
+  const name = t(u && u.Name).toLowerCase().replace(/\s+/g, ' ');
+  const fed = t(u && u.FederationIdentifier).toLowerCase();
+  return { fed, emailName: email && name ? email + '\n' + name : '', email, name };
+}
+// PURE. users: the target's active users [{ Id, Name, Email, FederationIdentifier }] → { ruleId: { key: userId | null } }
+// (null = more than one user carries the key).
+function sftkOwnerAutoIndex(users) {
+  const idx = {};
+  for (const r of SFTK_OWNER_AUTO_RULES) idx[r.id] = Object.create(null);
+  for (const u of (users || [])) {
+    if (!u || !u.Id) continue;
+    const k = sftkOwnerAutoKeys(u);
+    for (const r of SFTK_OWNER_AUTO_RULES) {
+      const key = k[r.id];
+      if (!key) continue;
+      idx[r.id][key] = (key in idx[r.id]) ? (idx[r.id][key] === u.Id ? u.Id : null) : u.Id;
+    }
+  }
+  return idx;
+}
+// PURE. One source user → { id, by } (the rule that found it) or { id: '', by: '', several } — several: at least one
+// rule found more than one target user and no later rule settled it.
+function sftkOwnerAutoFind(idx, srcUser) {
+  const k = sftkOwnerAutoKeys(srcUser);
+  let several = false;
+  for (const r of SFTK_OWNER_AUTO_RULES) {
+    const key = k[r.id];
+    if (!key || !idx || !idx[r.id] || !(key in idx[r.id])) continue;
+    const id = idx[r.id][key];
+    if (id) return { id, by: r.id };
+    several = true;
+  }
+  return { id: '', by: '', several };
+}
+// PURE. "8 by email and name, 3 by email" from { ruleId: count }, in the order of the rules.
+function sftkOwnerAutoByText(by) {
+  return SFTK_OWNER_AUTO_RULES.filter(r => by && by[r.id]).map(r => `${by[r.id]} by ${r.label}`).join(', ');
+}
+// ── end of OWNER MATCHING ON ITS OWN
 // What the update says about owners it could not match (QA 1.1 regression, finding 12). A fallback QUEUE that does
 // not take this object is dropped for it (sftkOwnerFallbackFor), the owner stays — and the run said "no fallback user
 // set" while one was. PURE. → the warning lines.
@@ -5619,12 +5688,12 @@ function sftkRecOwnerWarnings(o) {
   const obj = String(x.objType || 'this object');
   if (fellBack) out.push(isQueue
     ? `⚠ owners: ${fellBack} record(s) reassigned to the fallback queue (owner had no match in the target)`
-    : `⚠ owners: ${fellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
+    : `⚠ owners: ${fellBack} record(s) reassigned to the fallback user (the owner was not found in the target)`);
   if (kept) {
     if (isQueue && !x.nodeFallback) out.push(x.queuesUnread
       ? `⚠ owners: ${kept} record(s) with no matching owner kept their current target owner (the fallback queue could not be checked for ${obj}, so it was not used)`
       : `⚠ owners: the fallback queue does not take ${obj} records in the target, so ${kept} record(s) with no matching owner kept their current target owner`);
-    else out.push(`⚠ owners: ${kept} record(s) kept their current target owner (no name match and no fallback user set)`);
+    else out.push(`⚠ owners: ${kept} record(s) kept their current target owner (not found in the target and no fallback user set)`);
   }
   return out;
 }
@@ -5637,9 +5706,10 @@ function sftkRecOwnerThenTyped(p, o, applyTyped) {
   const out = { used: 0, masked: 0, fellBack: 0, kept: 0 };
   let how = '';
   if (o && o.wantOwners && o.ownerName) {
-    // a queue is matched by its API name (queueBySrc), a user by name
+    // a queue is matched by its API name (queueBySrc); a user is found on its own (ownerBySrc, sftkOwnerAutoFind) —
+    // ownerByName is the lookup by name of before 2026-11-22, still read when a caller passes no ownerBySrc
     const isQ = /^00G/.test(String(o.srcOwnerId || ''));
-    const matched = isQ ? (o.queueBySrc && o.queueBySrc[String(o.srcOwnerId).slice(0, 15)]) : (o.ownerByName && o.ownerByName.get(o.ownerName));
+    const matched = isQ ? (o.queueBySrc && o.queueBySrc[String(o.srcOwnerId).slice(0, 15)]) : (o.ownerBySrc ? o.ownerBySrc[String(o.srcOwnerId || '').slice(0, 15)] : (o.ownerByName && o.ownerByName.get(o.ownerName)));
     if (matched) p.OwnerId = matched;
     else if (o.ownerFallback) { p.OwnerId = o.ownerFallback; how = 'fellBack'; }
     else how = 'kept';

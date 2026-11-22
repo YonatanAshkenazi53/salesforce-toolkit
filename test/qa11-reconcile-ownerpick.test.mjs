@@ -54,7 +54,7 @@ describe('an update payload: owner mapping, then the typed values', () => {
     expect(r).toEqual({ used: 0, masked: 0, fellBack: 1, kept: 0 });
   });
   it('the overwrite builds every payload through it, and no second owner assignment follows', () => {
-    expect(RC).toContain('const ot = sftkRecOwnerThenTyped(p, { wantOwners, ownerName: sr.Owner ? sr.Owner.Name : null, ownerByName, ownerFallback: nodeFallback, srcOwnerId: sr.OwnerId, queueBySrc: qMap ? qMap.bySrc : null },');
+    expect(RC).toContain('const ot = sftkRecOwnerThenTyped(p, { wantOwners, ownerName: sr.Owner ? sr.Owner.Name : null, ownerBySrc, ownerFallback: nodeFallback, srcOwnerId: sr.OwnerId, queueBySrc: qMap ? qMap.bySrc : null },');
     const at = RC.indexOf('const ot = sftkRecOwnerThenTyped(p,');
     const tail = RC.slice(at, RC.indexOf('payloads.push(p);', at));
     expect(tail).not.toContain('p.OwnerId =');

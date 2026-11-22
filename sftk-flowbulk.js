@@ -252,6 +252,7 @@ function sftkFlowBulkMatrix(orgs, rowsByOrg, apiVerByOrg) {
       }
       const row = byName.get(r.apiName);
       row.label = row.label || r.label;
+      if (r.managed) row.managed = true;   // installed by a managed package in at least one org — the row says so (owner 2026-11-22)
       row.cells[o.key] = {
         present: true, isActive: r.isActive, defId: r.defId,
         activeVersion: r.activeVersion, latestVersion: r.latestVersion,
