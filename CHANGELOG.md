@@ -13,7 +13,7 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
-## 1.1.0 — 2026-11-21
+## 1.1.0 — 2026-11-22
 
 - **A second review, and its fixes** (2026-11-22). The code changed since the first review was read again by independent reviewers, and all 25 defects they confirmed are fixed, each with a test. Among them: every CSV export now guards cells a spreadsheet would run as a formula; a deploy that Salesforce is still working on is no longer shown as refused; a validation rule whose switch-off got no answer is treated as possibly off and is switched back; the matching rule shows what the scan really uses until you change it, and its examples come from the same pairing as its counts; a fallback queue is spoken of only where it takes the object.
 - **Deploy: a parent outside the deployment can be found by several fields** (2026-11-21). The parent's matching dialog offers Composite: a second and a third field, tested against both orgs before it is used. A run, an update, the comparison of a lookup and the parents' check all read every field of the key and compare them together. A parent with one of those fields empty is not found by the key, and the run says so.
