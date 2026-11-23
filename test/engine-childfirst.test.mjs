@@ -330,7 +330,7 @@ describe('engine controls — apiMode + batchSize', () => {
     // 2 Accounts + 2 Contacts, one record per call.
     expect(creates).toHaveLength(4);
     expect(creates.every(([, chunk]) => chunk.length === 1)).toBe(true);
-    expect(result.errors.join('\n')).toMatch(/batch size 1 \(engine settings\)/);
+    expect(result.errors.join('\n')).toMatch(/written 1 at a time \(this deployment's batch size\)/);   // reworded 2026-11-23
   });
 
   it("apiMode 'sync' pins Collections even above the bulk threshold", async () => {

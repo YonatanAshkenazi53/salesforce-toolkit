@@ -424,7 +424,7 @@ describe('G3. a dry run whose engine call failed without a verdict is not "compl
   });
   it('runReconcile marks such a call and hands the ticked count to the verdict', () => {
     expect((RUN.match(/if \(PROBE && sftkProbeCallBroke\(res\)\) probeBroke = true;/g) || []).length).toBe(2);
-    expect(REC).toContain('sftkProbeVerdict(pt, { incomplete: probeIncomplete, net: netStop, selected: treePushIds.length + groupATotal + childActs.reduce((t, a) => t + a.groupB.length, 0) })');
+    expect(REC).toContain('sftkProbeVerdict(pt, { incomplete: probeIncomplete, net: netStop, selected: Math.max(ptab.total.inRun, treePushIds.length + groupATotal + childActs.reduce((t, a) => t + a.groupB.length, 0)) })');   // 2026-11-23: never fewer than the result table adds up to
   });
 });
 

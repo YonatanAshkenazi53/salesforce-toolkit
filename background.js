@@ -2110,7 +2110,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       const effLkp = sftkEffectiveLookupResolutions(node.lookupResolutions, descRes.fields, treeObjSet);
       {
         const defaulted = Object.entries(effLkp).filter(([, v]) => v && v.defaulted).map(([k]) => k);
-        if (defaulted.length && recs.length) diagnostics.push(`${objType}: 🔗 lookups matched by Name in the target: ${defaulted.join(', ')} — choose 🚫 Set null in Lookup Resolution for any that must not be touched.`);
+        if (defaulted.length && recs.length) diagnostics.push(`${objType}: 🔗 these lookups are filled by finding the record with the same Name in the target: ${defaulted.join(', ')}. To leave one empty, choose 🚫 Set null for it in Lookup Resolution.`);
       }
 
       if (recs.length > 0) {
@@ -2282,7 +2282,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       const piiRows = piiRules ? await sftkPiiMaskRows(recs, objType, piiRules, piiSalt, piiCache) : null;
       if (piiRows && recs.length) {
         const pc = piiRows.counts;
-        diagnostics.push(`${objType}: PII masking applied — ${pc.hashed} value(s) hashed, ${pc.nulled} nulled, ${pc.fixed} fixed (deterministic: the same salt re-seeds to the same masked values).`);
+        // plain words (owner 2026-11-23: "dry run is unreadable"; 2026-11-22: say data blending) — it spoke of
+        // masking, hashes, nulled and fixed values and a salt
+        diagnostics.push(`${objType}: 🎭 data blending: ${[pc.hashed ? `${pc.hashed} value(s) written disguised` : '', pc.nulled ? `${pc.nulled} left empty` : '', pc.fixed ? `${pc.fixed} set to a fixed value` : ''].filter(Boolean).join(', ') || 'no value needed it'}. The same value is disguised the same way on every run from this PC.`);
       }
       // W7 disclosure — rich-text org-local images: the field text copies,
       // the image blob it points at doesn't (it lives only in the source
@@ -2596,8 +2598,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       } else if (payloads.length >= BULK_MIN && !dupBypass) {
         diagnostics.push(`${objType}: kept on synchronous Collections by engine settings (${payloads.length} record(s) would normally go Bulk at ≥ ${BULK_MIN}) — slower, but per-record errors are immediate.`);
       }
-      if (!useBulk && BATCH_SIZE !== 200) {
-        diagnostics.push(`${objType}: batch size ${BATCH_SIZE} (engine settings) — ${Math.ceil(payloads.length / BATCH_SIZE)} Collections call(s) instead of ${Math.ceil(payloads.length / 200)}.`);
+      if (!useBulk && BATCH_SIZE !== 200 && !PROBE) {   // a dry run sends its records in one transaction: the batch size plays no part in it
+        diagnostics.push(`${objType}: written ${BATCH_SIZE} at a time (this deployment's batch size): ${Math.ceil(payloads.length / BATCH_SIZE)} request(s) to Salesforce instead of ${Math.ceil(payloads.length / 200)}.`);
       }
       // Threads — how many Collections batches fly in PARALLEL (user
       // 2026-08-18: "we can also add threads like inspector has"). Sync
@@ -3358,7 +3360,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         postRunProgress({ phase: 'probeDone', obj: o, ...agg });
         diagnostics.push(`🧪 ${o}: ${agg.probed} record(s) in a transaction Salesforce rolled back — ${agg.wouldWrite} would be written, ${agg.refused} refused${agg.cascade ? `, ${agg.cascade} not checked (their parent would be refused)` : ''}${agg.earlier ? `, ${agg.earlier} not checked (they point at a record an earlier step of this run creates)` : ''}${agg.unreached ? `, ${agg.unreached} not reached` : ''}${agg.sampledOf ? ` · a sample: the first ${agg.probed} of ${agg.sampledOf}` : ''}.`);
       }
-      diagnostics.push(`🧪 Dry run limits: up to ${PL.sample} records per object; triggers and flows really ran and were rolled back with the transaction (e-mails and queued jobs roll back too; platform events published immediately do not); 🔗 lookups connected after insert and 📎 files were not checked; row locks and limits at full volume can still differ.`);
+      diagnostics.push(`🧪 Dry run limits: up to ${PL.sample} records per object; triggers and flows really ran and were rolled back with the transaction (e-mails and queued jobs roll back too; platform events published immediately do not); 🔗 lookups connected after insert and 📎 files were not checked; row locks and limits at full volume can still differ; a record that duplicates ANOTHER RECORD OF THIS RUN can pass here and be refused by a duplicate rule in the real run, once the other one is written.`);
     } else {
       diagnostics.push('🧪 dry run: nothing to send — no record reached a write.');
     }

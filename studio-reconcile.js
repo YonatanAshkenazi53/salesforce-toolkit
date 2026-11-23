@@ -2224,6 +2224,53 @@ function sftkProbeLine(obj, a, expected) {
   if (n('unreached') || n('cascade') || n('earlier') || n('wouldWrite') < n('probed')) return { icon: '⚠', cls: 'ds-prog-warn', text };
   return { icon: '✅', cls: '', text };
 }
+// ── The dry run's result as a table (owner 2026-11-23: "dry run is unreadable and hard to understand") ──────
+// The verdict was the last of some twenty lines, every count was said two or three times (the object's card, its
+// log line, the headline) and the engine's notes sat between them. The top of the log now carries ONE table —
+// a row per object, the same numbers the headline adds up — and the step-by-step log folds under it.
+// PURE. byObj: obj → the engine's verdict counts (+ unbuilt) · expected: obj → how many were selected for insert
+// → { rows: [{ obj, inRun, would, refused, notChecked, why: [text], leftOut }], total: { inRun, would, refused, notChecked }, leftOut: [{ obj, n }] }
+//   inRun      = records the dry run took (checked by Salesforce, or built and never reached)
+//   notChecked = in the run, no answer: the parent would be refused, an earlier step creates what it points at,
+//                not reached, never built
+//   leftOut    = selected, not in the run at all: beyond the sample of a finished run
+function sftkProbeTable(byObj, expected) {
+  const out = { rows: [], total: { inRun: 0, would: 0, refused: 0, notChecked: 0 }, leftOut: [] };
+  const f = v => Number(v).toLocaleString('en-US');
+  const names = [...new Set([...Object.keys(expected || {}), ...Object.keys(byObj || {})])];
+  for (const obj of names) {
+    const a = (byObj && byObj[obj]) || {}, n = k => Math.max(0, Number(a[k]) || 0);
+    const exp = expected && expected[obj] != null ? Math.max(0, Number(expected[obj]) || 0) : null;
+    if (!n('probed') && !n('unbuilt') && !exp) continue;
+    const why = [];
+    if (n('cascade')) why.push(`${f(n('cascade'))}: the parent would be refused`);
+    if (n('earlier')) why.push(`${f(n('earlier'))}: they point at a record an earlier step creates`);
+    if (n('unreached')) why.push(`${f(n('unreached'))}: not reached`);
+    if (n('unbuilt')) why.push(`${f(n('unbuilt'))}: the dry run stopped before them`);
+    const row = { obj, inRun: n('probed') + n('unbuilt'), would: n('wouldWrite'), refused: n('refused'),
+      notChecked: n('cascade') + n('earlier') + n('unreached') + n('unbuilt'), why,
+      leftOut: exp == null ? 0 : Math.max(0, exp - n('probed') - n('unbuilt')) };
+    out.rows.push(row);
+    for (const k of Object.keys(out.total)) out.total[k] += row[k];
+    if (row.leftOut) out.leftOut.push({ obj, n: row.leftOut });
+  }
+  return out;
+}
+// PURE. What a dry run does not check, in one sentence. parts: ["15 update(s) of changed records", …]
+function sftkProbeSkippedLine(parts) {
+  const p = (parts || []).filter(Boolean);
+  return p.length ? `A dry run checks inserts only. Not checked, and still selected for the real run: ${p.join(' · ')}.` : '';
+}
+// PURE. The sentences under the table: what was selected and is not in it.
+function sftkProbeTableNotes(t, sample, skipped) {
+  const f = v => Number(v).toLocaleString('en-US'), out = [];
+  for (const l of ((t && t.leftOut) || [])) out.push(`${f(l.n)} more ${l.obj} selected and not checked: a dry run takes the first ${f(Number(sample) || 200)} records of an object in each step. The real run writes them all.`);
+  const s = sftkProbeSkippedLine(skipped); if (s) out.push(s);
+  // live 2026-11-23 (owner: "dry run reasults are not the same as actual reasults"): the dry run said 3 duplicates,
+  // the real run refused 5 — the two more duplicated Accounts the same run had written seconds before
+  if (t && t.rows.length) out.push('The real run can refuse more: a record that duplicates another record of this same run passes here, and a duplicate rule refuses it once the other one is written.');
+  return out;
+}
 // 2026-11-15 (live re-check, a dry run stopped midway): the headline read "0 of 13 would be written — 13 not
 // reached" with 35 records selected — it counted only the records BUILT when the stop came, so the same stop a
 // moment earlier or later gave another number, and 22 selected records were not mentioned at all. PURE.
@@ -2863,7 +2910,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       ${probeSkipped.length ? `<div class="ds-rec-plan"><div class="ds-rec-plan-hdr">Not part of a dry run — they stay selected for the real run:</div>${probeSkipped.map(l => `<div class="ds-rec-plan-line">${esc(l)}</div>`).join('')}</div>` : ''}
       <div class="ds-rec-plan ds-dryrun-how">
         <strong>How it works.</strong> The records go to Salesforce in one transaction together with a record that always fails, so every record is evaluated and the whole transaction is rolled back. Triggers and flows really run and roll back with it (e-mails and queued jobs too; platform events published immediately do not).
-        <br><strong>Limits.</strong> The first 200 records of each object; lookups connected after insert (🔗) and 📎 files are not checked; row locks and limits at full volume can differ.${pausesOn ? '<br><strong>⏸ Pauses are not applied</strong> in a dry run: rules and flows stay on, so a refusal here may not happen in the real run with the pause on.' : ''}
+        <br><strong>Limits.</strong> The first 200 records of each object; lookups connected after insert (🔗) and 📎 files are not checked; row locks and limits at full volume can differ. <strong>Duplicates inside the run:</strong> a record that duplicates another record of this same run can pass the dry run and be refused by a duplicate rule in the real run, once the other one is written.${pausesOn ? '<br><strong>⏸ Pauses are not applied</strong> in a dry run: rules and flows stay on, so a refusal here may not happen in the real run with the pause on.' : ''}
       </div>`;
     const tgtGate = (tgtGuarded && probeInserts) ? await sftkOrgWriteGate(profile.targetOrg, _orgs) : null;
     const ok = await sftkConfirmDestructive({
@@ -3148,7 +3195,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   // ── 0. Child deletes (R4) — run BEFORE the root delete so children go
   // first (FK-safe), through the SAME delete modes and prod guards as the
   // root (typed prod confirm + hard-delete block already covered both above).
-  if (PROBE && probeSkipped.length) log('🧪', `Not part of the dry run (they stay selected for the real run): ${probeSkipped.join(' · ')}.`);
+  if (PROBE && probeSkipped.length) log('🧪', `${sftkProbeSkippedLine(probeSkipped)}`);
   for (const a of (PROBE ? [] : childActs)) {
     if (!a.delIds.length) continue;
     const obj = a.node.objectType || a.node.childSObject;
@@ -3977,11 +4024,15 @@ async function runReconcile(profile, objType, buckets, opts) {
   if (PROBE) {
     const pt = probeTotals;
     // 2026-11-15: a dry run that stopped says so — in the log, at the top, in the toast and next to ▶ Deploy
-    const pv = sftkProbeVerdict(pt, { incomplete: probeIncomplete, net: netStop, selected: treePushIds.length + groupATotal + childActs.reduce((t, a) => t + a.groupB.length, 0) });
+    // the result as one table, the step-by-step log folded under it (owner 2026-11-23). The headline counts the
+    // same records as the table: a stopped run named fewer "selected" than its own objects added up to
+    const ptab = sftkProbeTable(probeAgg, probeExpected);
+    const pv = sftkProbeVerdict(pt, { incomplete: probeIncomplete, net: netStop, selected: Math.max(ptab.total.inRun, treePushIds.length + groupATotal + childActs.reduce((t, a) => t + a.groupB.length, 0)) });
     const verdict = pv.verdict;
     closeRunView();
     log(runStatus === 'success' ? '✅' : runStatus === 'partial' ? '⚠' : '❌', `🧪 ${pv.head}: ${verdict}. Nothing was written${stoppedWhy ? ' — stopped before every object was checked' : ''}.${pv.why}`, runStatus === 'success' ? '' : 'ds-prog-err');
-    _recRunVerdictTop(prog, runStatus, `🧪 ${pv.incomplete ? pv.head : 'Dry run'}: ${verdict}. Nothing was written.${pv.why}`);
+    _recRunVerdictTop(prog, runStatus, `🧪 ${pv.incomplete ? pv.head : 'Dry run'}: ${verdict}. Nothing was written.${pv.why}`,
+      { table: ptab, notes: sftkProbeTableNotes(ptab, 200, probeSkipped), fold: true });
     window._sftkRunActive = false;
     eid('dsRunPauseBar')?.remove();
     showToast(`🧪 ${pv.incomplete ? pv.head : 'Dry run'}: ${verdict}`, runStatus === 'success' ? 'success' : runStatus === 'partial' ? 'warning' : 'error', 7000);
@@ -5761,8 +5812,22 @@ async function _recRulesFor(sess, obj) {
 // At the end of a run: the ragdoll leaves the header, and — for a dry run, or a run with refusals — the verdict and the
 // refusal cards are repeated at the TOP of the log, which is brought into view (owner 2026-11-14: "you need to scroll
 // down"). The full log stays below it.
-function _recRunVerdictTop(prog, status, verdictText) {
+// The table of a dry run (sftkProbeTable): a row per object, the total when there is more than one.
+function _recProbeTableHtml(t) {
+  if (!t || !t.rows.length) return '';
+  const f = v => Number(v).toLocaleString('en-US');
+  const cell = (n, cls) => `<td class="ds-probe-n${n ? ` ${cls}` : ' ds-probe-zero'}">${n ? f(n) : '–'}</td>`;
+  const tr = (r, total) => `<tr${total ? ' class="ds-probe-total"' : ''}><th scope="row">${esc(r.obj)}</th><td class="ds-probe-n">${f(r.inRun)}</td>${cell(r.would, 'ds-probe-ok')}${cell(r.refused, 'ds-probe-bad')}${cell(r.notChecked, 'ds-probe-warn')}<td class="ds-probe-why">${esc((r.why || []).join(' · '))}</td></tr>`;
+  return `<table class="ds-probe-table"><thead><tr><th scope="col">Object</th><th scope="col" class="ds-probe-n" title="The records this dry run sent to Salesforce">In the dry run</th><th scope="col" class="ds-probe-n">Would be written</th><th scope="col" class="ds-probe-n" title="Salesforce refuses the record: the reasons are below">Refused</th><th scope="col" class="ds-probe-n" title="In the dry run, but Salesforce gave no answer for the record itself">Not checked</th><th scope="col"></th></tr></thead><tbody>`
+    + t.rows.map(r => tr(r, false)).join('')
+    + (t.rows.length > 1 ? tr({ obj: 'Total', ...t.total, why: [] }, true) : '')
+    + '</tbody></table>';
+}
+// o (a dry run, 2026-11-23): { table: sftkProbeTable(), notes: [sentence], fold: true — the lines of the run go
+// under a closed "Step by step" so the result is what the eye meets }
+function _recRunVerdictTop(prog, status, verdictText, o) {
   if (!prog) return;
+  o = o || {};
   prog.querySelector('.ds-prog-cat')?.remove();
   const cards = [...prog.querySelectorAll('.ds-prog-refusal')];   // moved up, not copied
   if (!verdictText && !cards.length) return;
@@ -5770,11 +5835,30 @@ function _recRunVerdictTop(prog, status, verdictText) {
   const top = document.createElement('div');
   top.className = `ds-prog-verdict ds-prog-verdict-${status === 'success' ? 'ok' : status === 'partial' ? 'warn' : 'bad'}`;
   top.innerHTML = (verdictText ? `<div class="ds-prog-verdict-hd">${esc(verdictText)}</div>` : '')
+    + _recProbeTableHtml(o.table)
+    + (o.notes || []).map(n => `<div class="ds-prog-verdict-note">${esc(n)}</div>`).join('')
     + (cards.length ? `<div class="ds-prog-verdict-why">${cards.length === 1 ? 'Why:' : `Why — ${cards.length} reasons:`}</div>` : '');
   for (const c of cards) top.appendChild(c);
-  const more = document.createElement('div'); more.className = 'ds-prog-verdict-more'; more.textContent = 'The full log of this run is below.';
-  top.appendChild(more);
+  if (!o.fold) { const more = document.createElement('div'); more.className = 'ds-prog-verdict-more'; more.textContent = 'The full log of this run is below.'; top.appendChild(more); }
   if (hdr && hdr.nextSibling) prog.insertBefore(top, hdr.nextSibling); else prog.appendChild(top);
+  if (o.fold) {
+    const rest = []; for (let n = top.nextSibling; n; n = n.nextSibling) rest.push(n);
+    // an error line of the run is never folded away: it is said again under the table (the headline's own line is not)
+    const errs = [...new Set(rest.filter(n => n.nodeType === 1 && n.classList.contains('ds-prog-err') && /^\s*❌/.test(n.textContent) && !/🧪 Dry run (complete|stopped before it finished):/.test(n.textContent)).map(n => n.textContent.replace(/^\s*❌\s*/, '').trim()))];
+    if (errs.length) {
+      const h = document.createElement('div'); h.className = 'ds-prog-verdict-why'; h.textContent = errs.length === 1 ? 'Error:' : `Errors (${errs.length}):`; top.appendChild(h);
+      for (const t of errs.slice(0, 6)) { const e = document.createElement('div'); e.className = 'ds-prog-verdict-err'; e.textContent = t; top.appendChild(e); }
+      if (errs.length > 6) { const e = document.createElement('div'); e.className = 'ds-prog-verdict-note'; e.textContent = `and ${errs.length - 6} more, in the step-by-step log below`; top.appendChild(e); }
+    }
+    if (rest.length) {
+      const d = document.createElement('details'); d.className = 'ds-prog-steps';
+      const s = document.createElement('summary');
+      const lines = rest.reduce((t, n) => t + (n.nodeType === 1 && n.classList.contains('ds-prog-row') ? 1 : 0), 0);
+      s.textContent = `Step by step: what the dry run did, and the engine's notes${lines ? ` (${lines} lines)` : ''}`;
+      d.appendChild(s); for (const n of rest) d.appendChild(n);
+      prog.appendChild(d);
+    }
+  }
   try { prog.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { /* a view without the log */ }
 }
 async function _recLogRefused(log, summary, probe, tgtSess) {
