@@ -1441,7 +1441,9 @@ function sftkFlowKindOfRow(row, trigMap) {
 const SFTK_FLOW_KIND_TABS = ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'];
 // Which tab a kind is shown under: its own, or "other" (Process Builder, platform event, orchestration …). PURE.
 function sftkFlowKindTab(kind) { return ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'].includes(kind) ? kind : 'other'; }
-// How many flows each tab holds. PURE. → { all, RecordTriggeredFlow, Flow, AutoLaunchedFlow, ScheduledFlow, other }
+// PURE. Is a flow of this kind a guest under the kind tab picked (shown for its tree, not counted by the tab)?
+function sftkFlowOtherKind(filter, kind) { return !!filter && filter !== 'all' && sftkFlowKindTab(kind) !== filter; }
+// How many flows each tab holds. PURE.→ { all, RecordTriggeredFlow, Flow, AutoLaunchedFlow, ScheduledFlow, other }
 function sftkFlowKindCounts(rows, trigMap) {
   const out = { all: 0, RecordTriggeredFlow: 0, Flow: 0, AutoLaunchedFlow: 0, ScheduledFlow: 0, other: 0 };
   for (const r of (rows || [])) { out.all++; out[sftkFlowKindTab(sftkFlowKindOfRow(r, trigMap))]++; }
@@ -1670,7 +1672,12 @@ function buildTreeBox(bk, depMap) {
   pick.appendChild(all); pick.appendChild(document.createTextNode(' tick the whole tree'));
   const badge = document.createElement('span');
   badge.className = 'flow-tree-badge';
-  badge.textContent = `🌳 tree · ${n} flows${depthMax > 1 ? ` · ${depthMax} levels deep` : ''}`;
+  // under a kind tab a tree still shows whole, so a flow of another kind is said to be one (owner 2026-11-23:
+  // "screen flow says it found two but display only one" — Screen 2, a tree of three rows, the third auto-launched)
+  const trigMapT = (typeof DependencyMap.getDefinitionTriggerMap === 'function' && DependencyMap.getDefinitionTriggerMap()) || {};
+  const kindOfE = e => sftkFlowKindOfRow(e.row, trigMapT);
+  const nOther = bk.rows.filter(e => sftkFlowOtherKind(_flowTypeFilter, kindOfE(e))).length;
+  badge.textContent = `🌳 tree · ${n} flows${nOther ? ` · ${n - nOther} of this tab's kind` : ''}${depthMax > 1 ? ` · ${depthMax} levels deep` : ''}`;
   const hint = document.createElement('span');
   hint.className = 'flow-tree-hint';
   hint.textContent = `${root.label} and everything it calls${currentMode === 'delete' ? ' — on delete the parents go first; a subflow another flow still calls is flagged before anything is deleted' : ''}`;
@@ -1692,6 +1699,16 @@ function buildTreeBox(bk, depMap) {
       twig.title = `called by ${e.parent || root.apiName}`;
       const lbl = g.querySelector('.group-label');
       if (lbl) lbl.parentNode.insertBefore(twig, lbl);
+    }
+    if (sftkFlowOtherKind(_flowTypeFilter, kindOfE(e))) {
+      g.classList.add('flow-group-otherkind');
+      const tag = document.createElement('span');
+      tag.className = 'flow-otherkind-tag';
+      const human = humanProcessType(kindOfE(e)) || 'another kind';
+      tag.textContent = human.toLowerCase();
+      tag.title = `${human}, not of the kind this tab lists: it is here because it belongs to this tree, and the tab's count leaves it out. Select All leaves it out too.`;
+      const lbl = g.querySelector('.group-label');
+      if (lbl) lbl.insertAdjacentElement('afterend', tag);
     }
     box.appendChild(g);
   }

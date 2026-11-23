@@ -13,8 +13,9 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
-## 1.1.0 — 2026-11-22
+## 1.1.0 — 2026-11-23
 
+- **Flows: a kind tab says which flows of a tree it counts** (2026-11-23). Under Screen, Record-Triggered and the other kind tabs a tree is still shown whole; a flow of another kind in it is dimmed and labelled with its kind, and the tree says how many of its flows are of the tab's kind.
 - **Deploy: the owner is found on its own** (2026-11-22). The "Match owners by" boxes are gone. Each owner of the source is looked for in the target by Federation ID, then by email and name, then by email, then by name; a rule that finds more than one user is never taken as an answer, and an owner no rule settles gets the fallback. Inserts and updates use the same rule (an update used to look by name only). The run speaks of owners only when one was not found.
 - **Flows: a managed package flow is marked on Switches too** (2026-11-22), as it already was on API versions and, in its own section, on the list.
 - **PII: plainer words** (2026-11-22). The screen speaks of data blending and blended values; the pseudonym option says what it writes: a code made from the value, the same code for the same value, which cannot be turned back.
