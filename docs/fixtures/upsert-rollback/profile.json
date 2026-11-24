@@ -1,0 +1,16 @@
+{
+ "format": "sftk-profile",
+ "schema": 1,
+ "exportedBy": "fixture",
+ "exportedAt": "2026-11-25T00:00:00.000Z",
+ "profile": {
+  "name": "SFTK UR — upsert and roll back",
+  "sourceOrg": "https://orgfarm-c449e108c2-dev-ed.develop.my.salesforce.com",
+  "targetOrg": "https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com",
+  "tree": {
+   "objectType": "Account",
+   "where": "Name LIKE 'SFTK UR %'",
+   "matchField": "Name"
+  }
+ }
+}
