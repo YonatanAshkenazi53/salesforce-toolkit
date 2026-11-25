@@ -2234,37 +2234,84 @@ function sftkProbeLine(obj, a, expected) {
 //   notChecked = in the run, no answer: the parent would be refused, an earlier step creates what it points at,
 //                not reached, never built
 //   leftOut    = selected, not in the run at all: beyond the sample of a finished run
-function sftkProbeTable(byObj, expected) {
+//   updates (2026-11-26): obj → { probed, wouldWrite, refused, unchecked, sampledOf } — the updates of changed
+//   records, checked in their own rolled-back transaction. Every row says its operation: op 'Insert' | 'Update'.
+function sftkProbeTable(byObj, expected, updates) {
   const out = { rows: [], total: { inRun: 0, would: 0, refused: 0, notChecked: 0 }, leftOut: [] };
   const f = v => Number(v).toLocaleString('en-US');
-  const names = [...new Set([...Object.keys(expected || {}), ...Object.keys(byObj || {})])];
+  const names = [...new Set([...Object.keys(expected || {}), ...Object.keys(byObj || {}), ...Object.keys(updates || {})])];
+  const add = row => { out.rows.push(row); for (const k of Object.keys(out.total)) out.total[k] += row[k]; if (row.leftOut) out.leftOut.push({ obj: row.obj, n: row.leftOut, ...(row.op === 'Update' ? { op: 'Update' } : {}) }); };
   for (const obj of names) {
     const a = (byObj && byObj[obj]) || {}, n = k => Math.max(0, Number(a[k]) || 0);
     const exp = expected && expected[obj] != null ? Math.max(0, Number(expected[obj]) || 0) : null;
-    if (!n('probed') && !n('unbuilt') && !exp) continue;
-    const why = [];
-    if (n('cascade')) why.push(`${f(n('cascade'))}: the parent would be refused`);
-    if (n('earlier')) why.push(`${f(n('earlier'))}: they point at a record an earlier step creates`);
-    if (n('unreached')) why.push(`${f(n('unreached'))}: not reached`);
-    if (n('unbuilt')) why.push(`${f(n('unbuilt'))}: the dry run stopped before them`);
-    const row = { obj, inRun: n('probed') + n('unbuilt'), would: n('wouldWrite'), refused: n('refused'),
-      notChecked: n('cascade') + n('earlier') + n('unreached') + n('unbuilt'), why,
-      leftOut: exp == null ? 0 : Math.max(0, exp - n('probed') - n('unbuilt')) };
-    out.rows.push(row);
-    for (const k of Object.keys(out.total)) out.total[k] += row[k];
-    if (row.leftOut) out.leftOut.push({ obj, n: row.leftOut });
+    if (n('probed') || n('unbuilt') || exp) {
+      const why = [];
+      if (n('cascade')) why.push(`${f(n('cascade'))}: the parent would be refused`);
+      if (n('earlier')) why.push(`${f(n('earlier'))}: they point at a record an earlier step creates`);
+      if (n('unreached')) why.push(`${f(n('unreached'))}: not reached`);
+      if (n('unbuilt')) why.push(`${f(n('unbuilt'))}: the dry run stopped before them`);
+      add({ obj, op: 'Insert', inRun: n('probed') + n('unbuilt'), would: n('wouldWrite'), refused: n('refused'),
+        notChecked: n('cascade') + n('earlier') + n('unreached') + n('unbuilt'), why,
+        leftOut: exp == null ? 0 : Math.max(0, exp - n('probed') - n('unbuilt')) });
+    }
+    const u = updates && updates[obj], m = k => Math.max(0, Number(u && u[k]) || 0);
+    if (u && (m('probed') || m('unchecked'))) {
+      add({ obj, op: 'Update', inRun: m('probed') + m('unchecked'), would: m('wouldWrite'), refused: m('refused'), notChecked: m('unchecked'),
+        why: m('unchecked') ? [`${f(m('unchecked'))}: the dry run could not check them`] : [],
+        leftOut: Math.max(0, m('sampledOf') - m('probed') - m('unchecked')) });
+    }
   }
   return out;
 }
-// PURE. What a dry run does not check, in one sentence. parts: ["15 update(s) of changed records", …]
+// ── Updates in a dry run (owner 2026-11-26: "i want to see what will fail for both objects and under which
+// operation") ── The dry run was inserts only; the updates of changed records were named as "not checked". They are
+// now sent the same way: the real payloads in ONE composite with allOrNone:true and the record that always fails,
+// so Salesforce evaluates every update (rules, triggers, flows, duplicate rules) and rolls all of it back.
+// PURE. payloads: [{ attributes, Id, …fields }] as reconcileOverwrite builds them.
+function sftkProbeUpdateBody(objType, payloads, apiVersion, bypass) {
+  return { allOrNone: true, compositeRequest: [
+    { method: 'PATCH', url: `/services/data/${apiVersion}/composite/sobjects`, referenceId: 'u0',
+      ...(bypass ? { httpHeaders: { 'Sforce-Duplicate-Rule-Header': 'allowSave=true' } } : {}),
+      body: { allOrNone: false, records: (payloads || []).map(p => ({ ...p, attributes: { type: objType } })) } },
+    { method: 'POST', url: `/services/data/${apiVersion}/sobjects/Account`, referenceId: 'poison',
+      body: { Description: 'Admin Toolkit dry run — this record is never written; it makes Salesforce roll the transaction back' } },
+  ] };
+}
+// PURE. → { rows: [{ id, state: 'ok' | 'refused', error, code }], error, rolledBack }. rolledBack = the record that
+// always fails did fail; without it nothing may be read as "would be written" — the caller says so loudly.
+function sftkProbeUpdateParse(payloads, resp) {
+  const items = (resp && Array.isArray(resp.compositeResponse)) ? resp.compositeResponse : [];
+  const u = items.find(i => i && i.referenceId === 'u0'), p = items.find(i => i && i.referenceId === 'poison');
+  const out = { rows: [], error: '', rolledBack: !!p && !(p.httpStatusCode >= 200 && p.httpStatusCode < 300) };
+  if (!u || !p) { out.error = 'Salesforce did not answer the dry run of the updates'; return out; }
+  if (!out.rolledBack) { out.error = 'the transaction was not rolled back'; return out; }
+  const b = u.body, list = payloads || [];
+  const halted = Array.isArray(b) && b.length > 0 && b.every(x => x && x.errorCode === 'PROCESSING_HALTED');
+  const saves = Array.isArray(b) && b.length > 0 && b.every(x => x && typeof x.success === 'boolean');
+  if (saves) {
+    out.rows = list.map((pl, i) => {
+      const x = b[i] || {}, errs = Array.isArray(x.errors) ? x.errors : [];
+      if (x.success || errs.some(e => e && e.statusCode === 'ALL_OR_NONE_OPERATION_ROLLED_BACK')) return { id: pl.Id, state: 'ok' };
+      const e0 = errs[0] || {};
+      return { id: pl.Id, state: 'refused', error: String(e0.message || e0.statusCode || 'Salesforce gave no reason'), code: String(e0.statusCode || '') };
+    });
+  } else if (halted || (u.httpStatusCode >= 200 && u.httpStatusCode < 300)) {
+    out.rows = list.map(pl => ({ id: pl.Id, state: 'ok' }));   // nothing in it failed: only the record that always fails did
+  } else {
+    out.error = Array.isArray(b) ? b.map(x => x && (x.message || x.errorCode)).filter(Boolean).join('; ') : `HTTP ${u.httpStatusCode}`;
+  }
+  return out;
+}
+// PURE. What a dry run does not check, in one sentence. parts: ["2 relink(s)", …]
 function sftkProbeSkippedLine(parts) {
   const p = (parts || []).filter(Boolean);
-  return p.length ? `A dry run checks inserts only. Not checked, and still selected for the real run: ${p.join(' · ')}.` : '';
+  return p.length ? `Not checked by a dry run, and still selected for the real run: ${p.join(' · ')}.` : '';
 }
 // PURE. The sentences under the table: what was selected and is not in it.
 function sftkProbeTableNotes(t, sample, skipped) {
   const f = v => Number(v).toLocaleString('en-US'), out = [];
-  for (const l of ((t && t.leftOut) || [])) out.push(`${f(l.n)} more ${l.obj} selected and not checked: a dry run takes the first ${f(Number(sample) || 200)} records of an object in each step. The real run writes them all.`);
+  for (const l of ((t && t.leftOut) || [])) out.push(`${f(l.n)} more ${l.obj}${l.op === 'Update' ? ' update(s)' : ''} selected and not checked: a dry run takes the first ${f(Number(sample) || 200)} records of an object in each step. The real run writes them all.`);
+  if (t && t.rows.some(r => r.op === 'Update')) out.push('Updates are checked in a transaction of their own, against the target as it is now: an update that depends on a record this run inserts is not seen with it.');
   const s = sftkProbeSkippedLine(skipped); if (s) out.push(s);
   // live 2026-11-23 (owner: "dry run reasults are not the same as actual reasults"): the dry run said 3 duplicates,
   // the real run refused 5 — the two more duplicated Accounts the same run had written seconds before
@@ -2618,6 +2665,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   // other kinds of write (delete, overwrite, relink, pull) are named as not
   // covered. No restore point, no pauses, no rescan: nothing changes.
   const PROBE = !!(opts && opts.probe === true);
+  const probeUpd = {};   // 🧪 obj → { probed, wouldWrite, refused, unchecked, sampledOf } — the updates a dry run checked (2026-11-26)
   window._sftkProbePaused = PROBE ? ((opts && opts.probePaused) || null) : null;
   const probeAgg = {};   // obj → merged verdict counts (History, toast)
   // adds the object's counts up, and returns its run-log line { icon, cls, text } (sftkProbeLine, 2026-11-15)
@@ -2888,12 +2936,11 @@ async function runReconcile(profile, objType, buckets, opts) {
   // 🧪 what a dry run leaves out — said in the dialog and in the log
   const probeSkipped = PROBE ? [
     (delIds.length + childDelTotal) ? `${delIds.length + childDelTotal} delete(s) — a delete has no field or rule to probe` : '',
-    (ovwIds.length + childActs.reduce((t, a) => t + a.ovwIds.length, 0)) ? `${ovwIds.length + childActs.reduce((t, a) => t + a.ovwIds.length, 0)} update(s) of changed records` : '',
     childActs.reduce((t, a) => t + a.sel.relink.size, 0) ? `${childActs.reduce((t, a) => t + a.sel.relink.size, 0)} relink(s)` : '',
     pullIds.length ? `${pullIds.length} pull(s) into the source` : '',
     updSrcIds.length ? `${updSrcIds.length} update(s) of the source` : '',
   ].filter(Boolean) : [];
-  const probeInserts = PROBE ? (onePass.ins[''].size + childActs.reduce((t, a) => t + a.groupA.length + a.groupB.length + a.groupC.length, 0)) : 0;
+  const probeInserts = PROBE ? (onePass.ins[''].size + childActs.reduce((t, a) => t + a.groupA.length + a.groupB.length + a.groupC.length, 0) + ovwIds.length + childActs.reduce((t, a) => t + a.ovwIds.length, 0)) : 0;   // everything the dry run sends: inserts and (2026-11-26) updates
   if (PROBE) {
     const insLines = [];
     if (onePass.ins[''].size) insLines.push(`${onePass.ins[''].size} ${objType}${(onePass.auto[''] || 0) ? ` (${onePass.auto['']} parent(s) auto-included)` : ''}`);
@@ -2901,16 +2948,19 @@ async function runReconcile(profile, objType, buckets, opts) {
       const n = a.groupA.length + a.groupB.length + a.groupC.length;
       if (n) insLines.push(`${n} ${a.node.objectType || a.node.childSObject}${a.groupB.length ? ` (${a.groupB.length} under parents already in the target)` : ''}`);
     }
+    const updLines = [];
+    if (ovwIds.length) updLines.push(`${ovwIds.length} ${objType}`);
+    for (const a of childActs) if (a.ovwIds.length) updLines.push(`${a.ovwIds.length} ${a.node.objectType || a.node.childSObject}`);
     const pausesOn = typeof _depAnyPauseTicked === 'function' ? _depAnyPauseTicked() : false;   // something is ticked in the ⏸ panel
     const bodyHtml = `
       <div class="ds-rec-plan">
         <div class="ds-rec-plan-hdr">Checked — the real records, with every validation rule, trigger, flow and duplicate rule of ${esc(orgLabel(profile.targetOrg))}:</div>
-        ${insLines.length ? insLines.map(l => `<div class="ds-rec-plan-line">Insert ${esc(l)}</div>`).join('') : '<div class="ds-rec-plan-line">nothing — no insert is selected</div>'}
+        ${(insLines.length || updLines.length) ? insLines.map(l => `<div class="ds-rec-plan-line">Insert ${esc(l)}</div>`).join('') + updLines.map(l => `<div class="ds-rec-plan-line">Update ${esc(l)}</div>`).join('') : '<div class="ds-rec-plan-line">nothing — no insert or update is selected</div>'}
       </div>
       ${probeSkipped.length ? `<div class="ds-rec-plan"><div class="ds-rec-plan-hdr">Not part of a dry run — they stay selected for the real run:</div>${probeSkipped.map(l => `<div class="ds-rec-plan-line">${esc(l)}</div>`).join('')}</div>` : ''}
       <div class="ds-rec-plan ds-dryrun-how">
         <strong>How it works.</strong> The records go to Salesforce in one transaction together with a record that always fails, so every record is evaluated and the whole transaction is rolled back. Triggers and flows really run and roll back with it (e-mails and queued jobs too; platform events published immediately do not).
-        <br><strong>Limits.</strong> The first 200 records of each object; lookups connected after insert (🔗) and 📎 files are not checked; row locks and limits at full volume can differ. <strong>Duplicates inside the run:</strong> a record that duplicates another record of this same run can pass the dry run and be refused by a duplicate rule in the real run, once the other one is written.${pausesOn ? '<br><strong>⏸ Pauses are not applied</strong> in a dry run: rules and flows stay on, so a refusal here may not happen in the real run with the pause on.' : ''}
+        <br><strong>Limits.</strong> The first 200 records of each object; updates are checked in a transaction of their own, after the inserts; lookups connected after insert (🔗) and 📎 files are not checked; row locks and limits at full volume can differ. <strong>Duplicates inside the run:</strong> a record that duplicates another record of this same run can pass the dry run and be refused by a duplicate rule in the real run, once the other one is written.${pausesOn ? '<br><strong>⏸ Pauses are not applied</strong> in a dry run: rules and flows stay on, so a refusal here may not happen in the real run with the pause on.' : ''}
       </div>`;
     const tgtGate = (tgtGuarded && probeInserts) ? await sftkOrgWriteGate(profile.targetOrg, _orgs) : null;
     const ok = await sftkConfirmDestructive({
@@ -3762,6 +3812,57 @@ async function runReconcile(profile, objType, buckets, opts) {
     } catch (e) { allErrors.push(`Relink ${obj} failed: ${e?.message || e}`); log('❌', `Relink ${obj} failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
+  // The child-rooted clone reconcileOverwrite reads (it takes profile.tree as its node) — ONE builder for the real
+  // step 3d and for the dry run, so the dry run sends exactly what the real run would.
+  const childOvwProfile = (a, obj) => {
+    const cProfile = JSON.parse(JSON.stringify(profile));
+    delete cProfile.lastScan;
+    cProfile.tree = {
+      objectType: obj,
+      where: '',
+      children: [],
+      fieldMappings: a.node.fieldMappings || {},
+      lookupResolutions: a.node.lookupResolutions || {},
+      lookupOverrides: a.node.lookupOverrides || {},    // 🔗 hand-picks made on child rows
+      valueOverrides: a.node.valueOverrides || {}      // ✏ typed values
+    };
+    return cProfile;
+  };
+  // ── 🧪 Updates in a dry run (owner 2026-11-26) — the same payloads the real run's steps 3d and 4 write, sent in
+  // a transaction Salesforce rolls back (reconcileOverwrite's probe). One transaction per object, after the inserts.
+  if (PROBE && !busyLine) {
+    const jobs = [];
+    if (ovwIds.length) jobs.push({ obj: objType, ids: ovwIds, rows: buckets.drift, prof: profile });
+    for (const a of childActs) {
+      if (!a.ovwIds.length) continue;
+      const obj = a.node.objectType || a.node.childSObject;
+      jobs.push({ obj, ids: a.ovwIds, rows: a.cs.changed || [], prof: childOvwProfile(a, obj) });
+    }
+    for (const j of jobs) {
+      const u = probeUpd[j.obj] = probeUpd[j.obj] || { probed: 0, wouldWrite: 0, refused: 0, unchecked: 0, sampledOf: 0 };
+      if (probeBroke || stoppedWhy) { u.unchecked += Math.min(j.ids.length, 200); if (j.ids.length > 200) u.sampledOf += j.ids.length; continue; }
+      log('🧪', `Checking ${j.ids.length} update(s) of ${j.obj} against ${orgLabel(profile.targetOrg)} — one transaction Salesforce rolls back…`);
+      try {
+        const r = await reconcileOverwrite(j.prof, j.obj, j.ids, j.rows, srcSess, tgtSess, _dupFields, { probe: true });
+        const total = r.probe ? r.total : j.ids.length;
+        if (total > 200) u.sampledOf += total;
+        if (!r.probe || r.broke) {
+          u.unchecked += Math.max(0, Math.min(total, 200) - (r.probe ? r.checked : 0)); probeBroke = true; probeStatuses.push('failed');
+        } else probeStatuses.push(r.failed ? 'partial' : 'success');
+        if (r.probe) { u.probed += r.checked; u.wouldWrite += r.ok; u.refused += r.failed; }
+        const clean = !!(r.probe && !r.broke && !r.failed);
+        const line = `${j.obj} updates: ${r.probe ? `${r.ok} of ${r.checked} would be written${r.failed ? `, ${r.failed} refused` : ''}` : 'not checked'}${total > 200 ? ` — a sample: the first 200 of ${total}` : ''}`;
+        log(clean ? '✅' : '⚠', `🧪 ${line}`, clean ? '' : (r.failed ? 'ds-prog-err' : 'ds-prog-warn'));
+        if (r.probe && r.failedRecords.length) await _recLogRefused(log, { [j.obj]: { failedSourceIds: r.failedRecords } }, true, tgtSess, 'Update');
+        (r.errors || []).forEach(e2 => allErrors.push(`update ${j.obj}: ${e2}`));
+        _recLogEngineLines(log, r.errors);
+      } catch (e) {
+        probeBroke = true; probeStatuses.push('failed'); u.unchecked += Math.min(j.ids.length, 200);
+        allErrors.push(`The dry run of the ${j.obj} updates stopped: ${e?.message || e}`); log('❌', `The dry run of the ${j.obj} updates stopped: ${e?.message || e}`, 'ds-prog-err');
+      }
+    }
+  }
+
   // ── 3d. Child overwrites (R4) — update drifted child records in target,
   // scoped to the CHILD node's fieldMappings. Reuses reconcileOverwrite with
   // a child-rooted profile clone (it reads profile.tree as its node), driven
@@ -3774,18 +3875,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     if (halted(`the update of ${fmtN(a.ovwIds.length)} drifted ${obj} in the target`)) continue;
     log('✏', `Updating ${a.ovwIds.length} drifted ${obj} in target…`);
     try {
-      const cProfile = JSON.parse(JSON.stringify(profile));
-      delete cProfile.lastScan;
-      cProfile.tree = {
-        objectType: obj,
-        where: '',
-        children: [],
-        fieldMappings: a.node.fieldMappings || {},
-        lookupResolutions: a.node.lookupResolutions || {},
-        lookupOverrides: a.node.lookupOverrides || {},    // 🔗 hand-picks made on child rows
-        valueOverrides: a.node.valueOverrides || {}      // ✏ typed values
-      };
-      const result = await reconcileOverwrite(cProfile, obj, a.ovwIds, a.cs.changed || [], srcSess, tgtSess, _dupFields);
+      const result = await reconcileOverwrite(childOvwProfile(a, obj), obj, a.ovwIds, a.cs.changed || [], srcSess, tgtSess, _dupFields);
       bumpChild(obj, 'overwritten',     result.ok     || 0);
       bumpChild(obj, 'overwriteFailed', result.failed || 0);
       log(result.failed ? '⚠' : '✅', `${obj}: updated ${result.ok || 0}${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
@@ -3921,6 +4011,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   // 2026-11-15: did the connection drop? A hard error line the friendly classifier reads as a network failure.
   const netStop = allErrors.some(e => sftkRunLineIsError(e) && typeof sftkIsNetworkError === 'function' && sftkIsNetworkError(e));
   // …and a dry run that stopped or broke before every selected record got its answer is never 'success'
+  for (const u of Object.values(probeUpd)) { probeTotals.probed += u.probed; probeTotals.would += u.wouldWrite; probeTotals.refused += u.refused; probeTotals.unreached += u.unchecked; }   // the updates count in the headline too
   const probeIncomplete = PROBE && (probeBroke || netStop || !!stoppedWhy || probeTotals.unreached > 0);
   // 2026-11-15: what a stopped dry run never built, per object — into the counts History keeps, the run cards,
   // the log and the headline (sftkProbeReach)
@@ -3956,7 +4047,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   _history.push({
     id:           runId,
     kind:         PROBE ? 'dryrun' : 'reconcile',
-    ...(PROBE ? { dryRun: true, probe: { byObj: probeAgg, ...probeTotals, skipped: probeSkipped } } : {}),
+    ...(PROBE ? { dryRun: true, probe: { byObj: probeAgg, updates: probeUpd, ...probeTotals, skipped: probeSkipped } } : {}),
     profileId:    profile.id,
     profileName:  profile.name,
     sourceOrg:    profile.sourceOrg,
@@ -4026,7 +4117,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     // 2026-11-15: a dry run that stopped says so — in the log, at the top, in the toast and next to ▶ Deploy
     // the result as one table, the step-by-step log folded under it (owner 2026-11-23). The headline counts the
     // same records as the table: a stopped run named fewer "selected" than its own objects added up to
-    const ptab = sftkProbeTable(probeAgg, probeExpected);
+    const ptab = sftkProbeTable(probeAgg, probeExpected, probeUpd);
     const pv = sftkProbeVerdict(pt, { incomplete: probeIncomplete, net: netStop, selected: Math.max(ptab.total.inRun, treePushIds.length + groupATotal + childActs.reduce((t, a) => t + a.groupB.length, 0)) });
     const verdict = pv.verdict;
     closeRunView();
@@ -4596,7 +4687,39 @@ function sftkRecSrcUpdatePiiGuard(invFm, fm, policy, objType) {
   }
   return out;
 }
-async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcSess, tgtSess, dupFields) {
+// 🧪 The updates of one object, checked and rolled back. → { probe: true, total, checked, ok, failed, failedRecords:
+// [{ id, label, error, code }], errors: [line], broke }. SystemModstamp of every record is read before and after:
+// a record that changed is a dry run that wrote, and it is said as an error, never as a result.
+async function _recProbeUpdates(objType, payloads, rowMeta, tgtSess, dupFields, warnings) {
+  const part = payloads.slice(0, 200), ids = part.map(p => p.Id);
+  const out = { probe: true, total: payloads.length, checked: 0, ok: 0, failed: 0, failedRecords: [], errors: [...(warnings || [])], broke: false };
+  if (!part.length) return out;
+  const stamp = async () => {
+    const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
+      query: `SELECT Id, SystemModstamp FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')})` });
+    return (q && !q.error) ? new Map((q.records || []).map(r => [r.Id, r.SystemModstamp])) : null;
+  };
+  const before = await stamp();
+  const bypass = !!(dupFields && dupFields.dupBypass && (!Array.isArray(dupFields.dupBypassObjects) || !dupFields.dupBypassObjects.length || dupFields.dupBypassObjects.includes(objType)));
+  // verified-by: SystemModstamp of every record, read before and after (stamp) — a dry run must change nothing
+  const resp = await sendBg({ type: 'SF_REST_POST', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+    path: 'services/data/v62.0/composite', body: sftkProbeUpdateBody(objType, part, 'v62.0', bypass) });
+  const pr = (resp && !resp.error) ? sftkProbeUpdateParse(part, resp) : { rows: [], error: String((resp && resp.error) || 'no answer'), rolledBack: false };
+  const after = await stamp();
+  const changed = (before && after) ? ids.filter(id => before.get(id) !== after.get(id)) : null;
+  if (changed && changed.length) { out.broke = true; out.errors.push(`the dry run CHANGED ${changed.length} ${objType} in the target — it must write nothing. Check them: ${changed.slice(0, 10).join(', ')}`); }
+  else if (!changed) out.errors.push(`⚠ ${objType}: the target could not be re-read to confirm the dry run of the updates wrote nothing`);
+  if (pr.error) { out.broke = true; out.errors.push(`the dry run of the ${objType} updates was not answered: ${pr.error}`); return out; }
+  const labelOf = new Map((rowMeta || []).map(m => [m.id, m.label]));
+  out.checked = pr.rows.length;
+  for (const r of pr.rows) {
+    if (r.state === 'ok') { out.ok++; continue; }
+    out.failed++;
+    out.failedRecords.push({ id: r.id, label: labelOf.get(r.id) || r.id, error: r.error, code: r.code });
+  }
+  return out;
+}
+async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcSess, tgtSess, dupFields, opts) {
   // Map sourceId → targetId from the drift bucket.
   const srcToTgt = new Map();
   for (const r of driftBucket) { if (r.sourceId && r.targetId) srcToTgt.set(r.sourceId, r.targetId); }
@@ -5034,7 +5157,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   }
 
   if (piiActive) {
-    warnings.push(`🔒 PII: ${piiCounts.hashed + piiCounts.nulled + piiCounts.fixed} value(s) masked before writing (${piiCounts.hashed} hashed, ${piiCounts.nulled} nulled${piiCounts.fixed ? `, ${piiCounts.fixed} fixed` : ''})${piiCounts.emptied ? ` · ${piiCounts.emptied} covered field(s) the source holds empty were written empty` : ''}`);
+    warnings.push(`ℹ 🎭 data blending: ${piiCounts.hashed} value(s) written disguised, ${piiCounts.nulled} left empty${piiCounts.fixed ? `, ${piiCounts.fixed} set to a fixed value` : ''}${piiCounts.emptied ? ` · ${piiCounts.emptied} covered field(s) the source holds empty were written empty` : ''}`);
   }
   // QA 1.1 regression, finding 12: a fallback QUEUE that does not take this object is not "no fallback user set".
   if (typeof sftkRecOwnerWarnings === 'function') {
@@ -5056,6 +5179,8 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // ℹ / ⚠ first: the run log paints a line without one of them as a failure (test/hand-test-findings-1001)
   if (valOvUsed) warnings.push(`ℹ ✏ ${valOvUsed} value(s) typed on the Deploy page written in place of the source's`);
   if (valOvMasked) warnings.push(`⚠ ✏ ${valOvMasked} typed value(s) NOT written — the PII policy covers those fields and wins`);
+
+  if (opts && opts.probe) return _recProbeUpdates(objType, payloads, rowMeta, tgtSess, dupFields, warnings);   // 🧪 a dry run: checked and rolled back, nothing below runs
 
   // The one write discipline (sftk-write.js): Collections' per-record
   // success used to BE "updated" — one re-read of exactly the accepted Ids,
@@ -5817,8 +5942,8 @@ function _recProbeTableHtml(t) {
   if (!t || !t.rows.length) return '';
   const f = v => Number(v).toLocaleString('en-US');
   const cell = (n, cls) => `<td class="ds-probe-n${n ? ` ${cls}` : ' ds-probe-zero'}">${n ? f(n) : '–'}</td>`;
-  const tr = (r, total) => `<tr${total ? ' class="ds-probe-total"' : ''}><th scope="row">${esc(r.obj)}</th><td class="ds-probe-n">${f(r.inRun)}</td>${cell(r.would, 'ds-probe-ok')}${cell(r.refused, 'ds-probe-bad')}${cell(r.notChecked, 'ds-probe-warn')}<td class="ds-probe-why">${esc((r.why || []).join(' · '))}</td></tr>`;
-  return `<table class="ds-probe-table"><thead><tr><th scope="col">Object</th><th scope="col" class="ds-probe-n" title="The records this dry run sent to Salesforce">In the dry run</th><th scope="col" class="ds-probe-n">Would be written</th><th scope="col" class="ds-probe-n" title="Salesforce refuses the record: the reasons are below">Refused</th><th scope="col" class="ds-probe-n" title="In the dry run, but Salesforce gave no answer for the record itself">Not checked</th><th scope="col"></th></tr></thead><tbody>`
+  const tr = (r, total) => `<tr${total ? ' class="ds-probe-total"' : ''}><th scope="row">${esc(r.obj)}</th><td class="ds-probe-op">${esc(r.op || '')}</td><td class="ds-probe-n">${f(r.inRun)}</td>${cell(r.would, 'ds-probe-ok')}${cell(r.refused, 'ds-probe-bad')}${cell(r.notChecked, 'ds-probe-warn')}<td class="ds-probe-why">${esc((r.why || []).join(' · '))}</td></tr>`;
+  return `<table class="ds-probe-table"><thead><tr><th scope="col">Object</th><th scope="col">Operation</th><th scope="col" class="ds-probe-n" title="The records this dry run sent to Salesforce">In the dry run</th><th scope="col" class="ds-probe-n">Would be written</th><th scope="col" class="ds-probe-n" title="Salesforce refuses the record: the reasons are below">Refused</th><th scope="col" class="ds-probe-n" title="In the dry run, but Salesforce gave no answer for the record itself">Not checked</th><th scope="col"></th></tr></thead><tbody>`
     + t.rows.map(r => tr(r, false)).join('')
     + (t.rows.length > 1 ? tr({ obj: 'Total', ...t.total, why: [] }, true) : '')
     + '</tbody></table>';
@@ -5861,7 +5986,8 @@ function _recRunVerdictTop(prog, status, verdictText, o) {
   }
   try { prog.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { /* a view without the log */ }
 }
-async function _recLogRefused(log, summary, probe, tgtSess) {
+async function _recLogRefused(log, summary, probe, tgtSess, op) {
+  const opName = probe ? (op || 'Insert') : '';   // a dry run says under which operation (owner 2026-11-26)
   for (const [obj, s] of Object.entries(summary || {})) {
     const list = (s && s.failedSourceIds) || [];
     if (!list.length) continue;
@@ -5886,7 +6012,7 @@ async function _recLogRefused(log, summary, probe, tgtSess) {
       const recs = `${g.names.slice(0, 12).join(' · ')}${n > 12 ? ` · and ${n - 12} more (⬇ Report lists them all)` : ''}`;
       // ONE card per reason (owner 2026-11-14: "kinda hard to see whats going on") — it was four full-width red lines
       if (typeof log.html === 'function') {
-        const card = `<div class="ds-refuse"><div class="ds-refuse-hd"><span class="ds-refuse-n">✗ ${esc(String(n))}</span> ${esc(head.replace(/^\d+ /, ''))}</div>`
+        const card = `<div class="ds-refuse"><div class="ds-refuse-hd"><span class="ds-refuse-n">✗ ${esc(String(n))}</span> ${opName ? `<span class="ds-refuse-op">${esc(opName)}</span> ` : ''}${esc(head.replace(/^\d+ /, ''))}</div>`
           + `<div class="ds-refuse-msg">“${esc(why)}”${g.code ? ` <span class="ds-refuse-code">${esc(g.code)}</span>` : ''}</div>`
           + `<div class="ds-refuse-recs">${n === 1 ? 'Record' : 'Records'}: ${esc(recs)}</div>`
           + (note ? `<div class="ds-refuse-note">${esc(note)}</div>` : '') + '</div>';

@@ -19,17 +19,17 @@ describe('the dry run as one table', () => {
   const t = table(byObj, { Account: 113, Contact: 205 });
   it('a row per object whose numbers add up, and a total that is the headline', () => {
     expect(t.rows).toEqual([
-      { obj: 'Account', inRun: 113, would: 109, refused: 4, notChecked: 0, why: [], leftOut: 0 },
-      { obj: 'Contact', inRun: 204, would: 198, refused: 0, notChecked: 6, why: ['6: the parent would be refused'], leftOut: 1 },
+      { obj: 'Account', op: 'Insert', inRun: 113, would: 109, refused: 4, notChecked: 0, why: [], leftOut: 0 },
+      { obj: 'Contact', op: 'Insert', inRun: 204, would: 198, refused: 0, notChecked: 6, why: ['6: the parent would be refused'], leftOut: 1 },
     ]);
     for (const r of t.rows) expect(r.would + r.refused + r.notChecked).toBe(r.inRun);
     expect(t.total).toEqual({ inRun: 317, would: 307, refused: 4, notChecked: 6 });   // "307 of 317 would be written — 4 refused, 6 not checked"
   });
   it('what was selected and is not in the run is said under the table, with the reason', () => {
     expect(t.leftOut).toEqual([{ obj: 'Contact', n: 1 }]);
-    expect(notes(t, 200, ['15 update(s) of changed records'])).toEqual([
+    expect(notes(t, 200, ['2 relink(s)'])).toEqual([
       '1 more Contact selected and not checked: a dry run takes the first 200 records of an object in each step. The real run writes them all.',
-      'A dry run checks inserts only. Not checked, and still selected for the real run: 15 update(s) of changed records.',
+      'Not checked by a dry run, and still selected for the real run: 2 relink(s).',
       'The real run can refuse more: a record that duplicates another record of this same run passes here, and a duplicate rule refuses it once the other one is written.',
     ]);
     expect(notes(table({ Account: { probed: 2, wouldWrite: 2 } }, { Account: 2 }), 200, [])).toEqual(['The real run can refuse more: a record that duplicates another record of this same run passes here, and a duplicate rule refuses it once the other one is written.']);
@@ -46,7 +46,7 @@ describe('the dry run as one table', () => {
     expect(table(null, null)).toEqual({ rows: [], total: { inRun: 0, would: 0, refused: 0, notChecked: 0 }, leftOut: [] });
   });
   it('the line about what a dry run leaves out says why', () => {
-    expect(skipped(['2 delete(s)', '', '15 update(s)'])).toBe('A dry run checks inserts only. Not checked, and still selected for the real run: 2 delete(s) · 15 update(s).');
+    expect(skipped(['2 delete(s)', '', '15 update(s)'])).toBe('Not checked by a dry run, and still selected for the real run: 2 delete(s) · 15 update(s).');
     expect(skipped([])).toBe('');
   });
 });
@@ -60,6 +60,7 @@ describe('the page', () => {
     for (const c of ['.ds-probe-table {', '.ds-prog-steps {', '.ds-prog-verdict-err {', '.ds-prog-verdict-note {']) expect(CSS).toContain(c);
   });
   it('the engine notes are in plain words', () => {
+    expect(RC).not.toContain('🔒 PII:');
     for (const old of ['PII masking applied', 'value(s) hashed', 'salt re-seeds', 'Collections call(s) instead of', 'lookups matched by Name in the target']) expect(BG).not.toContain(old);
     expect(BG).toContain('🎭 data blending: ');
     expect(BG).toContain('if (!useBulk && BATCH_SIZE !== 200 && !PROBE) {');
