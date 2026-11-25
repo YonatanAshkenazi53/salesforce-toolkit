@@ -13,7 +13,7 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
-## 1.1.0 — 2026-11-23
+## 1.1.0 — 2026-11-26
 
 - **Deploy: a dry run checks updates too, and says the operation** (2026-11-26). The updates of changed records are sent in a transaction Salesforce rolls back, like the inserts, so their validation rules, triggers, flows and duplicate rules answer before the real run. The result table has a row per object and operation (Insert, Update), and every refusal card carries the operation next to the reason and the record names. The target is re-read before and after: a record that changed would be reported as an error. Deletes, relinks and pulls are still not checked.
 - **Deploy: a dry run you can read** (2026-11-23). The result is one table at the top: a row per object with how many records were in the dry run, would be written, would be refused and were not checked, and a total that is the headline's number. Under it: the reasons for the refusals, any error, and what a dry run does not cover (it checks inserts only; it takes the first 200 records of an object in each step; a record that duplicates another record of the same run can pass the dry run and be refused in the real run). The step-by-step log is folded below. The engine's notes use plain words.
