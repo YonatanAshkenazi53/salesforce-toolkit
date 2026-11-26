@@ -142,6 +142,19 @@ function sftkIdBackfillPairs(scan) {
   return out;
 }
 
+// PURE. Mark every node of a tree a Deploy run sends: the engine writes the source record's Id into the identity
+// field of each record it creates — where the TARGET has that field and lets this user write it, and nowhere else
+// (stampIfPresent, background.js). A node that already names a stampField keeps it. Mutates and returns the tree.
+function sftkIdStampTree(tree) {
+  const walk = n => {
+    if (!n || typeof n !== 'object') return;
+    if (!n.stampField) n.stampIfPresent = sftkIdFieldName();
+    (Array.isArray(n.children) ? n.children : []).forEach(walk);
+  };
+  walk(tree);
+  return tree;
+}
+
 // The update payload for one backfill chunk.
 function sftkIdStampPayload(objType, pairs) {
   return (pairs || [])
@@ -168,5 +181,6 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkIdBackfillPairs  = sftkIdBackfillPairs;
   globalThis.sftkIdDefinitionQuery = sftkIdDefinitionQuery;
   globalThis.sftkIdStampPayload   = sftkIdStampPayload;
+  globalThis.sftkIdStampTree      = sftkIdStampTree;
   globalThis.sftkIdUserFromIdentity = sftkIdUserFromIdentity;
 }

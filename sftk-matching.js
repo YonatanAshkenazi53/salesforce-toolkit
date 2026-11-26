@@ -349,6 +349,61 @@ function sftkMemoryMerge(mem, pairs, cap) {
   return out;
 }
 
+// PURE. The identity pre-pass of a scan (2026-11-26, owner: "Remember which source record became pair … +
+// offering to stamp using the external id field"): who is paired BEFORE any key is looked at.
+//   1. 🪪 the stamp — a target record whose identity field holds a source record's Id IS that record's pair.
+//      A stamp value held by more than one target record is nobody's pair (never guessed).
+//   2. 🧠 the memory — { srcId: tgtId } this deployment remembered from its own runs and scans; a target
+//      record that is gone, or already claimed, leaves the source record to key matching.
+// NEW is the memory value of "insert as new". Records paired here take no part in key matching.
+// → { pairs: [{ sr, tr, via: 'stamp' | 'memory' }], forcedNew: [sr], srcIds: Set, tgtIds: Set, stamp, memory }
+function sftkIdentityPrepass(srcRecs, tgtRecs, mem, stampField, NEW) {
+  const out = { pairs: [], forcedNew: [], srcIds: new Set(), tgtIds: new Set(), stamp: 0, memory: 0 };
+  const src = Array.isArray(srcRecs) ? srcRecs : [], tgt = Array.isArray(tgtRecs) ? tgtRecs : [];
+  const take = (sr, tr, via) => { out.srcIds.add(sr.Id); out.tgtIds.add(tr.Id); out.pairs.push({ sr, tr, via }); out[via]++; };
+  if (stampField) {
+    const by = new Map(), twice = new Set();
+    for (const tr of tgt) {
+      const v = tr && tr[stampField];
+      if (typeof v !== 'string' || v.length < 15) continue;
+      const k = v.slice(0, 15);
+      if (by.has(k)) twice.add(k); else by.set(k, tr);
+    }
+    for (const sr of src) {
+      if (!sr || typeof sr.Id !== 'string' || out.srcIds.has(sr.Id)) continue;
+      const k = sr.Id.slice(0, 15);
+      const tr = twice.has(k) ? null : by.get(k);
+      if (tr && !out.tgtIds.has(tr.Id)) take(sr, tr, 'stamp');
+    }
+  }
+  const m = (mem && typeof mem === 'object') ? mem : {};
+  if (Object.keys(m).length) {
+    const tgtById = new Map(tgt.map(r => [r.Id, r]));
+    for (const sr of src) {
+      if (!sr || out.srcIds.has(sr.Id)) continue;
+      const tgtId = m[sr.Id];
+      if (!tgtId) continue;
+      if (NEW && tgtId === NEW) { out.srcIds.add(sr.Id); out.forcedNew.push(sr); continue; }
+      const tr = tgtById.get(tgtId);
+      if (!tr || out.tgtIds.has(tr.Id)) continue;
+      take(sr, tr, 'memory');
+    }
+  }
+  return out;
+}
+
+// PURE. Every [srcId, tgtId] pair an engine answer carries, of every object — and they are taken OUT of the
+// summary (they live in the deployment's match memory, never in History). Mutates summary; returns the pairs.
+function sftkTakeIdPairs(summary) {
+  const out = [];
+  for (const s of Object.values(summary && typeof summary === 'object' ? summary : {})) {
+    if (!s || typeof s !== 'object' || !Array.isArray(s.idPairs)) continue;
+    for (const p of s.idPairs) if (Array.isArray(p) && typeof p[0] === 'string' && p[0] && typeof p[1] === 'string' && p[1]) out.push([p[0], p[1]]);
+    delete s.idPairs;
+  }
+  return out;
+}
+
 // Match memory without the given source ids — a decision taken back on the
 // ⚠ Needs a decision tab. PURE; returns a NEW object.
 function sftkMemoryForget(mem, srcIds) {
@@ -754,6 +809,8 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkCrossOrgPreview     = sftkCrossOrgPreview;
   globalThis.sftkMatchKeyScore       = sftkMatchKeyScore;
   globalThis.sftkMemoryMerge         = sftkMemoryMerge;
+  globalThis.sftkIdentityPrepass     = sftkIdentityPrepass;
+  globalThis.sftkTakeIdPairs         = sftkTakeIdPairs;
   globalThis.sftkPairSimilarityParts = sftkPairSimilarityParts;
   globalThis.sftkPairSimilarity      = sftkPairSimilarity;
   globalThis.sftkScanAccuracy        = sftkScanAccuracy;

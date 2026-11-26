@@ -74,7 +74,9 @@ describe('A3 · Run Transfer upserting on SFTK_ID__c stamps the identity', () =>
     expect(fn).toContain('clone.tree.stampField = sftkIdFieldName();');
   });
   it('…which is what the engine keys the stamp on', () => {
-    expect(BG).toMatch(/if \(node\.stampField && \(!tgtCreatable\.size \|\| tgtCreatable\.has\(node\.stampField\)\)\)/);
+    // 2026-11-26: one decision per node (stampF) — a named stampField as before, or the identity field a Deploy run asks for where the target has it
+    expect(BG).toContain('const stampF = node.stampField && (!tgtCreatable.size || tgtCreatable.has(node.stampField)) ? node.stampField');
+    expect(BG).toContain('if (stampF) p[stampF] = r.Id;');
   });
 });
 

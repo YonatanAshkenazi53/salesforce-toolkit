@@ -1,0 +1,22 @@
+{
+ "format": "sftk-profile",
+ "schema": 1,
+ "exportedBy": "fixture",
+ "exportedAt": "2026-11-26T00:00:00.000Z",
+ "profile": {
+  "name": "SFTK IP — identity pairs",
+  "sourceOrg": "https://orgfarm-c449e108c2-dev-ed.develop.my.salesforce.com",
+  "targetOrg": "https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com",
+  "piiPolicy": {
+   "Contact.FirstName": { "strategy": "pattern", "pattern": "first-name" },
+   "Contact.LastName": { "strategy": "pattern", "pattern": "last-name" },
+   "Contact.Email": { "strategy": "pattern", "pattern": "email" }
+  },
+  "tree": {
+   "objectType": "Account",
+   "where": "Name LIKE 'SFTK IP %'",
+   "matchField": "Name",
+   "children": [ { "childSObject": "Contact", "relationshipName": "Contacts", "field": "AccountId", "where": "", "children": [] } ]
+  }
+ }
+}

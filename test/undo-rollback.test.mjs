@@ -502,7 +502,7 @@ describe('keeping the evidence bounded', () => {
 
 describe('the library states the trap it exists to avoid', () => {
   it('explains why it cannot be built on the run’s own report', () => {
-    expect(SRC).toContain('idPairs is root-only, capped at 2000');
+    expect(SRC).toContain('idPairs is capped, and the Studio');
   });
 
   it('says restoring records is not undoing consequences', () => {

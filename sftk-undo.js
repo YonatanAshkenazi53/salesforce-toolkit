@@ -15,7 +15,7 @@
 //   · a record in the image that is now GONE was deleted by the run  → see below
 //
 // The engine already knows how many rows it created versus updated, but it
-// throws away WHICH — idPairs is root-only, capped at 2000, and the Studio
+// throws away WHICH — idPairs is capped, and the Studio
 // deletes it after feeding match-memory. So rollback cannot be built on the
 // run's own report; it needs its own evidence, taken before the fact.
 //

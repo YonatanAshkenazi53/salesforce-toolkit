@@ -195,7 +195,7 @@ async function saveProfile() {
 // compare through the resolution plan (org-local Ids never match), and
 // base64/address/location shapes can't be value-diffed honestly.
 function sftkEngineCompareSet(describeFields, fieldMappings) {
-  const SKIP = new Set(['Id', 'CreatedDate', 'LastModifiedDate', 'SystemModstamp',
+  const SKIP = new Set(['Id', 'SFTK_ID__c', 'CreatedDate', 'LastModifiedDate', 'SystemModstamp',
     'CreatedById', 'LastModifiedById', 'IsDeleted', 'OwnerId',
     'LastActivityDate', 'LastViewedDate', 'LastReferencedDate',
     'MasterRecordId', 'IsArchived']);
@@ -222,7 +222,8 @@ function deriveScanConfig(profile, node) {
   // or aggressive Auto-Map), they break SOQL with "duplicate field selected"
   // and pollute drift comparison since Ids ALWAYS differ across orgs.
   const SYSTEM_NEVER_COMPARE = new Set([
-    'Id', 'CreatedDate', 'CreatedById', 'LastModifiedDate', 'LastModifiedById',
+    'Id', 'SFTK_ID__c',   // 🪪 the identity field holds the other org's record Id by design — never drift, never overwritten
+    'CreatedDate', 'CreatedById', 'LastModifiedDate', 'LastModifiedById',
     'SystemModstamp', 'LastActivityDate', 'LastViewedDate', 'LastReferencedDate',
     'IsDeleted', 'MasterRecordId', 'IsArchived',
     // OwnerId: the transfer engine NEVER copies owners (different user sets
@@ -1032,6 +1033,9 @@ async function runDiffScan(profile, node = null, scope = null) {
     enhanced.push(entry); plain.push(entry);
   }
 
+  // 🪪 the identity field, where the target has it and this user can read it: read with every target row, so the
+  // pre-pass below can pair a record with the source record whose Id it carries (2026-11-26).
+  const _stampF = (typeof sftkIdFieldName === 'function' && tgtTypes.has(sftkIdFieldName())) ? sftkIdFieldName() : null;
   const fieldList = (plan, side) => {
     const base = [
       // M3a — SELECT every key component (composite keys need them all).
@@ -1039,7 +1043,8 @@ async function runDiffScan(profile, node = null, scope = null) {
       // Person Account contacts are filtered out after the read (below);
       // the flag exists only in an org with Person Accounts on.
       ...(objType === 'Contact' && (side === 'src' ? srcTypes : tgtTypes).has('IsPersonAccount') ? ['IsPersonAccount'] : []),
-      ...plan.map(p => side === 'src' ? p.srcSel : p.tgtSel)
+      ...plan.map(p => side === 'src' ? p.srcSel : p.tgtSel),
+      ...(side === 'tgt' && _stampF ? [_stampF] : [])
     ];
     // Child scans also read the raw parent id + the parent's KEY (dot-path)
     // on each side — feeds linkMismatch + the dependency annotations.
@@ -1294,7 +1299,7 @@ async function runDiffScan(profile, node = null, scope = null) {
   // legacy behavior). Any failure degrades to plain key matching with a
   // warning on the result.
   const isRootScan = !scope && node === profile.tree;
-  let memoryMatched = 0;
+  let memoryMatched = 0, stampMatched = 0;   // pairs from the 🧠 memory · from the 🪪 identity field
   const memPairedSrc = new Set();
   const memPairedTgt = new Set();
   let memRows = [];                 // [{ sr, tr }] — classified with the buckets below
@@ -1325,31 +1330,21 @@ async function runDiffScan(profile, node = null, scope = null) {
   try {
     _piiBlind = sftkScanPiiBlind(profile.piiPolicy, objType, srcKeyFields, where);
   } catch (_) { /* advisory only */ }
-  if (isRootScan) {
+  // 2026-11-26 — EVERY scan, root and child (a child written with data blending was listed under Insert again:
+  // 192 Contacts, live), and the 🪪 stamp before the memory: sftkIdentityPrepass (sftk-matching.js, PURE).
+  // "Insert as new" (⚠ Ambiguous, the memory value SFTK_MEM_NEW) goes straight into Insert below; a target
+  // record that is gone, or already claimed, leaves its source record to key matching.
+  {
     try {
       const mem = (profile.matchMemory && typeof profile.matchMemory === 'object'
         ? profile.matchMemory[_orgKey(profile.targetOrg)] : null) || {};
-      if (Object.keys(mem).length) {
-        const tgtById = new Map((tgtRes.records || []).map(r => [r.Id, r]));
-        for (const sr of (srcRes.records || [])) {
-          const tgtId = mem[sr.Id];
-          if (!tgtId) continue;
-          // Phase 5 — "insert as new" (⚠ Ambiguous): out of key matching,
-          // straight into Insert below. A deploy later learns its real pair.
-          if (tgtId === SFTK_MEM_NEW) { if (!memPairedSrc.has(sr.Id)) { memPairedSrc.add(sr.Id); forcedNew.push(sr); } continue; }
-          const tr = tgtById.get(tgtId);
-          // Target record gone (deleted) → the source row falls back to key
-          // matching this scan. A tgt already claimed by an earlier src (bad
-          // memory data) → first claim wins, the rest key-match.
-          if (!tr || memPairedTgt.has(tr.Id) || memPairedSrc.has(sr.Id)) continue;
-          memPairedSrc.add(sr.Id);
-          memPairedTgt.add(tr.Id);
-          memRows.push({ sr, tr });
-          memoryMatched++;
-        }
-      }
+      const pre = sftkIdentityPrepass(srcRes.records || [], tgtRes.records || [], mem, _stampF, SFTK_MEM_NEW);
+      for (const id of pre.srcIds) memPairedSrc.add(id);
+      for (const id of pre.tgtIds) memPairedTgt.add(id);
+      memRows = pre.pairs; forcedNew = pre.forcedNew;
+      memoryMatched = pre.memory; stampMatched = pre.stamp;
     } catch (e) {
-      memPairedSrc.clear(); memPairedTgt.clear(); memRows = []; memoryMatched = 0; forcedNew = [];
+      memPairedSrc.clear(); memPairedTgt.clear(); memRows = []; memoryMatched = 0; stampMatched = 0; forcedNew = [];
       memWarnings.push(`match memory skipped (fell back to key matching): ${e?.message || e}`);
       window.SFToolkitDebug?.log('scan', 'warn',
         'M3c memory pre-pass failed — falling back to key matching', e?.message || String(e));
@@ -1424,10 +1419,25 @@ async function runDiffScan(profile, node = null, scope = null) {
   // still decides identical vs changed). Root scans only, so no link
   // tracking here. A per-row extraction failure degrades that row to
   // "identical, no drift detail" rather than dropping it.
-  for (const { sr, tr } of memRows) {
+  for (const { sr, tr, via } of memRows) {
     let diffFields = [];
+    // a child scan: the same record on both sides — does it hang under the same parent? (as for key-matched rows)
+    let linkDiff = false;
+    const mk0 = sftkMatchKey(sr, srcMatching) || sftkMatchKey(tr, tgtMatching) || '(by identity)';
+    const how = via === 'stamp' ? { viaStamp: true } : { viaMemory: true };
+    try {
+      if (linkTrackable) {
+        const pkS = String(_lookupResolvedVal(sr, linkInfoSrc) ?? '');
+        const pkT = String(_lookupResolvedVal(tr, linkInfoTgt) ?? '');
+        if (pkNorm(pkS) !== pkNorm(pkT)) {
+          linkDiff = true;
+          linkMismatch.push({ matchKey: mk0, sourceId: sr.Id, targetId: tr.Id, parentKeySrc: pkS, parentKeyTgt: pkT, ...how });
+        }
+      }
+    } catch (_) { linkDiff = false; }
     try {
       for (const cp of comparePlan) {
+        if (linkTrackable && scope?.parentField && cp.srcField === scope.parentField) continue;
         if (String(cp.srcExtract(sr) ?? '') !== String(cp.tgtExtract(tr) ?? '')) {
           // T7 — same State/Country CODE on both sides: the target's State &
           // Country Picklists rewrite the label on every write, so this
@@ -1441,9 +1451,8 @@ async function runDiffScan(profile, node = null, scope = null) {
       diffFields = [];
       memWarnings.push(`memory pair compare failed for ${sr.Id}: ${e?.message || e}`);
     }
-    const mk = sftkMatchKey(sr, srcMatching) || sftkMatchKey(tr, tgtMatching) || '(from memory)';
-    if (diffFields.length) changed.push({ matchKey: mk, sourceId: sr.Id, targetId: tr.Id, fields: diffFields, viaMemory: true });
-    else                   identical.push({ matchKey: mk, sourceId: sr.Id, targetId: tr.Id, viaMemory: true });
+    if (diffFields.length) changed.push({ matchKey: mk0, sourceId: sr.Id, targetId: tr.Id, fields: diffFields, ...how });
+    else if (!linkDiff)    identical.push({ matchKey: mk0, sourceId: sr.Id, targetId: tr.Id, ...how });
   }
 
   // Pair-aligned compare driven by comparePlan: each entry extracts the value
@@ -1827,10 +1836,13 @@ async function runDiffScan(profile, node = null, scope = null) {
     // scan's learnable 1:1 pairs, and any degraded-path warnings. All three
     // are absent when memory is empty/unused (legacy shape unchanged).
     ...(memoryMatched ? { memoryMatched } : {}),
+    ...(stampMatched ? { stampMatched } : {}),
+    ...(_stampF ? { stampField: _stampF } : {}),
     ...(learnedPairs.length ? { learnedPairs } : {}),
     // 🎭 a disguised match key matters only where records are left over on BOTH sides: a record this deployment
-    // wrote is recognised from its own record of the run (match memory, root objects); one it does not remember —
-    // a child, another PC, a cleared memory — cannot be told from a new one. (Evaluated before the line below.)
+    // wrote is recognised from its own record of the run (match memory, every object since 2026-11-26) or from the
+    // 🪪 stamp; one it does not remember and that carries no stamp — written before that date, on another PC, after
+    // a cleared memory — cannot be told from a new one. (Evaluated before the line below.)
     ...((typeof sftkScanPiiBlindKeysMatter === 'function' && sftkScanPiiBlindKeysMatter(_piiBlind, missingInTarget.length, onlyInTarget.length)) ? (memWarnings.push(sftkScanPiiBlindLine(objType, { keys: _piiBlind.keys, filter: [] })), {}) : {}),
     // the filter: said only when records ARE listed under Insert, and as what may be (QA 2026-11-21: a filter like
     // "Email != null" finds a disguised record as well as a real one, and the line claimed a duplicate as fact)
@@ -1847,8 +1859,8 @@ async function runDiffScan(profile, node = null, scope = null) {
     ...(_keyCollisions ? { dupKeys: _keyCollisions } : {}),
     compareFields: srcCompare,
     compareFieldsTgt: tgtCompare,
-    sourceCount:   srcByKey.size + memoryMatched + _twinsNew.length + forcedNew.length + ambiguous.length,
-    targetCount:   tgtByKey.size + memoryMatched + _twinsExtra.length + new Set(ambiguous.flatMap(r => r.candidates)).size,
+    sourceCount:   srcByKey.size + memoryMatched + stampMatched + _twinsNew.length + forcedNew.length + ambiguous.length,
+    targetCount:   tgtByKey.size + memoryMatched + stampMatched + _twinsExtra.length + new Set(ambiguous.flatMap(r => r.candidates)).size,
     // Phase 5 — ⚠ Ambiguous: one row per source copy of a key both orgs hold
     // more than once, with the target records it could be (candidates) and
     // its source twins. In no other bucket; never deployed until resolved.
@@ -2173,7 +2185,7 @@ window.refreshProfileDiff = refreshProfileDiff;
 // refreshProfileDiff (auto-learn), the ring scans in studio-ring.js (which run
 // on clones), the transfer/fan-out learn hooks, and Match Review's manual
 // [Pair ⇒]. Memory is keyed per TARGET org identity:
-//   profile.matchMemory = { [orgKey(tgtUrl)]: { [srcId]: tgtId } }   (cap 5000)
+//   profile.matchMemory = { [orgKey(tgtUrl)]: { [srcId]: tgtId } }   (cap 20,000)
 // No-ops safely for unknown/ephemeral profile ids, empty pair lists, or an
 // unresolvable org key. Never throws.
 window.sftkLearnPairs = async function (profileId, tgtUrl, learnedPairs) {
@@ -2184,11 +2196,24 @@ window.sftkLearnPairs = async function (profileId, tgtUrl, learnedPairs) {
     const key = _orgKey(tgtUrl || '');
     if (!key) return;
     if (!p.matchMemory || typeof p.matchMemory !== 'object') p.matchMemory = {};
-    p.matchMemory[key] = sftkMemoryMerge(p.matchMemory[key], learnedPairs, 5000);
+    p.matchMemory[key] = sftkMemoryMerge(p.matchMemory[key], learnedPairs, 20000);   // every object's pairs since 2026-11-26 (5,000 while it was the root's alone)
     await storageSaveProfiles();
   } catch (e) {
     window.SFToolkitDebug?.log('scan', 'warn', 'match-memory merge failed', e?.message || String(e));
   }
+};
+
+// Every pair an engine answer carries (all objects) → the deployment's memory; the pairs leave the summary either
+// way. learn=false only strips them (a pull writes INTO the source: its pairs point the other way).
+window.sftkLearnFromSummary = async function (profile, summary, srcOrgUrl, tgtOrgUrl, learn) {
+  let pairs = [];
+  try { pairs = sftkTakeIdPairs(summary); } catch (_) { pairs = []; }
+  try {
+    if (learn === false || !pairs.length || !profile || profile.ephemeral || !profile.id) return 0;
+    if (_orgKey(srcOrgUrl || '') !== _orgKey(profile.sourceOrg || '')) return 0;   // a run-time source override never enters the memory
+    await window.sftkLearnPairs(profile.id, tgtOrgUrl, pairs);
+    return pairs.length;
+  } catch (_) { return 0; }
 };
 
 // A decision taken back (⚠ Needs a decision → "Not decided" on a record whose

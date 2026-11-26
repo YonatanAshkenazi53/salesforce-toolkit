@@ -2354,6 +2354,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // record lands as a business account, which the run says once per object.
       let personRows = 0, personAsBusiness = 0;
       const vanillaDropped = new Map();   // field → rows it was dropped from (sftkVanillaPayloadRules)
+      // 🪪 the field this node's new records are stamped with: the one the caller names (the Seeder, an upsert on
+      // it), or — a Deploy run, 2026-11-26 — the identity field when the target HAS it and this user may write it.
+      const stampF = node.stampField && (!tgtCreatable.size || tgtCreatable.has(node.stampField)) ? node.stampField
+        : (node.stampIfPresent && tgtCreatable.has(node.stampIfPresent) ? node.stampIfPresent : null);
       // ── Build payloads with field mapping ────────────────────────────────
       const payloads = recs.map((r, recIdx) => {
         const p = {};
@@ -2491,9 +2495,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         // copied SFTK_ID__c value from the source row — in this pair the
         // identity is THIS source record, not whatever the source org was
         // itself stamped with when it was someone else's target.
-        if (node.stampField && (!tgtCreatable.size || tgtCreatable.has(node.stampField))) {
-          p[node.stampField] = r.Id;
-        }
+        if (stampF) p[stampF] = r.Id;
         return p;
       });
 
@@ -2549,10 +2551,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // so the UI can show what went wrong per row.
       const failedSourceIds = [];        // [{ id, error }]
       // M3c — MATCH MEMORY feed: [srcId, tgtId] pairs for every successful
-      // create/upsert on the ROOT node only (v1). Studio-side callers merge
-      // these into profile.matchMemory so future scans match these records by
-      // identity (rename-proof). Capped at 2000 like the other id lists.
-      const isRootNode = node === profile.tree;
+      // create/upsert of EVERY node (2026-11-26; the root only until then, so a
+      // child written with data blending was listed under Insert again). Studio-side
+      // callers merge these into profile.matchMemory (sftkTakeIdPairs) so future
+      // scans match these records by identity. Capped at 20,000 per object.
       const idPairs = [];
       let reqMissingDiagPushed = false; // emit the payload-keys diag only once per node
       // Upsert mode (v1): applies to the ROOT object only, keyed by an
@@ -2729,7 +2731,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             if (result.created === true) upsCreated++;
             else if (result.created === false) upsUpdated++;
             transferredSourceIds.push(recs[i + j].Id);
-            if (!PROBE && isRootNode && idPairs.length < 2000) idPairs.push([recs[i + j].Id, result.id]);
+            if (!PROBE && idPairs.length < 20000) idPairs.push([recs[i + j].Id, result.id]);
             if (!PROBE && targetRecords.length < 200) {
               targetRecords.push({ id: result.id, label: recLabel(i + j, result.id) });
             }
@@ -2989,11 +2991,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       if (transferredSourceIds.length) {
         summary[objType].transferredSourceIds = transferredSourceIds.slice(0, 2000);
       }
-      // M3c — root-node srcId→tgtId pairs for the studio's match memory.
+      // M3c — srcId→tgtId pairs for the studio's match memory (every node).
       // Callers merge these then strip them before persisting to History.
       if (idPairs.length) {
-        summary[objType].idPairs = idPairs;
+        summary[objType].idPairs = (summary[objType].idPairs || []).concat(idPairs).slice(0, 20000);
       }
+      if (stampF && ok && !PROBE) summary[objType].stampedWith = stampF;
       // Target record refs → History renders them as clickable links.
       if (targetRecords.length) {
         summary[objType].targetRecords = targetRecords;

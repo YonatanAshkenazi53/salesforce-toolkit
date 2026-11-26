@@ -55,7 +55,9 @@ describe('the scan, the Deploy page and the ring are wired to the bucket', () =>
   });
   it('"insert as new" is a match-memory value: out of key matching, straight into Insert', () => {
     expect(MT).toContain("const SFTK_MEM_NEW = '__insert_as_new__';");
-    expect(SC).toContain('if (tgtId === SFTK_MEM_NEW) { if (!memPairedSrc.has(sr.Id)) { memPairedSrc.add(sr.Id); forcedNew.push(sr); } continue; }');
+    // 2026-11-26: the pre-pass is sftkIdentityPrepass (sftk-matching.js), every scan — the stamp first, then the memory
+    expect(MT).toContain('if (NEW && tgtId === NEW) { out.srcIds.add(sr.Id); out.forcedNew.push(sr); continue; }');
+    expect(SC).toContain('const pre = sftkIdentityPrepass(srcRes.records || [], tgtRes.records || [], mem, _stampF, SFTK_MEM_NEW);');
     expect(SC).toContain("for (const sr of forcedNew) missingInTarget.push({ ..._srcRow(sftkMatchKey(sr, srcMatching) || '(insert as new)', sr), forcedNew: true });");
   });
   it('Deploy: a ⚠ Ambiguous tab after Synced, a plan column, pair / insert-as-new buttons that remember and rescan', () => {

@@ -1367,8 +1367,8 @@ async function renderReconcile() {
   // excusing — "review them deliberately" with nothing shown to review is a
   // call to action without objects (user 2026-08-10: "yea but i shows
   // nothing"). A clean state speaks for itself.
-  if (scan.memoryMatched && scan.dupKeys?.rows) {
-    _health.push(`<div class="ds-rec-card-line">🧠 ${scan.memoryMatched} pair(s) matched by remembered identity, not by name — that is why the duplicates did not block matching. Fix the duplicates; matching itself is fine.</div>`);
+  if ((scan.memoryMatched || scan.stampMatched) && scan.dupKeys?.rows) {
+    _health.push(`<div class="ds-rec-card-line">🧠 ${(scan.memoryMatched || 0) + (scan.stampMatched || 0)} pair(s) matched by remembered identity, not by name — that is why the duplicates did not block matching. Fix the duplicates; matching itself is fine.</div>`);
   }
   if (srcLocked) _health.push(`<div class="ds-rec-card-line">🔒 Writes to <b>${esc(orgLabel(p.sourceOrg))}</b> are locked — every ← control on this page is off. Unlock it in Connected Orgs if you really mean to write into the source.</div>`);
   if (tgtLocked) _health.push(`<div class="ds-rec-card-line">🔒 Writes to <b>${esc(orgLabel(p.targetOrg))}</b> are locked — ▶ Run will refuse anything that writes into it. Unlock it in Connected Orgs first.</div>`);
@@ -3227,6 +3227,20 @@ async function runReconcile(profile, objType, buckets, opts) {
   // its post-write audit), per object — History shows it on the card
   let rootPii = null;
   const childPii = {};
+  // 🧠 🪪 What an insert leg says about identity (2026-11-26): the pairs of EVERY object go to the deployment's
+  // memory and leave the summary; which objects were written, and which of them carry the stamp, is said once
+  // after the inserts. learn=false (the pull, which writes into the source) only strips the pairs.
+  let _pairsKept = 0; const _insertedObjs = new Set(), _stampedObjs = new Set();
+  const noteIdentity = async (res, learn) => {
+    try {
+      for (const [o, s] of Object.entries((res && res.summary) || {})) {
+        if (!s || typeof s !== 'object' || learn === false) continue;
+        if ((s.idPairs || []).length) _insertedObjs.add(o);
+        if (s.stampedWith) _stampedObjs.add(o);
+      }
+      _pairsKept += (await window.sftkLearnFromSummary?.(profile, res && res.summary, srcSess.orgUrl, tgtSess.orgUrl, learn)) || 0;
+    } catch (_) { /* memory is an optimisation — never fail the run */ }
+  };
   const takePii = (obj, sum, isRoot) => {
     if (!sum || (!sum.masked && !sum.piiAudit)) return;
     const pii = { ...(sum.masked ? { masked: sum.masked } : {}), ...(sum.piiAudit ? { piiAudit: sum.piiAudit } : {}) };
@@ -3381,6 +3395,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       // 2026-11-15 (second review): the pull is an engine leg like the push — no answer at all ("No response") read
       // "✅ Pulled 0 into source" and a pull-only run ended green; a BUSY refusal is not a pull of 0 either.
       legCheck(res);
+      await noteIdentity(res, false);
       if (res && res.stopped) stoppedWhy = res.stopped;
       const s = res.summary?.[objType] || {};
       counts.pulled       += (s.created || 0);
@@ -3430,6 +3445,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       // parent got earlier in the same run. R2 (master-detail ⇒ parent-first)
       // lives in _opDecorate.
       pushProfile.tree.children  = sftkRecPruneTree(profile.tree.children, '', onePass.root.rides, _opDecorate);
+      sftkIdStampTree(pushProfile.tree);   // 🪪 each new record carries its source Id where the target has the field
       const res = await sendBg({
         // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
@@ -3446,17 +3462,9 @@ async function runReconcile(profile, objType, buckets, opts) {
       const s = res.summary?.[objType] || {};
       // a dry-run call that failed with no verdict for its object checked nothing: incomplete, not "complete"
       if (PROBE && sftkProbeCallBroke(res)) probeBroke = true;
-      // M3c — remember the srcId→tgtId pairs this push just created (root
-      // object). sftkLearnPairs no-ops for ephemeral profile ids; the guard
-      // mirrors runTransfer's (reconcile always runs the profile's own pair,
-      // but ephemeral ring clones override sourceOrg — belt and braces).
-      try {
-        if (s.idPairs?.length && !profile.ephemeral
-            && _orgKey(srcSess.orgUrl) === _orgKey(profile.sourceOrg || '')) {
-          await window.sftkLearnPairs?.(profile.id, tgtSess.orgUrl, s.idPairs);
-        }
-        delete s.idPairs;
-      } catch (_) { /* memory is an optimization — never fail the run */ }
+      // M3c — remember the srcId→tgtId pairs this push just created: the root AND every level that rode along
+      // (2026-11-26). sftkLearnFromSummary no-ops for an ephemeral profile and for a run-time source override.
+      await noteIdentity(res);
       // Upsert split (engine reports Salesforce's per-row verdict): rows the
       // upsert UPDATED land in the updated count, not "inserted" — an
       // 1,850-row pure-update run must never read "1850 inserted".
@@ -3569,6 +3577,7 @@ async function runReconcile(profile, objType, buckets, opts) {
           [a.node.field]: { strategy: 'match', matchObject: pObj, matchField: pMatch }
         }
       };
+      sftkIdStampTree(bProfile.tree);   // 🪪 as in the root push
       const res = await sendBg({
         // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
@@ -3577,6 +3586,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
       legCheck(res);   // see the root push
+      await noteIdentity(res);
       if (res && res.stopped) stoppedWhy = res.stopped;
       if (PROBE) probeStatuses.push(res.status || 'failed');
       if (PROBE && (res.errors || []).some(e => /🧪 dry run stopped:/.test(String(e)))) probeBroke = true;
@@ -3624,6 +3634,16 @@ async function runReconcile(profile, objType, buckets, opts) {
       await _recLogRefused(log, res.summary, PROBE, tgtSess);
       _recLogEngineLines(log, res.errors);
     } catch (e) { probeBroke = PROBE; if (!(e && e.sftkBusy)) { allErrors.push(`Insert ${obj} failed: ${e?.message || e}`); log('❌', `${PROBE ? `The dry run of ${obj} stopped` : `Insert ${obj} failed`}: ${e?.message || e}`, 'ds-prog-err'); } }
+  }
+
+  // 🧠 🪪 said once, after the inserts: how the next scan will recognise what was just written, and the offer to
+  // keep that in the org itself (owner 2026-11-26: "remembering + offering to stamp using the external id field").
+  if (!PROBE && _insertedObjs.size) {
+    const idF = sftkIdFieldName();
+    const noStamp = [..._insertedObjs].filter(o => !_stampedObjs.has(o));
+    if (_pairsKept) log('🧠', `${fmtN(_pairsKept)} new record(s) remembered with the source record each one came from — the next scan recognises them whatever their values are. Kept with this deployment, on this computer.`);
+    if (_stampedObjs.size) log('🪪', `${[..._stampedObjs].join(', ')}: each new record carries its source record's Id in ${idF}, so it is recognised from any computer.`);
+    if (noStamp.length) log('🪪', `${noStamp.join(', ')}: ${orgLabel(profile.targetOrg)} has no ${idF} field there, so the pairing lives in this deployment's memory only. To keep it in the org: Identity… on the Deploy page — create the field, then Stamp.`);
   }
 
   // ── 3c. Relink — re-point existing children at the right parent ───────
@@ -4642,7 +4662,7 @@ async function reconcileStampPairs(p, scan) {
   }
   showToast(failed
     ? `🪪 ${ok} stamped, ${failed} failed: ${errs.join(' · ')}`
-    : `🪪 ${ok} record(s) stamped — these pairs now match exactly, forever. Re-scan to see matching ride the identity field.`,
+    : `🪪 ${ok} record(s) stamped — every scan now recognises these pairs by the identity field, whatever their names are.`,
     failed ? 'warning' : 'success', 8000);
 }
 
@@ -4765,7 +4785,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // a non-null target). Drop system fields.
   // OwnerId excluded from the mapping-driven fields — owners are handled by
   // the profile's ownerMapping setting below, not by field mapping.
-  const SYS = new Set(['Id','CreatedDate','CreatedById','LastModifiedDate','LastModifiedById','SystemModstamp','IsDeleted','OwnerId']);
+  const SYS = new Set(['Id','SFTK_ID__c','CreatedDate','CreatedById','LastModifiedDate','LastModifiedById','SystemModstamp','IsDeleted','OwnerId']);   // 🪪 an update never rewrites the identity field
   let srcFields = Object.keys(fm).filter(k => fm[k] !== null && fm[k] !== '' && !SYS.has(k));
 
   // Owner mapping ('match'): resolve source Owner.Name → target user;

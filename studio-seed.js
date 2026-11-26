@@ -1476,7 +1476,7 @@ async function sftkSeedRun(what, objs, targets) {
               tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid });
             if (result?.error) { line('❌', `${orgLabel(t)} · ${label}: ${result.error}`); return null; }
             const s = result.summary?.[o] || {};
-            delete (result.summary?.[o] || {}).idPairs;
+            sftkTakeIdPairs(result.summary);   // every object's pairs (2026-11-26) — a seed keeps none
             _history.push({ id: genId('run'), profileId: prof.id,
               srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl,
               sourceOrg: srcSess.orgUrl, targetOrg: tgtSess.orgUrl,

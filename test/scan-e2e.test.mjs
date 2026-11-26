@@ -16,7 +16,7 @@ const scan = extractFunctions('studio-scan.js', [
 ], { 'sftk-matching.js': [
   'sftkMatchingFromNode', 'sftkMatchingFields', 'sftkMatchingTgtFields',
   'sftkMatchKey', 'sftkPathValue', 'sftkNormalizeValue', 'sftkNearMissFold', 'sftkNearMissReason',
-  'sftkMatchKeyLabel', 'sftkScanKeyClasses',
+  'sftkMatchKeyLabel', 'sftkScanKeyClasses', 'sftkIdentityPrepass',
 ] });
 
 const SRC_ORG = 'https://six.develop.my.salesforce.com';

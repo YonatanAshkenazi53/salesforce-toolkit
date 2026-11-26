@@ -2221,16 +2221,10 @@ async function runTransfer() {
   // are then stripped from the result so History stays lean (they live in
   // profile.matchMemory). Any failure here degrades silently — the transfer
   // result is already complete.
+  // 2026-11-26: every object's pairs, not the root's alone (sftkLearnFromSummary keeps both guards and strips all).
   try {
-    const mmRootObj = _transferProfile?.tree?.objectType || _transferProfile?.tree?.childSObject;
-    const mmPairs = mmRootObj ? (result.summary?.[mmRootObj]?.idPairs || []) : [];
-    if (mmPairs.length) {
-      if (_transferProfile?.id
-          && _orgKey(_transferSrc.orgUrl) === _orgKey(_transferProfile.sourceOrg || '')) {
-        await window.sftkLearnPairs?.(_transferProfile.id, _transferTgt.orgUrl, mmPairs);
-      }
-      delete result.summary[mmRootObj].idPairs;
-    }
+    await window.sftkLearnFromSummary?.(_transferProfile, result.summary, _transferSrc.orgUrl, _transferTgt.orgUrl);
+    if (typeof sftkTakeIdPairs === 'function') sftkTakeIdPairs(result.summary);
   } catch (_) { /* memory is an optimization — never fail the run for it */ }
 
   // Record activity & save to history (Feature 12: include org URLs for health tiles)
