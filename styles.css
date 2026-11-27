@@ -7681,3 +7681,11 @@ body.sftk-dark .fc-plan-way.on[data-kind="delete"] { background: #4a1b1f; color:
 
 /* Field Cleaner, "Listing the org's metadata": the cat at a size it can be seen at (owner 2026-11-27) */
 .fc-sweep-planning .lp-robot-sm .sftk-cat { width: 128px; height: 128px; }
+
+/* Flows: whose flows — the org's own or a package's (2026-11-28) */
+.flow-own-tabs { display: flex; gap: 6px; margin: 0 0 8px; border-bottom: 1px solid var(--border); }
+.flow-own-btn { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 7px 12px; font: inherit; font-size: 13px; font-weight: 600; color: var(--subtext); cursor: pointer; }
+.flow-own-btn:hover { color: var(--text); }
+.flow-own-btn.active { color: var(--accent, #0176d3); border-bottom-color: var(--accent, #0176d3); }
+.flow-own-btn:focus-visible { outline: 2px solid var(--accent, #0176d3); outline-offset: -2px; }
+.flow-own-n { font-weight: 500; opacity: .8; margin-left: 2px; }

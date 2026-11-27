@@ -1484,6 +1484,28 @@ function _flowTypePaint(counts) {
   });
 }
 
+// ── Whose flows: the org's own, or a package's (owner 2026-11-28: "maybe we can do two tabs here … one tab for
+// regular flows and second one for package flows") ── Two tabs above the kind tabs; the kind tabs count the flows of
+// the tab that is open. With no package flow in the org there is one list and no tabs.
+let _flowOwnTab = 'org';   // 'org' | 'pkg'
+// PURE. → the tab that is really open: 'pkg' only while the org has package rows
+function sftkFlowOwnTab(want, pkgN) { return want === 'pkg' && pkgN > 0 ? 'pkg' : 'org'; }
+function _flowOwnPaint(orgN, pkgN) {
+  let host = document.getElementById('flowOwnTabs');
+  const kinds = document.getElementById('flowTypeFilter');
+  if (!host && kinds && kinds.parentNode) {
+    host = document.createElement('div'); host.id = 'flowOwnTabs'; host.className = 'flow-own-tabs'; host.setAttribute('role', 'tablist');
+    host.setAttribute('aria-label', 'Whose flows');
+    kinds.parentNode.insertBefore(host, kinds);
+    host.addEventListener('click', e => { const b = e.target.closest('[data-fown]'); if (!b) return; _flowOwnTab = b.dataset.fown; renderFlowList(); });
+  }
+  if (!host) return;
+  host.style.display = pkgN ? '' : 'none';
+  const f = n => Number(n || 0).toLocaleString('en-US');
+  const btn = (k, label, n, tip) => `<button type="button" role="tab" class="flow-own-btn${_flowOwnTab === k ? ' active' : ''}" data-fown="${k}" aria-selected="${_flowOwnTab === k}" title="${tip}">${label} <span class="flow-own-n">${f(n)}</span></button>`;
+  host.innerHTML = btn('org', 'Org flows', orgN, 'The flows and workflow rules built in this org') + btn('pkg', '🔒 Package flows', pkgN, 'The flows and workflow rules installed by packages: read-only, their contents are hidden by Salesforce');
+}
+
 function renderFlowList() {
   if (currentMode === 'restore') return; // restore mode owns the content area
   const list = document.getElementById('flowList');
@@ -1506,13 +1528,19 @@ function renderFlowList() {
   const trigMap = (typeof DependencyMap.getDefinitionTriggerMap === 'function' && DependencyMap.getDefinitionTriggerMap()) || {};
   const rows = sftkFlowListRows(flowGroups);
   // the kind picked on the tabs above the list; a tab whose kind is gone from the org falls back to All
-  const kindCounts = sftkFlowKindCounts(rows, trigMap);
+  const mgAll = (typeof DependencyMap.getManagedFlows === 'function') ? DependencyMap.getManagedFlows() : null;
+  const mgEvery = sftkManagedFlowsShown(mgAll, '', 'all', trigMap), wfEvery = sftkWfRulesShown(_wfRules, '', 'all');
+  const wfPkg = f => !!(f.managed || f.ns);
+  const pkgN = mgEvery.length + wfEvery.filter(wfPkg).length;
+  _flowOwnTab = sftkFlowOwnTab(_flowOwnTab, pkgN);
+  const OWN_PKG = _flowOwnTab === 'pkg';
+  _flowOwnPaint(rows.length + wfEvery.filter(f => !wfPkg(f)).length, pkgN);
+  const kindCounts = sftkFlowKindCounts(OWN_PKG ? [] : rows, trigMap);
   // 🔒 flows installed by managed packages are flows of the list like any other (owner 2026-11-27: "show package
   // flows with a lock but not a seperate tab … and just say which flow is package one"): counted by the tabs,
   // drawn in the list's own alphabetical order, read-only.
-  const mgAll = (typeof DependencyMap.getManagedFlows === 'function') ? DependencyMap.getManagedFlows() : null;
-  for (const f of sftkManagedFlowsShown(mgAll, '', 'all', trigMap)) { kindCounts.all++; kindCounts[sftkFlowKindTab(f.kind)]++; }
-  const wfN = sftkWfRulesShown(_wfRules, '', 'all').length;   // 📜 workflow rules: under Other
+  if (OWN_PKG) for (const f of mgEvery) { kindCounts.all++; kindCounts[sftkFlowKindTab(f.kind)]++; }
+  const wfN = wfEvery.filter(f => wfPkg(f) === OWN_PKG).length;   // 📜 workflow rules: under Other
   kindCounts.all += wfN; kindCounts.other += wfN;
   if (_flowTypeFilter !== 'all' && !kindCounts[_flowTypeFilter]) _flowTypeFilter = 'all';
   _flowTypePaint(kindCounts);
@@ -1524,7 +1552,7 @@ function renderFlowList() {
   blocks.sort((a, b) => a.rows[0].row.label.localeCompare(b.rows[0].row.label));
 
   const items = [];   // { label, el } — the org's own flows and the package flows, one alphabetical list
-  for (const bk of blocks) {
+  for (const bk of (OWN_PKG ? [] : blocks)) {
     // a tree shows whole when any of its flows matches the search — the tree is the unit
     // …and when any of its flows is of the kind picked: a record-triggered flow is shown with the subflows it calls
     const shown = bk.rows.filter(e => hit(e.row));
@@ -1539,14 +1567,14 @@ function renderFlowList() {
   }
 
   // 🔒 package flows, each in its place by name. Their contents are hidden: a what-uses search cannot answer for them.
-  for (const f of (_flowUses ? [] : sftkManagedFlowsShown(mgAll, search, _flowTypeFilter, trigMap))) {
+  for (const f of (_flowUses || !OWN_PKG ? [] : sftkManagedFlowsShown(mgAll, search, _flowTypeFilter, trigMap))) {
     visibleCount++;
     items.push({ label: f.label, pkg: 1, el: buildManagedFlowRow(f) });
   }
   // 📜 workflow rules, each in its place by name; like the package flows, a what-uses search cannot answer for them
-  for (const f of (_flowUses ? [] : sftkWfRulesShown(_wfRules, search, _flowTypeFilter))) {
+  for (const f of (_flowUses ? [] : sftkWfRulesShown(_wfRules, search, _flowTypeFilter).filter(x => wfPkg(x) === OWN_PKG))) {
     visibleCount++;
-    items.push({ label: f.name, pkg: f.pkg || f.managed || f.ns ? 1 : 0, el: buildWorkflowRuleRow(f) });
+    items.push({ label: f.name, pkg: wfPkg(f) ? 1 : 0, el: buildWorkflowRuleRow(f) });
   }
   // the org's own rows first, by name; what a package installed after them, by name (owner 2026-11-28: "can we see package after the regular flows?")
   items.sort((a, b) => ((a.pkg || 0) - (b.pkg || 0)) || String(a.label).localeCompare(String(b.label)));
@@ -1557,6 +1585,7 @@ function renderFlowList() {
   // a search that matches nothing says so — it is not an empty org (QA 2026-10-18)
   if (visibleCount === 0 && sortedLabels.length > 0) emptyState.textContent = `No flow name or API name matches “${document.getElementById('searchInput').value.trim()}”.`;
   if (visibleCount === 0 && sortedLabels.length > 0 && !search && _flowTypeFilter !== 'all') emptyState.textContent = 'No flow of this kind in the org.';
+  if (visibleCount === 0 && OWN_PKG && _flowUses) emptyState.textContent = 'A package flow hides its contents, so a what-uses search cannot answer for one. Open the Org flows tab.';
   // a search under a kind tab that matches flows of other kinds only says that, not that the name is unknown (QA 1.1 regression #19)
   if (visibleCount === 0 && sortedLabels.length > 0 && search && _flowTypeFilter !== 'all') {
     const others = rows.filter(hit).length;
@@ -1718,6 +1747,12 @@ function sftkManagedFlowsShown(rows, search, filter, trigMap) {
 }
 // One package flow in the list: a row like any flow's, with a lock where the tick box would be — it cannot be
 // ticked, deleted, backed up or changed — and a badge that says which package it comes from.
+// PURE. A Process Builder process is listed among the flows (Salesforce stores it as one); its row says what it is
+// (owner 2026-11-28, a screenshot of a process with only an icon: "if its a process builder we need to say it").
+//   → 'process builder' | '' for a process type
+function sftkFlowProcessWord(processType) {
+  return ['Workflow', 'CustomEvent', 'InvocableProcess'].includes(String(processType || '')) ? 'process builder' : '';
+}
 function buildManagedFlowRow(f) {
   const row = document.createElement('div');
   row.className = 'flow-managed-row';
@@ -1726,6 +1761,7 @@ function buildManagedFlowRow(f) {
   add('flow-managed-lock', '🔒', 'Installed by a managed package. Salesforce hides its contents, so it cannot be deleted, backed up or changed here.');
   add('flow-kind-ico', SFTK_FLOW_KIND_ICON[f.kind] || '•', humanProcessType(f.kind));
   add('flow-managed-name', f.label, f.apiName);
+  if (sftkFlowProcessWord(f.kind)) add('badge flow-managed-ns', sftkFlowProcessWord(f.kind), `${humanProcessType(f.kind)}: built in Process Builder, not in Flow Builder`);
   add('badge flow-managed-ns', f.ns ? `package · ${f.ns}` : 'package', f.ns ? `Installed by the managed package with the namespace ${f.ns}` : 'Installed by a managed package');
   add(`badge ${f.active ? 'badge-active' : 'badge-draft'}`, f.status);
   add('flow-managed-meta', [f.version != null ? `v${f.version}` : '', f.apiVersion ? `API ${f.apiVersion}` : ''].filter(Boolean).join(' · '));
@@ -1867,6 +1903,10 @@ function buildGroupElement(label, versions, depMap, o) {
   versionBadge.textContent = `${versions.length} version${versions.length !== 1 ? 's' : ''}`;
 
   groupInfo.appendChild(groupLabel);
+  {
+    const pt = (versions[0] && versions[0].ProcessType) || '', word = sftkFlowProcessWord(pt);
+    if (word) { const b = document.createElement('span'); b.className = 'badge flow-managed-ns flow-process-word'; b.textContent = word; b.title = `${humanProcessType(pt)}: built in Process Builder, not in Flow Builder`; groupInfo.appendChild(b); }
+  }
   groupInfo.appendChild(versionBadge);
   // whole flow (user 2026-10-17: "delete flows or flows with versions"): one click selects every version —
   // in Delete mode that removes the flow itself, and the confirmation says so

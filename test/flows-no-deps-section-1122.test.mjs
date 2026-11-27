@@ -55,7 +55,7 @@ describe('managed package flows are on the Flows list', () => {
   it('the list draws them in their place by name, read-only, and again when their read lands', () => {
     expect(PJ).toContain("items.push({ label: f.label, pkg: 1, el: buildManagedFlowRow(f) });");
     expect(PJ).toContain("items.sort((a, b) => ((a.pkg || 0) - (b.pkg || 0)) || String(a.label).localeCompare(String(b.label)));");   // 2026-11-28: package rows after the org's own
-    expect(PJ).toContain("for (const f of sftkManagedFlowsShown(mgAll, '', 'all', trigMap)) { kindCounts.all++; kindCounts[sftkFlowKindTab(f.kind)]++; }");
+    expect(PJ).toContain("if (OWN_PKG) for (const f of mgEvery) { kindCounts.all++; kindCounts[sftkFlowKindTab(f.kind)]++; }");   // 2026-11-28: counted under the Package flows tab
     expect(PJ).not.toContain('buildManagedFlowsBox');
     expect(PJ).toContain("if (loadOrgUrl === orgUrl) renderFlowList();   // the 🔒 managed package flows, in their place in the list");
     const box = PJ.slice(PJ.indexOf('function buildManagedFlowRow('), PJ.indexOf('// One card for a flow tree'));
@@ -151,5 +151,27 @@ describe('workflow rules are on the Flows list', () => {
     expect(box).toContain('/lightning/setup/WorkflowRules/page?address=');
     expect(PJ).toContain('kindCounts.all += wfN; kindCounts.other += wfN;');
     expect(PJ).toContain("loadWorkflowRules(loadOrgUrl, loadSid).then(() => { if (loadOrgUrl === orgUrl) renderFlowList(); });");
+  });
+});
+
+// 2026-11-28 (owner): "maybe we can do two tabs here … one tab for regular flows and second one for package flows" ·
+// "if its a process builder we need to say it"
+describe('whose flows: two tabs, and a process says it is one', () => {
+  const PJ2 = readFileSync(new URL('../popup.js', import.meta.url), 'utf8');
+  const grab = name => { const a = PJ2.indexOf('function ' + name + '('); let d = 0, i = PJ2.indexOf('{', a); for (; i < PJ2.length; i++) { if (PJ2[i] === '{') d++; else if (PJ2[i] === '}' && --d === 0) break; } return PJ2.slice(a, i + 1); };
+  it('the package tab is open only while the org has package rows', () => {
+    const f = new Function('return ' + grab('sftkFlowOwnTab'))();
+    expect([f('pkg', 3), f('pkg', 0), f('org', 3), f(undefined, 3)]).toEqual(['pkg', 'org', 'org', 'org']);
+  });
+  it('the list draws one tab at a time, and the kind tabs count that tab', () => {
+    expect(PJ2).toContain('const kindCounts = sftkFlowKindCounts(OWN_PKG ? [] : rows, trigMap);');
+    expect(PJ2).toContain('for (const bk of (OWN_PKG ? [] : blocks)) {');
+    expect(PJ2).toContain('for (const f of (_flowUses || !OWN_PKG ? [] : sftkManagedFlowsShown(mgAll, search, _flowTypeFilter, trigMap))) {');
+    expect(PJ2).toContain(".filter(x => wfPkg(x) === OWN_PKG)");
+    expect(PJ2).toContain("host.style.display = pkgN ? '' : 'none';");
+  });
+  it('a Process Builder process is named, a flow is not', () => {
+    const f = new Function('return ' + grab('sftkFlowProcessWord'))();
+    expect([f('Workflow'), f('CustomEvent'), f('InvocableProcess'), f('Flow'), f('AutoLaunchedFlow'), f('')]).toEqual(['process builder', 'process builder', 'process builder', '', '', '']);
   });
 });

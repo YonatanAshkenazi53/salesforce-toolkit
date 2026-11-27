@@ -1386,6 +1386,9 @@ async function _depParentMatchEdit(p, scan, step) {
   });
   eid('dsPmSug')?.addEventListener('click', async ev => {
     const b = ev.currentTarget; b.disabled = true; b.textContent = '⏳ grading…';
+    // the suggestions are single-field keys: asking for them while a composite key is open goes back to Single field
+    // (owner 2026-11-28, a screenshot of Composite above the single-field suggestions: "i think we sohuld go single field here")
+    if (strategy === 'composite') { strategy = 'field'; more = []; const r = document.querySelector('input[name="dsPmStrat"][value="field"]'); if (r) r.checked = true; sel.innerHTML = optsHtml(); paintMore(); tgtLine(); }
     if (!sugs.length) { out.innerHTML = '<div class="ds-subtext">No single-field key stands out on this object — Name stays the default.</div>'; b.disabled = false; b.textContent = '💡 Suggestions'; return; }
     out.innerHTML = `<div class="ds-subtext" style="font-size:11.5px">Grading ${sugs.length} keys against both orgs…</div>`;
     const rows = [];
