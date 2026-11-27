@@ -1345,7 +1345,8 @@ function _runDupBypassFor(objType) {
 function sftkProbeLimits() {
   return { sample: 200,      // records per object (one Collections subrequest)
            maxSubs: 5,       // a composite takes 25 subrequests, but only 5 of them may be sObject Collections (or query) operations — every object level is one. The poison is a plain sObject POST and does not count. (Salesforce's documented limit; a 6-level request is refused whole with HTTP 400.)
-           maxRounds: 8 };   // one level of errors per round; a tree is rarely deeper
+           maxRounds: 8,     // one level of errors per round; a tree is rarely deeper
+           maxWindows: 25 }; // rolled-back transactions per dry run: 25 × 200 = up to 5,000 records of an object (owner 2026-11-27: "why only 200 records?")
 }
 
 // A stable token for "the id this record WOULD get": keyed by the SOURCE id,
@@ -1487,6 +1488,48 @@ function sftkProbeCascade(subs, removedByRef) {
     }
   }
   return dropped;
+}
+
+// EVERY selected record, not the first 200 (owner 2026-11-27: "why only 200 records?"). One rolled-back transaction
+// holds `size` records per object level, so the rows are dealt into several transactions ("windows"). A row is
+// never sent without the rows of this run it points at: its parents travel with it, also when they were judged in
+// an earlier window already (they are rolled back each time, so sending them again writes nothing). PURE.
+//   subs: [{ ref, objType, upsertField, rows: [{ srcId, payload }] }], parents before children
+//   → { windows: [ subs-shaped, same refs, a subset of the rows ], left: { ref: [srcId] } } — left = rows that no
+//     window took (the window count ran out, or a row whose own parents exceed one window).
+function sftkProbeWindows(subs, size, maxWindows) {
+  const order = [], byKey = new Map();
+  for (const s of (subs || [])) for (const row of s.rows) {
+    const e = { ref: s.ref, row, key: s.ref + '#' + row.srcId, parents: [] };
+    for (const v of Object.values(row.payload || {})) { const t = sftkProbeParseToken(v); if (t) e.parents.push(t.ref + '#' + t.srcId); }
+    order.push(e); byKey.set(e.key, e);
+  }
+  const closure = e => {
+    const out = [], seen = new Set(), st = [e];
+    while (st.length) { const x = st.pop(); if (!x || seen.has(x.key)) continue; seen.add(x.key); out.push(x); for (const p of x.parents) st.push(byKey.get(p)); }
+    return out;
+  };
+  const covered = new Set(), windows = [];
+  let pending = order;
+  while (pending.length && windows.length < maxWindows) {
+    const inWin = new Set(), count = {};
+    let took = 0;
+    for (const e of pending) {
+      if (covered.has(e.key)) continue;
+      const add = closure(e).filter(x => !inWin.has(x.key));
+      const need = {};
+      for (const x of add) need[x.ref] = (need[x.ref] || 0) + 1;
+      if (Object.keys(need).some(r => (count[r] || 0) + need[r] > size)) continue;
+      for (const x of add) { inWin.add(x.key); count[x.ref] = (count[x.ref] || 0) + 1; covered.add(x.key); }
+      took++;
+    }
+    if (!took) break;
+    windows.push(subs.map(s => ({ ref: s.ref, objType: s.objType, upsertField: s.upsertField, rows: s.rows.filter(r => inWin.has(s.ref + '#' + r.srcId)) })));
+    pending = pending.filter(e => !covered.has(e.key));
+  }
+  const left = {};
+  for (const e of pending) if (!covered.has(e.key)) (left[e.ref] = left[e.ref] || []).push(e.row.srcId);
+  return { windows, left };
 }
 
 // The verdict of a whole dry run: 'success' = every probed record would be
@@ -2012,11 +2055,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           diagnostics.push(`Contact: ${personContactsSkipped} Person Account contact(s) left out — Salesforce creates that Contact together with the Person Account and refuses a second one ("Cannot select a person account"); their details travel on the Account's Person fields.`);
         }
       }
-      // 🧪 a dry run checks a sample: the first sftkProbeLimits().sample records of
-      // each object (one Collections subrequest each); children are scoped to
-      // the sampled parents by the idMap filter below, as in a real run.
+      // 🧪 a dry run checks every record up to sample × maxWindows of each object (2026-11-27; it was the first
+      // `sample`), dealt into rolled-back transactions by sftkProbeWindows; beyond that it is a sample, and
+      // children are scoped to the sampled parents by the idMap filter below, as in a real run.
       let probeSampledOf = 0;
-      if (PROBE && recs.length > PL.sample) { probeSampledOf = recs.length; recs = recs.slice(0, PL.sample); }
+      if (PROBE && recs.length > PL.sample * PL.maxWindows) { probeSampledOf = recs.length; recs = recs.slice(0, PL.sample * PL.maxWindows); }
       nodeSourceIds.set(node, recs.map(r => r.Id));
       postRunProgress({ phase: 'fetched', obj: objType, count: recs.length, ...(PROBE ? { probe: true, sampledOf: probeSampledOf } : {}) });
 
@@ -2618,7 +2661,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       const dupBypass = _runDupBypassFor(objType);
       const useBulk  = !dupBypass && (API_MODE === 'bulk' || (API_MODE !== 'sync' && payloads.length >= BULK_MIN));   // a dry run pins API_MODE to 'sync' above
       if (dupBypass && (API_MODE === 'bulk' || payloads.length >= BULK_MIN)) diagnostics.push(`${objType}: duplicate rules are bypassed for this run, and Bulk API 2.0 cannot bypass them — ${payloads.length} record(s) go through synchronous Collections calls instead (${Math.ceil(payloads.length / BATCH_SIZE)} call(s) of ${BATCH_SIZE}).`);
-      const STEP     = useBulk ? payloads.length : (PROBE ? PL.sample : BATCH_SIZE);
+      const STEP     = useBulk ? payloads.length : (PROBE ? Math.max(1, payloads.length) : BATCH_SIZE);   // a dry run hands the whole object over as one list; sftkProbeWindows deals it into transactions
       if (useBulk) {
         diagnostics.push(payloads.length >= BULK_MIN
           ? `${objType}: ${payloads.length} record(s) ≥ ${BULK_MIN} — using Bulk API 2.0 (one async job).`
@@ -3276,7 +3319,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // would be refused) · not reached (rounds ran out).
   let probeResult = null;
   if (PROBE) {
-    probeResult = { sample: PL.sample, rounds: 0, persisted: [], updatedExisting: [], byObj: {}, objects: probeSubs.length };
+    probeResult = { sample: PL.sample * PL.maxWindows, perTransaction: PL.sample, rounds: 0, persisted: [], updatedExisting: [], byObj: {}, objects: probeSubs.length };
     const verdict = new Map();   // ref → Map(srcId → { state, errors })
     for (const s of probeSubs) verdict.set(s.ref, new Map(s.rows.map(r => [r.srcId, { state: 'unreached' }])));
     const live = probeSubs.map(s => ({ ref: s.ref, objType: s.objType, upsertField: s.upsertField, rows: s.rows.slice() }));
@@ -3291,37 +3334,60 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       errors.push(`🧪 dry run: this deployment writes ${probeSubs.length} object levels — Salesforce takes ${PL.maxSubs} in one rolled-back transaction; nothing was checked. Dry-run a smaller selection (${PL.maxSubs} object levels or fewer).`);
     } else if (probeSubs.length) {
       let round = 0;
+      // The first verdict a record gets stands: a parent sent again in a later transaction (for the children that
+      // did not fit beside it) is not judged twice.
+      const setV = (ref, id, v) => { const vm = verdict.get(ref), cur = vm.get(id); if (!cur || cur.state === 'unreached') vm.set(id, v); };
+      const plan = sftkProbeWindows(live, PL.sample, PL.maxWindows);
+      probeResult.windows = plan.windows.length;
+      probeResult.left = Object.values(plan.left).reduce((t, a) => t + a.length, 0);
       try {
-        while (round < PL.maxRounds) {
-          round++;
+        for (let w = 0; w < plan.windows.length; w++) {
           if (_runCancelled) { probeStopNote(); break; }
-          const sending = live.filter(s => s.rows.length);
-          if (!sending.length) break;
-          postRunProgress({ phase: 'probe', round, subs: sending.map(s => ({ obj: s.objType, n: s.rows.length })) });
-          const resp = await sfProbeComposite(tgtOrgUrl, tgtSid, sftkProbeCompositeBody(sending, API_VERSION, o => _runDupBypassFor(o)));
-          const parsed = sftkProbeParseRound(sending, resp);
-          probeResult.rounds = round;
-          if (parsed.persisted.length) probeResult.persisted.push(...parsed.persisted);
-          // an upsert that only UPDATED an existing target record: real only when the round was not
-          // rolled back (the poison did not fail). Never handed to the delete below.
-          if (parsed.updated.length && parsed.poisonFailed !== true) probeResult.updatedExisting.push(...parsed.updated);
-          if (parsed.poisonFailed === false) { errors.push('🧪 dry run: the poison record was ACCEPTED, so this round was not rolled back — see the persisted-record check below.'); }
-          const failIdx = parsed.subs.findIndex(x => x.state === 'failing' || x.state === 'error');
-          for (let k = 0; k < parsed.subs.length; k++) {
-            const sub = sending[k], res = parsed.subs[k], vm = verdict.get(sub.ref);
-            if (failIdx === -1 || k < failIdx) { for (const row of sub.rows) vm.set(row.srcId, { state: 'ok' }); }
-            else if (k === failIdx) {
-              if (res.state === 'error') for (const row of sub.rows) vm.set(row.srcId, { state: 'refused', errors: [{ statusCode: 'SUBREQUEST_REFUSED', message: res.error }] });
-              else for (const row of res.rows) vm.set(row.srcId, row.state === 'refused' ? { state: 'refused', errors: row.errors } : { state: 'ok' });
-            } else { for (const row of sub.rows) vm.set(row.srcId, { state: 'unreached' }); }
+          const win = plan.windows[w];
+          // a parent an earlier transaction refused takes the children of this one with it, unsent
+          const gone = {};
+          for (const s of win) {
+            const vm = verdict.get(s.ref);
+            const ids = s.rows.filter(r => { const st = (vm.get(r.srcId) || {}).state; return st === 'refused' || st === 'cascade'; }).map(r => r.srcId);
+            if (ids.length) gone[s.ref] = ids;
           }
-          if (failIdx === -1) break;
-          const fs = sending[failIdx];
-          const refusedIds = fs.rows.filter(r => verdict.get(fs.ref).get(r.srcId).state === 'refused').map(r => r.srcId);
-          if (!refusedIds.length) break;
-          const dropped = sftkProbeCascade(live, { [fs.ref]: refusedIds });
-          for (const [ref, ids] of Object.entries(dropped)) for (const id of ids) verdict.get(ref).set(id, { state: 'cascade' });
-          if (failIdx === sending.length - 1) break;   // nothing after it was waiting
+          if (Object.keys(gone).length) {
+            const dropped = sftkProbeCascade(win, gone);
+            for (const [ref, ids] of Object.entries(dropped)) for (const id of ids) setV(ref, id, { state: 'cascade' });
+          }
+          let wr = 0;
+          while (wr < PL.maxRounds) {
+            wr++; round++;
+            if (_runCancelled) { probeStopNote(); break; }
+            const sending = win.filter(s => s.rows.length);
+            if (!sending.length) break;
+            postRunProgress({ phase: 'probe', round, win: w + 1, wins: plan.windows.length, subs: sending.map(s => ({ obj: s.objType, n: s.rows.length })) });
+            const resp = await sfProbeComposite(tgtOrgUrl, tgtSid, sftkProbeCompositeBody(sending, API_VERSION, o => _runDupBypassFor(o)));
+            const parsed = sftkProbeParseRound(sending, resp);
+            probeResult.rounds = round;
+            if (parsed.persisted.length) probeResult.persisted.push(...parsed.persisted);
+            // an upsert that only UPDATED an existing target record: real only when the round was not
+            // rolled back (the poison did not fail). Never handed to the delete below.
+            if (parsed.updated.length && parsed.poisonFailed !== true) probeResult.updatedExisting.push(...parsed.updated);
+            if (parsed.poisonFailed === false) { errors.push('🧪 dry run: the poison record was ACCEPTED, so this round was not rolled back — see the persisted-record check below.'); }
+            const failIdx = parsed.subs.findIndex(x => x.state === 'failing' || x.state === 'error');
+            for (let k = 0; k < parsed.subs.length; k++) {
+              const sub = sending[k], res = parsed.subs[k];
+              if (failIdx === -1 || k < failIdx) { for (const row of sub.rows) setV(sub.ref, row.srcId, { state: 'ok' }); }
+              else if (k === failIdx) {
+                if (res.state === 'error') for (const row of sub.rows) setV(sub.ref, row.srcId, { state: 'refused', errors: [{ statusCode: 'SUBREQUEST_REFUSED', message: res.error }] });
+                else for (const row of res.rows) setV(sub.ref, row.srcId, row.state === 'refused' ? { state: 'refused', errors: row.errors } : { state: 'ok' });
+              }   // the subrequests after it were not evaluated in this round: they stay as they are
+            }
+            if (failIdx === -1) break;
+            const fs = sending[failIdx], fr = parsed.subs[failIdx];
+            // what THIS round refused (not the verdict: a parent judged earlier keeps its first verdict)
+            const refusedIds = fr.state === 'error' ? fs.rows.map(r => r.srcId) : fr.rows.filter(x => x.state === 'refused').map(x => x.srcId);
+            if (!refusedIds.length) break;
+            const dropped = sftkProbeCascade(win, { [fs.ref]: refusedIds });
+            for (const [ref, ids] of Object.entries(dropped)) for (const id of ids) setV(ref, id, { state: 'cascade' });
+            if (failIdx === sending.length - 1) break;   // nothing after it was waiting
+          }
         }
       } catch (e) {
         errors.push(`🧪 dry run stopped: ${(e && e.message) || e}`);
@@ -3390,7 +3456,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         postRunProgress({ phase: 'probeDone', obj: o, ...agg });
         diagnostics.push(`🧪 ${o}: ${agg.probed} record(s) in a transaction Salesforce rolled back — ${agg.wouldWrite} would be written, ${agg.refused} refused${agg.cascade ? `, ${agg.cascade} not checked (their parent would be refused)` : ''}${agg.earlier ? `, ${agg.earlier} not checked (they point at a record an earlier step of this run creates)` : ''}${agg.unreached ? `, ${agg.unreached} not reached` : ''}${agg.sampledOf ? ` · a sample: the first ${agg.probed} of ${agg.sampledOf}` : ''}.`);
       }
-      diagnostics.push(`🧪 Dry run limits: up to ${PL.sample} records per object; triggers and flows really ran and were rolled back with the transaction (their e-mails and queued jobs were cancelled too; the one exception is a platform event set to “Publish Immediately”, which was sent for real); 🔗 lookups connected after insert and 📎 files were not checked; row locks and limits at full volume can still differ; a record that duplicates ANOTHER RECORD OF THIS RUN can pass here and be refused by a duplicate rule in the real run, once the other one is written.`);
+      if (probeResult.left) diagnostics.push(`🧪 ${probeResult.left} record(s) were not checked: they did not fit the ${PL.maxWindows} rolled-back transactions a dry run sends.`);
+      diagnostics.push(`🧪 Dry run limits: every selected record up to ${PL.sample * PL.maxWindows} per object, ${PL.sample} per object in each rolled-back transaction (${probeResult.windows} here); a record of one transaction is not seen by the rules of another; triggers and flows really ran and were rolled back with the transaction (their e-mails and queued jobs were cancelled too; the one exception is a platform event set to “Publish Immediately”, which was sent for real); 🔗 lookups connected after insert and 📎 files were not checked; row locks and limits at full volume can still differ; a record that duplicates ANOTHER RECORD OF THIS RUN can pass here and be refused by a duplicate rule in the real run, once the other one is written.`);
     } else {
       diagnostics.push('🧪 dry run: nothing to send — no record reached a write.');
     }
@@ -3463,7 +3530,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       ? sftkProbeStatus(probeResult, errors)
       : (errors.filter(e => !String(e).includes('ℹ')).length === 0 ? 'success' : (Object.values(summary).some(s=>s.created>0) ? 'partial' : 'failed')),
     ...(_runCancelled ? { cancelled: true, stopped: _runStopReason() } : {}),
-    ...(PROBE ? { probe: probeResult || { byObj: {}, rounds: 0, sample: PL.sample, persisted: [] } } : {}),
+    ...(PROBE ? { probe: probeResult || { byObj: {}, rounds: 0, sample: PL.sample * PL.maxWindows, persisted: [] } } : {}),
     summary, errors: finalErrors.slice(0, 50)
   };
 }

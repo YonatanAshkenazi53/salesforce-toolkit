@@ -299,11 +299,11 @@ describe('CHANGELOG and listing', () => {
     expect(pause).not.toMatch(/each with a tick\s+to switch it off/);
   });
 
-  it('the dry-run line states its limits: inserts only, first 200 per object', () => {
+  it('the dry-run line states its limits: inserts only, up to 5,000 per object (2026-11-27; it was the first 200)', () => {
     const block = newIn11();
     const dry = block.slice(block.indexOf('• Dry run'), block.indexOf('\n•', block.indexOf('• Dry run') + 2));
     expect(dry).toMatch(/selected inserts/);
-    expect(dry).toMatch(/first 200 of each object/);
+    expect(dry).toMatch(/up to 5,000 of each object/);
     expect(dry).not.toMatch(/selected records are written/);
     expect(dry).not.toMatch(/real records/);
   });

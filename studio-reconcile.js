@@ -2960,7 +2960,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       ${probeSkipped.length ? `<div class="ds-rec-plan"><div class="ds-rec-plan-hdr">Not part of a dry run — they stay selected for the real run:</div>${probeSkipped.map(l => `<div class="ds-rec-plan-line">${esc(l)}</div>`).join('')}</div>` : ''}
       <div class="ds-rec-plan ds-dryrun-how">
         <strong>How it works.</strong> The records go to Salesforce in one transaction together with a record that always fails, so every record is evaluated and the whole transaction is rolled back. Triggers and flows really run, and what they did is rolled back with it — the e-mails and queued jobs they started are cancelled too. One exception: a platform event set to “Publish Immediately” is sent for real during a dry run and cannot be taken back, so whatever listens to it still runs.
-        <br><strong>Limits.</strong> The first 200 records of each object; updates are checked in a transaction of their own, after the inserts; lookups connected after insert (🔗) and 📎 files are not checked; row locks and limits at full volume can differ. <strong>Duplicates inside the run:</strong> a record that duplicates another record of this same run can pass the dry run and be refused by a duplicate rule in the real run, once the other one is written.${pausesOn ? '<br><strong>⏸ Pauses are not applied</strong> in a dry run: rules and flows stay on, so a refusal here may not happen in the real run with the pause on.' : ''}
+        <br><strong>Limits.</strong> Every selected record is checked, up to 5,000 of each object: 200 of an object go in one transaction, so a large selection takes several, and a record of one transaction is not seen by the rules of another; updates are checked in a transaction of their own, after the inserts; lookups connected after insert (🔗) and 📎 files are not checked; row locks and limits at full volume can differ. <strong>Duplicates inside the run:</strong> a record that duplicates another record of this same run can pass the dry run and be refused by a duplicate rule in the real run, once the other one is written.${pausesOn ? '<br><strong>⏸ Pauses are not applied</strong> in a dry run: rules and flows stay on, so a refusal here may not happen in the real run with the pause on.' : ''}
       </div>`;
     const tgtGate = (tgtGuarded && probeInserts) ? await sftkOrgWriteGate(profile.targetOrg, _orgs) : null;
     const ok = await sftkConfirmDestructive({
@@ -3431,7 +3431,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   stepPush: if (!busyLine && (treePushIds.length || groupATotal)) {
     if (halted(`the ${PROBE ? 'check' : 'insert'} of ${fmtN(treePushIds.length)} ${objType}${groupATotal ? ` and ${fmtN(groupATotal)} child record(s)` : ''}`, true)) break stepPush;
     const autoN = treePushIds.length - pushIds.length;
-    if (PROBE) log('🧪', `Checking ${treePushIds.length} ${objType}${autoN > 0 ? ` (${autoN} parent(s) auto-included)` : ''}${groupATotal ? ` + ${groupATotal} child record(s)` : ''} against ${orgLabel(profile.targetOrg)} — one transaction Salesforce rolls back…`);
+    if (PROBE) log('🧪', `Checking ${treePushIds.length} ${objType}${autoN > 0 ? ` (${autoN} parent(s) auto-included)` : ''}${groupATotal ? ` + ${groupATotal} child record(s)` : ''} against ${orgLabel(profile.targetOrg)} — in transactions Salesforce rolls back, 200 records of an object in each…`);
     else log('⬆', `Pushing ${treePushIds.length} ${objType}${autoN > 0 ? ` (${autoN} parent(s) auto-included)` : ''}${groupATotal ? ` + ${groupATotal} child record(s)` : ''} to target…`);
     try {
       const pushProfile = JSON.parse(JSON.stringify(profile));
@@ -3860,24 +3860,24 @@ async function runReconcile(profile, objType, buckets, opts) {
     }
     for (const j of jobs) {
       const u = probeUpd[j.obj] = probeUpd[j.obj] || { probed: 0, wouldWrite: 0, refused: 0, unchecked: 0, sampledOf: 0 };
-      if (probeBroke || stoppedWhy) { u.unchecked += Math.min(j.ids.length, 200); if (j.ids.length > 200) u.sampledOf += j.ids.length; continue; }
-      log('🧪', `Checking ${j.ids.length} update(s) of ${j.obj} against ${orgLabel(profile.targetOrg)} — one transaction Salesforce rolls back…`);
+      if (probeBroke || stoppedWhy) { u.unchecked += Math.min(j.ids.length, SFTK_PROBE_UPD_MAX); if (j.ids.length > SFTK_PROBE_UPD_MAX) u.sampledOf += j.ids.length; continue; }
+      log('🧪', `Checking ${j.ids.length} update(s) of ${j.obj} against ${orgLabel(profile.targetOrg)} — ${j.ids.length > 200 ? 'transactions Salesforce rolls back, 200 records in each' : 'one transaction Salesforce rolls back'}…`);
       try {
         const r = await reconcileOverwrite(j.prof, j.obj, j.ids, j.rows, srcSess, tgtSess, _dupFields, { probe: true });
         const total = r.probe ? r.total : j.ids.length;
-        if (total > 200) u.sampledOf += total;
+        if (total > SFTK_PROBE_UPD_MAX) u.sampledOf += total;
         if (!r.probe || r.broke) {
-          u.unchecked += Math.max(0, Math.min(total, 200) - (r.probe ? r.checked : 0)); probeBroke = true; probeStatuses.push('failed');
+          u.unchecked += Math.max(0, Math.min(total, SFTK_PROBE_UPD_MAX) - (r.probe ? r.checked : 0)); probeBroke = true; probeStatuses.push('failed');
         } else probeStatuses.push(r.failed ? 'partial' : 'success');
         if (r.probe) { u.probed += r.checked; u.wouldWrite += r.ok; u.refused += r.failed; }
         const clean = !!(r.probe && !r.broke && !r.failed);
-        const line = `${j.obj} updates: ${r.probe ? `${r.ok} of ${r.checked} would be written${r.failed ? `, ${r.failed} refused` : ''}` : 'not checked'}${total > 200 ? ` — a sample: the first 200 of ${total}` : ''}`;
+        const line = `${j.obj} updates: ${r.probe ? `${r.ok} of ${r.checked} would be written${r.failed ? `, ${r.failed} refused` : ''}` : 'not checked'}${total > SFTK_PROBE_UPD_MAX ? ` — a sample: the first ${SFTK_PROBE_UPD_MAX} of ${total}` : ''}`;
         log(clean ? '✅' : '⚠', `🧪 ${line}`, clean ? '' : (r.failed ? 'ds-prog-err' : 'ds-prog-warn'));
         if (r.probe && r.failedRecords.length) await _recLogRefused(log, { [j.obj]: { failedSourceIds: r.failedRecords } }, true, tgtSess, 'Update');
         (r.errors || []).forEach(e2 => allErrors.push(`update ${j.obj}: ${e2}`));
         _recLogEngineLines(log, r.errors);
       } catch (e) {
-        probeBroke = true; probeStatuses.push('failed'); u.unchecked += Math.min(j.ids.length, 200);
+        probeBroke = true; probeStatuses.push('failed'); u.unchecked += Math.min(j.ids.length, SFTK_PROBE_UPD_MAX);
         allErrors.push(`The dry run of the ${j.obj} updates stopped: ${e?.message || e}`); log('❌', `The dry run of the ${j.obj} updates stopped: ${e?.message || e}`, 'ds-prog-err');
       }
     }
@@ -4143,7 +4143,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     closeRunView();
     log(runStatus === 'success' ? '✅' : runStatus === 'partial' ? '⚠' : '❌', `🧪 ${pv.head}: ${verdict}. Nothing was written${stoppedWhy ? ' — stopped before every object was checked' : ''}.${pv.why}`, runStatus === 'success' ? '' : 'ds-prog-err');
     _recRunVerdictTop(prog, runStatus, `🧪 ${pv.incomplete ? pv.head : 'Dry run'}: ${verdict}. Nothing was written.${pv.why}`,
-      { table: ptab, notes: sftkProbeTableNotes(ptab, 200, probeSkipped), fold: true });
+      { table: ptab, notes: sftkProbeTableNotes(ptab, SFTK_PROBE_UPD_MAX, probeSkipped), fold: true });
     window._sftkRunActive = false;
     eid('dsRunPauseBar')?.remove();
     showToast(`🧪 ${pv.incomplete ? pv.head : 'Dry run'}: ${verdict}`, runStatus === 'success' ? 'success' : runStatus === 'partial' ? 'warning' : 'error', 7000);
@@ -4710,32 +4710,39 @@ function sftkRecSrcUpdatePiiGuard(invFm, fm, policy, objType) {
 // 🧪 The updates of one object, checked and rolled back. → { probe: true, total, checked, ok, failed, failedRecords:
 // [{ id, label, error, code }], errors: [line], broke }. SystemModstamp of every record is read before and after:
 // a record that changed is a dry run that wrote, and it is said as an error, never as a result.
+// 2026-11-27 (owner: "why only 200 records?"): EVERY update up to SFTK_PROBE_UPD_MAX, 200 in each rolled-back
+// transaction — it was the first 200. A transaction that is not answered, or that changed a record, stops the rest.
+const SFTK_PROBE_UPD_MAX = 5000;
 async function _recProbeUpdates(objType, payloads, rowMeta, tgtSess, dupFields, warnings) {
-  const part = payloads.slice(0, 200), ids = part.map(p => p.Id);
+  const all = payloads.slice(0, SFTK_PROBE_UPD_MAX);
   const out = { probe: true, total: payloads.length, checked: 0, ok: 0, failed: 0, failedRecords: [], errors: [...(warnings || [])], broke: false };
-  if (!part.length) return out;
-  const stamp = async () => {
-    const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
-      query: `SELECT Id, SystemModstamp FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')})` });
-    return (q && !q.error) ? new Map((q.records || []).map(r => [r.Id, r.SystemModstamp])) : null;
-  };
-  const before = await stamp();
+  if (!all.length) return out;
   const bypass = !!(dupFields && dupFields.dupBypass && (!Array.isArray(dupFields.dupBypassObjects) || !dupFields.dupBypassObjects.length || dupFields.dupBypassObjects.includes(objType)));
-  // verified-by: SystemModstamp of every record, read before and after (stamp) — a dry run must change nothing
-  const resp = await sendBg({ type: 'SF_REST_POST', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
-    path: 'services/data/v62.0/composite', body: sftkProbeUpdateBody(objType, part, 'v62.0', bypass) });
-  const pr = (resp && !resp.error) ? sftkProbeUpdateParse(part, resp) : { rows: [], error: String((resp && resp.error) || 'no answer'), rolledBack: false };
-  const after = await stamp();
-  const changed = (before && after) ? ids.filter(id => before.get(id) !== after.get(id)) : null;
-  if (changed && changed.length) { out.broke = true; out.errors.push(`the dry run CHANGED ${changed.length} ${objType} in the target — it must write nothing. Check them: ${changed.slice(0, 10).join(', ')}`); }
-  else if (!changed) out.errors.push(`⚠ ${objType}: the target could not be re-read to confirm the dry run of the updates wrote nothing`);
-  if (pr.error) { out.broke = true; out.errors.push(`the dry run of the ${objType} updates was not answered: ${pr.error}`); return out; }
   const labelOf = new Map((rowMeta || []).map(m => [m.id, m.label]));
-  out.checked = pr.rows.length;
-  for (const r of pr.rows) {
-    if (r.state === 'ok') { out.ok++; continue; }
-    out.failed++;
-    out.failedRecords.push({ id: r.id, label: labelOf.get(r.id) || r.id, error: r.error, code: r.code });
+  let unread = false;
+  for (let at = 0; at < all.length && !out.broke; at += 200) {
+    const part = all.slice(at, at + 200), ids = part.map(p => p.Id);
+    const stamp = async () => {
+      const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
+        query: `SELECT Id, SystemModstamp FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')})` });
+      return (q && !q.error) ? new Map((q.records || []).map(r => [r.Id, r.SystemModstamp])) : null;
+    };
+    const before = await stamp();
+    // verified-by: SystemModstamp of every record, read before and after (stamp) — a dry run must change nothing
+    const resp = await sendBg({ type: 'SF_REST_POST', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+      path: 'services/data/v62.0/composite', body: sftkProbeUpdateBody(objType, part, 'v62.0', bypass) });
+    const pr = (resp && !resp.error) ? sftkProbeUpdateParse(part, resp) : { rows: [], error: String((resp && resp.error) || 'no answer'), rolledBack: false };
+    const after = await stamp();
+    const changed = (before && after) ? ids.filter(id => before.get(id) !== after.get(id)) : null;
+    if (changed && changed.length) { out.broke = true; out.errors.push(`the dry run CHANGED ${changed.length} ${objType} in the target — it must write nothing. Check them: ${changed.slice(0, 10).join(', ')}`); }
+    else if (!changed && !unread) { unread = true; out.errors.push(`⚠ ${objType}: the target could not be re-read to confirm the dry run of the updates wrote nothing`); }
+    if (pr.error) { out.broke = true; out.errors.push(`the dry run of the ${objType} updates was not answered: ${pr.error}`); break; }
+    out.checked += pr.rows.length;
+    for (const r of pr.rows) {
+      if (r.state === 'ok') { out.ok++; continue; }
+      out.failed++;
+      out.failedRecords.push({ id: r.id, label: labelOf.get(r.id) || r.id, error: r.error, code: r.code });
+    }
   }
   return out;
 }

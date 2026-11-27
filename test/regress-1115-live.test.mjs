@@ -262,7 +262,7 @@ const eng = extractFunctions('background.js', [
   'sftkTruncValue', 'sftkBuildOwnerIndex', 'sftkQueueOwnerMap', 'sftkOwnerFallbackFor', 'sftkMatchKey', 'sftkPathValue',
   'sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiMaskValue',
   'sftkPiiRulesForObject', 'sftkPiiMaskRows', 'sftkPiiMaskAnchorMap', 'sftkRtaImageCount',
-  'sftkProbeToken', 'sftkProbeParseToken', 'sftkProbePoison', 'sftkProbeCompositeBody', 'sftkProbeParseRound', 'sftkProbeCascade', 'sftkProbeStatus', 'sftkProbeLimits',
+  'sftkProbeToken', 'sftkProbeParseToken', 'sftkProbePoison', 'sftkProbeCompositeBody', 'sftkProbeParseRound', 'sftkProbeCascade', 'sftkProbeWindows', 'sftkProbeStatus', 'sftkProbeLimits',
 ]);
 const SRC = 'https://src.my.salesforce.com', TGT = 'https://tgt.my.salesforce.com';
 const fld = (name, label, type, extra) => Object.assign({ name, label, type, createable: true, updateable: true, nillable: true, defaultValue: null, referenceTo: [], custom: false, length: 255 }, extra || {});

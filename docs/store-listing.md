@@ -19,7 +19,7 @@ to talk directly to your own orgs. Anything that can change something in Salesfo
 you what it is about to do and asks first.
 
 NEW IN 1.1
-• Dry run — next to Deploy: the selected inserts (the first 200 of each object) are written
+• Dry run — next to Deploy: the selected inserts (up to 5,000 of each object) are written
   to the target in one transaction that Salesforce rolls back, so validation rules, triggers,
   flows and duplicate rules run on them and nothing is kept. The org is read again to confirm.
   Deletes, updates and relinks are not part of it, and pauses are not applied.

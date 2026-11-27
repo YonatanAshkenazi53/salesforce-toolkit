@@ -5,6 +5,7 @@
 //   FIXTURE / PROFILE   any deployment (default: the packaged lookup tree — a managed validation rule, a
 //                       duplicate rule, an org validation rule and a flow all refuse something there)
 //   COUNT_SOQL          "label=SELECT COUNT() …;label=…" read with the CLI before and after (default: the fixture's)
+//   DRY_ONLY=1          stop after the dry run
 import { execFileSync } from 'node:child_process';
 const NL = String.fromCharCode(10);
 const lines = (s, n = 2500) => String(s || '').slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
@@ -45,6 +46,8 @@ export default async function (h) {
   const dryCards = await h.eval(`[...document.querySelectorAll('.ds-refuse-op')].map(s => { const card = s.closest('.ds-prog-err, .ds-prog-line, div'); return (card ? card.innerText : s.innerText).replace(/\\s+/g, ' ').slice(0, 400); })`);
   const afterDry = target(); h.log('CLI target after the dry run:', afterDry, afterDry === before ? '(unchanged)' : '❌ CHANGED');
   if (afterDry !== before) throw new Error('the dry run changed the target');
+  h.log('dry run:', JSON.stringify({ status: dry.status, transactions: dry.probe.windows, rounds: dry.probe.rounds, left: dry.probe.left, byObj: dry.probe.byObj, updates: dry.probe.updates }));
+  if (process.env.DRY_ONLY) return;   // DRY_ONLY=1: the dry run alone — nothing is written (2026-11-27: more than 200 records of an object)
 
   // ── 2. the real run, same selection ──
   h.log('selection kept:', lines(await h.text('#dsDepSummary'), 400));

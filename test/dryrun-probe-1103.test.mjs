@@ -13,7 +13,7 @@ const eng = extractFunctions('background.js', [
   'sftkTruncValue', 'sftkBuildOwnerIndex', 'sftkQueueOwnerMap', 'sftkOwnerFallbackFor', 'sftkMatchKey', 'sftkPathValue',
   'sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiMaskValue',
   'sftkPiiRulesForObject', 'sftkPiiMaskRows', 'sftkPiiMaskAnchorMap', 'sftkRtaImageCount',
-  'sftkProbeToken', 'sftkProbeParseToken', 'sftkProbePoison', 'sftkProbeCompositeBody', 'sftkProbeParseRound', 'sftkProbeCascade', 'sftkProbeStatus', 'sftkProbeLimits',
+  'sftkProbeToken', 'sftkProbeParseToken', 'sftkProbePoison', 'sftkProbeCompositeBody', 'sftkProbeParseRound', 'sftkProbeCascade', 'sftkProbeWindows', 'sftkProbeStatus', 'sftkProbeLimits',
 ]);
 
 // ── the pure helpers ─────────────────────────────────────────────────────
@@ -304,15 +304,99 @@ describe('the engine in probe mode', () => {
     expect(r2.status).toBe('partial');
   });
 
-  it('a sample: only the first 200 of a big object go, and the run says so', async () => {
+  // 2026-11-27 (owner: "why only 200 records?"): every selected record is checked, 200 per object in each
+  // rolled-back transaction; it was the first 200 and the rest went unchecked.
+  it('more than 200 of an object: every one is checked, in as many rolled-back transactions as it takes', async () => {
     installWorld();
     const many = Array.from({ length: 250 }, (_, i) => ({ Id: `A${String(i).padStart(3, '0')}`, Name: `Acc ${i}` }));
     const saved = SRC_ROWS.Account; SRC_ROWS.Account = many;
     try {
       const r = await eng.executeProfileTransfer({ id: 'p', name: 'x', probe: true, tree: { objectType: 'Account', where: '', children: [] } }, SRC, 'S', TGT, 'T');
-      expect(composites[0].compositeRequest[0].body.records).toHaveLength(200);
-      expect(r.summary.Account.probe).toMatchObject({ probed: 200, wouldWrite: 200, sampledOf: 250 });
-      expect(r.errors.some(e => /a sample: the first 200 of 250/.test(e))).toBe(true);
+      expect(composites.map(c => c.compositeRequest[0].body.records.length)).toEqual([200, 50]);
+      expect(composites.every(c => c.allOrNone === true && c.compositeRequest[c.compositeRequest.length - 1].referenceId === 'poison')).toBe(true);
+      expect(r.summary.Account.probe).toMatchObject({ probed: 250, wouldWrite: 250, refused: 0, unreached: 0, sampledOf: 0 });
+      expect(r.probe).toMatchObject({ windows: 2, left: 0, sample: 5000, perTransaction: 200 });
+      expect(r.errors.some(e => /a sample: the first/.test(e))).toBe(false);
+      expect(r.status).toBe('success');
+    } finally { SRC_ROWS.Account = saved; }
+  });
+  it('one parent with more children than a transaction takes: the parent travels with each part, and is judged once', async () => {
+    installWorld();
+    const kids = Array.from({ length: 450 }, (_, i) => ({ Id: `C${String(i).padStart(3, '0')}`, LastName: `L${i}`, AccountId: 'A1' }));
+    const saved = SRC_ROWS.Contact; SRC_ROWS.Contact = kids;
+    try {
+      const r = await eng.executeProfileTransfer({ id: 'p', name: 'x', probe: true, tree: { objectType: 'Account', recordIds: ['A1'], children: [{ objectType: 'Contact', field: 'AccountId', children: [] }] } }, SRC, 'S', TGT, 'T');
+      expect(composites.map(c => c.compositeRequest.filter(x => x.referenceId !== 'poison').map(x => x.body.records.length))).toEqual([[1, 200], [1, 200], [1, 50]]);
+      expect(composites.every(c => c.compositeRequest[1].body.records.every(x => x.AccountId === '@{n0[0].id}'))).toBe(true);
+      expect(r.summary.Account.probe).toMatchObject({ probed: 1, wouldWrite: 1 });
+      expect(r.summary.Contact.probe).toMatchObject({ probed: 450, wouldWrite: 450, refused: 0, cascade: 0, unreached: 0 });
+    } finally { SRC_ROWS.Contact = saved; }
+  });
+  it('a parent refused in the first transaction: its other children are never sent, and are said as not checked', async () => {
+    installWorld({ refuse: (sub, rec) => (rec.attributes.type === 'Account' ? { statusCode: 'FIELD_CUSTOM_VALIDATION_EXCEPTION', message: 'no', fields: [] } : null) });
+    const kids = Array.from({ length: 450 }, (_, i) => ({ Id: `C${String(i).padStart(3, '0')}`, LastName: `L${i}`, AccountId: 'A1' }));
+    const saved = SRC_ROWS.Contact; SRC_ROWS.Contact = kids;
+    try {
+      const r = await eng.executeProfileTransfer({ id: 'p', name: 'x', probe: true, tree: { objectType: 'Account', recordIds: ['A1'], children: [{ objectType: 'Contact', field: 'AccountId', children: [] }] } }, SRC, 'S', TGT, 'T');
+      expect(composites).toHaveLength(1);                       // the Account was refused once; nothing was sent after it
+      expect(r.summary.Account.probe).toMatchObject({ probed: 1, wouldWrite: 0, refused: 1 });
+      expect(r.summary.Contact.probe).toMatchObject({ probed: 450, wouldWrite: 0, cascade: 450, unreached: 0 });
+      expect(r.errors.filter(e => /^Account: no/.test(e))).toHaveLength(1);
+    } finally { SRC_ROWS.Contact = saved; }
+  });
+  it('beyond 25 transactions of an object it is a sample, and the run says so', async () => {
+    installWorld();
+    const many = Array.from({ length: 5010 }, (_, i) => ({ Id: `A${String(i).padStart(5, '0')}`, Name: `Acc ${i}` }));
+    const saved = SRC_ROWS.Account; SRC_ROWS.Account = many;
+    try {
+      const r = await eng.executeProfileTransfer({ id: 'p', name: 'x', probe: true, tree: { objectType: 'Account', where: '', children: [] } }, SRC, 'S', TGT, 'T');
+      expect(composites).toHaveLength(25);
+      expect(r.summary.Account.probe).toMatchObject({ probed: 5000, wouldWrite: 5000, sampledOf: 5010 });
+      expect(r.errors.some(e => /a sample: the first 5000 of 5010/.test(e))).toBe(true);
     } finally { SRC_ROWS.Account = saved; }
   });
 });
+
+describe('dealing the records of a dry run into transactions (sftkProbeWindows)', () => {
+  const tok = (ref, id) => eng.sftkProbeToken(ref, id);
+  const rows = (n, p, mk) => Array.from({ length: n }, (_, i) => ({ srcId: p + i, payload: mk ? mk(i) : {} }));
+  const sizes = w => w.map(win => win.map(s => s.rows.length));
+  it('everything fits: one transaction, the subs as they were', () => {
+    const subs = [{ ref: 'n0', objType: 'Account', upsertField: null, rows: rows(3, 'A') }, { ref: 'n1', objType: 'Contact', upsertField: 'Ext__c', rows: rows(5, 'C', i => ({ AccountId: tok('n0', 'A' + (i % 3)) })) }];
+    const p = eng.sftkProbeWindows(subs, 200, 25);
+    expect(sizes(p.windows)).toEqual([[3, 5]]);
+    expect(p.windows[0][1]).toMatchObject({ ref: 'n1', objType: 'Contact', upsertField: 'Ext__c' });
+    expect(p.left).toEqual({});
+  });
+  it('no row is ever in a transaction without the row it points at, at any depth', () => {
+    const subs = [
+      { ref: 'n0', objType: 'Account', upsertField: null, rows: rows(300, 'A') },
+      { ref: 'n1', objType: 'Contact', upsertField: null, rows: rows(700, 'C', i => ({ AccountId: tok('n0', 'A' + (i % 300)) })) },
+      { ref: 'n2', objType: 'Case', upsertField: null, rows: rows(900, 'K', i => ({ ContactId: tok('n1', 'C' + (i % 700)) })) },
+    ];
+    const p = eng.sftkProbeWindows(subs, 200, 25);
+    expect(p.left).toEqual({});
+    const seen = { n0: new Set(), n1: new Set(), n2: new Set() };
+    for (const win of p.windows) {
+      const have = Object.fromEntries(win.map(s => [s.ref, new Set(s.rows.map(r => r.srcId))]));
+      for (const s of win) {
+        expect(s.rows.length).toBeLessThanOrEqual(200);
+        for (const r of s.rows) { seen[s.ref].add(r.srcId); for (const v of Object.values(r.payload)) { const t = eng.sftkProbeParseToken(v); if (t) expect(have[t.ref].has(t.srcId)).toBe(true); } }
+      }
+    }
+    expect([seen.n0.size, seen.n1.size, seen.n2.size]).toEqual([300, 700, 900]);
+  });
+  it('a value that is a real id (the parent is in the target already) is nobody\'s parent here', () => {
+    const subs = [{ ref: 'n0', objType: 'Contact', upsertField: null, rows: rows(450, 'C', () => ({ AccountId: '001000000000001AAA' })) }];
+    expect(sizes(eng.sftkProbeWindows(subs, 200, 25).windows)).toEqual([[200], [200], [50]]);
+  });
+  it('the transactions run out: what is left is named, never dropped silently', () => {
+    const p = eng.sftkProbeWindows([{ ref: 'n0', objType: 'Account', upsertField: null, rows: rows(450, 'A') }], 200, 2);
+    expect(sizes(p.windows)).toEqual([[200], [200]]);
+    expect(p.left.n0).toHaveLength(50);
+  });
+  it('nothing to send is no transaction', () => {
+    expect(eng.sftkProbeWindows([{ ref: 'n0', objType: 'Account', upsertField: null, rows: [] }], 200, 25)).toEqual({ windows: [], left: {} });
+  });
+});
+

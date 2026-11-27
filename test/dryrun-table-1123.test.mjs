@@ -53,7 +53,7 @@ describe('the dry run as one table', () => {
 
 describe('the page', () => {
   it('a dry run puts the table and the notes on top, folds the steps, and keeps an error line in sight', () => {
-    expect(RC).toContain('{ table: ptab, notes: sftkProbeTableNotes(ptab, 200, probeSkipped), fold: true }');
+    expect(RC).toContain('{ table: ptab, notes: sftkProbeTableNotes(ptab, SFTK_PROBE_UPD_MAX, probeSkipped), fold: true }');
     expect(RC).toContain("d.className = 'ds-prog-steps';");
     expect(RC).toContain("e.className = 'ds-prog-verdict-err';");
     expect(RC).toContain("if (!o.fold) { const more = document.createElement('div');");
