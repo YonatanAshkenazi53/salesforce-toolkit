@@ -117,8 +117,10 @@ describe('the wiring', () => {
   const DEP = read('studio-deploy.js'), REC = read('studio-reconcile.js'), BG = read('background.js');
   it('the Deploy page draws one panel for the three kinds and narrows every run by its ticks', () => {
     expect(DEP).toContain('<div id="dsDepPausePanel" class="ds-dep-foot"></div>');
-    // 2026-11-13: BY OBJECT, everything listed up front — no tabs, no "tick the option to see the list"
-    expect(DEP).not.toContain('ds-dep-pause-tab"');
+    // 2026-11-13: BY OBJECT, every kind listed up front — no tab per KIND, no "tick the option to see the list".
+    // 2026-11-27: the objects themselves are tabs (one object at a time); the kinds stay listed inside it.
+    expect(DEP).toContain('class="ds-dep-pause-tab" data-pause-tab="${esc(r.object)}"');
+    expect(DEP).not.toContain('data-pause-kindtab');
     expect(DEP).not.toContain("const active = kinds.filter(k => k.on);");
     expect(DEP).toContain("${secs.map(({ k, items }) => `<div class=\"ds-dep-pause-kindhd\" data-kind=\"${k.kind}\">${k.title}");
     expect(DEP).toContain('Automation in ${esc(tgt)} on the objects of this deployment');
