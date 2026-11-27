@@ -59,6 +59,9 @@ export default async function (h) {
   await h.sleep(4000);
   const real = JSON.parse(await h.eval(`JSON.stringify((e => ({ status: e.status, summary: e.summary, errors: (e.errors || []).slice(0, 12) }))(_history[_history.length - 1]))`));
   h.log('CLI target after the real run:', target());
+  // the product's own comparison (2026-11-27): kept on the run's History entry and said in its log
+  h.log('PRODUCT, on the History entry:', await h.eval(`JSON.stringify((c => c ? { same: c.same, rows: c.rows.map(r => [r.obj, r.op, r.dryW, r.dryR, r.realW, r.realR, r.same]) } : null)(_history[_history.length - 1].dryCompare))`));
+  h.log('PRODUCT, in the log:', await h.eval(`JSON.stringify([...document.querySelectorAll('.ds-prog-row')].map(x => x.innerText.replace(/\s+/g, ' ').trim()).filter(t => /Dry run and real run|as the dry run said|the dry run said/.test(t)).slice(0, 8))`));
 
   // ── 3. compare ──
   const rows = []; let diff = 0;

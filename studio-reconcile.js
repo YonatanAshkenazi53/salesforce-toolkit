@@ -2182,6 +2182,46 @@ function sftkProbeSelKey(profileId, recSel, recChildSel) {
   return `${profileId}|${ids.join(',')}|${kids.join(';')}`;
 }
 
+// ── 🧪 → ▶ Did the real run do what the dry run said? (owner 2026-11-26/27: "how can we make sure dry run works
+// the same as full deployment") ── When ▶ Deploy runs the very selection a finished dry run checked, the two History
+// entries are compared per object and operation, and the refused inserts record by record. PURE.
+//   dry:  the dry run's History entry  { probe: { byObj, updates }, summary: { obj: { failedSourceIds } } }
+//   real: the run's History entry      { summary: { obj: { inserted, insertedFailed, updated | overwritten, … } } }
+// → { rows: [{ obj, op, dryW, dryR, dryNotChecked, realW, realR, partial, same, onlyReal, onlyDry }], lines: [{ ok, text }], same }
+function sftkDryVsReal(dry, real) {
+  const n = v => Number(v) || 0, f = v => n(v).toLocaleString('en-US'), rows = [];
+  const P = (dry && dry.probe) || {}, S = (real && real.summary) || {}, DS = (dry && dry.summary) || {};
+  const ids = l => (Array.isArray(l) ? l : []).map(x => (typeof x === 'string' ? { id: x } : x)).filter(x => x && x.id);
+  for (const o of new Set([...Object.keys(P.byObj || {}), ...Object.keys(P.updates || {})])) {
+    const d = (P.byObj || {})[o], u = (P.updates || {})[o], r = S[o] || {};
+    if (d && n(d.probed)) {
+      // not every selected record got a verdict: the numbers cannot be expected to agree
+      const partial = n(d.unreached) + n(d.earlier) + n(d.unbuilt) > 0 || n(d.sampledOf) > n(d.probed);
+      const dl = ids(DS[o] && DS[o].failedSourceIds), rl = ids(r.failedSourceIds);
+      const dset = new Set(dl.map(x => x.id)), rset = new Set(rl.map(x => x.id));
+      const onlyReal = rl.filter(x => !dset.has(x.id)), onlyDry = dl.filter(x => !rset.has(x.id));
+      const row = { obj: o, op: 'Insert', dryW: n(d.wouldWrite), dryR: n(d.refused), dryNotChecked: n(d.cascade), realW: n(r.inserted), realR: n(r.insertedFailed),
+        partial, onlyReal: onlyReal.slice(0, 20), onlyDry: onlyDry.slice(0, 20) };
+      // the children of a refused parent: the dry run does not send them, a real run does not insert them — it may
+      // or may not count them as refused, so both readings agree
+      row.same = !partial && row.dryW === row.realW && (row.dryR === row.realR || row.dryR + row.dryNotChecked === row.realR) && !onlyDry.length
+        && onlyReal.length <= row.dryNotChecked;
+      rows.push(row);
+    }
+    if (u && n(u.probed)) {
+      const partial = n(u.unchecked) > 0 || n(u.sampledOf) > n(u.probed);
+      const row = { obj: o, op: 'Update', dryW: n(u.wouldWrite), dryR: n(u.refused), dryNotChecked: 0, realW: n(r.updated) + n(r.overwritten), realR: n(r.updatedFailed) + n(r.overwrittenFailed), partial, onlyReal: [], onlyDry: [] };
+      row.same = !partial && row.dryW === row.realW && row.dryR === row.realR;
+      rows.push(row);
+    }
+  }
+  const names = l => l.slice(0, 5).map(x => `${x.label || x.id}${x.error ? ` (${String(x.error).replace(/\s+/g, ' ').slice(0, 90)})` : ''}`).join(' · ') + (l.length > 5 ? ` and ${l.length - 5} more` : '');
+  const lines = rows.map(r => r.same
+    ? { ok: true, text: `${r.obj} · ${r.op}: as the dry run said — ${f(r.realW)} written, ${f(r.realR)} refused` }
+    : { ok: false, text: `${r.obj} · ${r.op}: the dry run said ${f(r.dryW)} would be written and ${f(r.dryR)} refused${r.dryNotChecked ? ` (${f(r.dryNotChecked)} more not checked: their parent was refused)` : ''}; this run wrote ${f(r.realW)} and refused ${f(r.realR)}${r.partial ? '. The dry run did not check every selected record' : ''}${r.onlyReal.length ? `. Refused now and not in the dry run: ${names(r.onlyReal)}` : ''}${r.onlyDry.length ? `. Refused in the dry run and not now: ${names(r.onlyDry)}` : ''}.` });
+  return { rows, lines, same: rows.length > 0 && rows.every(r => r.same) };
+}
+
 function sftkRecGuardedWrites(c, objType) {
   const n = v => Number(v) || 0;
   const join = a => { const l = a.filter(Boolean); return l.length ? l.join(' + ') + ' record(s)' : ''; };
@@ -2665,6 +2705,9 @@ async function runReconcile(profile, objType, buckets, opts) {
   // other kinds of write (delete, overwrite, relink, pull) are named as not
   // covered. No restore point, no pauses, no rescan: nothing changes.
   const PROBE = !!(opts && opts.probe === true);
+  // 🧪 → ▶ the finished dry run of THIS selection, if there is one: the run is compared with it at its end
+  const _dryBefore = (!PROBE && window._sftkProbeLast && window._sftkProbeLast.id && !window._sftkProbeLast.incomplete
+    && window._sftkProbeLast.key === sftkProbeSelKey(profile.id, _recSel, _recChildSel)) ? window._sftkProbeLast.id : null;
   const probeUpd = {};   // 🧪 obj → { probed, wouldWrite, refused, unchecked, sampledOf } — the updates a dry run checked (2026-11-26)
   window._sftkProbePaused = PROBE ? ((opts && opts.probePaused) || null) : null;
   const probeAgg = {};   // obj → merged verdict counts (History, toast)
@@ -4130,7 +4173,24 @@ async function runReconcile(profile, objType, buckets, opts) {
       if (!saved && !(typeof _settings !== 'undefined' && _settings && _settings.countsOnly)) log('⚠', `The before and after of ${fc.length.toLocaleString('en-US')} updated record(s) could not be saved in this browser (no storage left). The run itself is not affected and can still be rolled back; the History export will list the first 200 updated records per object only. Free space: History → 🧹 Clear cached org data, or a shorter "Keep N days".`, 'ds-prog-warn');
     }
   }
+  // 🧪 → ▶ the run against the dry run of the same selection: kept on the entry, said in the log
+  let dryCmp = null;
+  if (!PROBE && _dryBefore) {
+    try {
+      const de = _history.find(e => e && e.id === _dryBefore), re = _history[_history.length - 1];
+      if (de && re && re.id === runId && !stoppedWhy) {
+        dryCmp = sftkDryVsReal(de, re);
+        if (dryCmp.rows.length) re.dryCompare = { dryRunId: _dryBefore, dryRunAt: de.completedAt, same: dryCmp.same, rows: dryCmp.rows };
+      }
+    } catch (_) { dryCmp = null; /* a comparison never fails a run */ }
+  }
   await storageSaveHistory();
+  if (dryCmp && dryCmp.rows.length) {
+    log(dryCmp.same ? '✅' : '⚠', dryCmp.same
+      ? 'Dry run and real run agree: this run did what the dry run of the same selection said it would.'
+      : 'Dry run and real run differ: this run did not do what the dry run of the same selection said. A dry run cannot see a record that duplicates another record of the same run, a rule that depends on records written earlier in the run, or a change made in the target since.', dryCmp.same ? '' : 'ds-prog-warn');
+    for (const l of dryCmp.lines) log(l.ok ? '✓' : '✗', l.text, l.ok ? '' : 'ds-prog-warn');
+  }
 
   if (PROBE) {
     const pt = probeTotals;
@@ -4148,7 +4208,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     eid('dsRunPauseBar')?.remove();
     showToast(`🧪 ${pv.incomplete ? pv.head : 'Dry run'}: ${verdict}`, runStatus === 'success' ? 'success' : runStatus === 'partial' ? 'warning' : 'error', 7000);
     // the action bar says it next to ▶ Deploy, for as long as the selection is the one checked
-    window._sftkProbeLast = { key: sftkProbeSelKey(profile.id, _recSel, _recChildSel), status: runStatus, totals: pt, at: Date.now(), ...(pv.incomplete ? { incomplete: true } : {}), ...(netStop ? { net: true } : {}) };
+    window._sftkProbeLast = { id: runId, key: sftkProbeSelKey(profile.id, _recSel, _recChildSel), status: runStatus, totals: pt, at: Date.now(), ...(pv.incomplete ? { incomplete: true } : {}), ...(netStop ? { net: true } : {}) };
     try { recPort?.disconnect(); } catch (_) {}
     // the selections stay — the point of a dry run is the ▶ Deploy that follows
     renderReconcile();
