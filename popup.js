@@ -1019,6 +1019,7 @@ async function loadFlows() {
     // them from the REST views so the Flows list can show them (with their
     // contents marked hidden). Fire-and-forget — the list is drawn again when
     // the read lands; a failure is said on the section.
+    loadWorkflowRules(loadOrgUrl, loadSid).then(() => { if (loadOrgUrl === orgUrl) renderFlowList(); });   // 📜 workflow rules, listed under Other
     if (typeof DependencyMap.loadManagedFlows === 'function') {
       // The same read carries FlowDefinitionView.TriggerType for EVERY flow —
       // the scan-independent way to tell a record-triggered flow from a plain
@@ -1511,6 +1512,8 @@ function renderFlowList() {
   // drawn in the list's own alphabetical order, read-only.
   const mgAll = (typeof DependencyMap.getManagedFlows === 'function') ? DependencyMap.getManagedFlows() : null;
   for (const f of sftkManagedFlowsShown(mgAll, '', 'all', trigMap)) { kindCounts.all++; kindCounts[sftkFlowKindTab(f.kind)]++; }
+  const wfN = sftkWfRulesShown(_wfRules, '', 'all').length;   // 📜 workflow rules: under Other
+  kindCounts.all += wfN; kindCounts.other += wfN;
   if (_flowTypeFilter !== 'all' && !kindCounts[_flowTypeFilter]) _flowTypeFilter = 'all';
   _flowTypePaint(kindCounts);
   const kindHit = row => _flowTypeFilter === 'all' || sftkFlowKindTab(sftkFlowKindOfRow(row, trigMap)) === _flowTypeFilter;
@@ -1539,6 +1542,11 @@ function renderFlowList() {
   for (const f of (_flowUses ? [] : sftkManagedFlowsShown(mgAll, search, _flowTypeFilter, trigMap))) {
     visibleCount++;
     items.push({ label: f.label, el: buildManagedFlowRow(f) });
+  }
+  // 📜 workflow rules, each in its place by name; like the package flows, a what-uses search cannot answer for them
+  for (const f of (_flowUses ? [] : sftkWfRulesShown(_wfRules, search, _flowTypeFilter))) {
+    visibleCount++;
+    items.push({ label: f.name, el: buildWorkflowRuleRow(f) });
   }
   items.sort((a, b) => String(a.label).localeCompare(String(b.label)));
   for (const it of items) list.appendChild(it.el);
@@ -1613,6 +1621,79 @@ function setupFlowDepTools() {
     b.disabled = true; b.textContent = '⏳ rescanning…';
     try { await window.sftkRescanDependencies(); } finally { b.disabled = false; b.textContent = label; if (_flowUses) runFlowUses(); }
   });
+}
+
+// ── 📜 Workflow rules on the Flows list (owner 2026-11-27: "can we also show package process builders, workflows,
+// and also not package version of them if exists"). A process (Process Builder) is a flow and was already listed; a
+// workflow RULE is not a flow — it is read from the Tooling API's WorkflowRule and listed read-only under Other,
+// the org's own and a package's alike. Whether a rule is active is in its Metadata, which Salesforce returns one
+// rule per call: the first SFTK_WF_ACTIVE_MAX rules are asked, the others say "state not read". ──
+const SFTK_WF_ACTIVE_MAX = 150;
+let _wfRules = null;      // null = not read · [] = none or could not be read
+let _wfRulesNote = '';
+// PURE. One Tooling WorkflowRule row (+ its Metadata read, when there is one) → the list's row.
+function sftkWfRuleRow(r, meta) {
+  const full = (meta && meta.FullName) || '';
+  const dot = full.indexOf('.');
+  const obj = dot > 0 ? full.slice(0, dot) : String((r && r.TableEnumOrId) || '');
+  const md = meta && meta.Metadata;
+  return { id: String((r && r.Id) || ''), name: String((r && r.Name) || ''), object: obj,
+    ns: String((r && r.NamespacePrefix) || ''), managed: /^installed/i.test(String((r && r.ManageableState) || '')),
+    active: md && typeof md.active === 'boolean' ? md.active : null };
+}
+// PURE. The workflow rules the list shows under the search and the tab picked (All and Other only), by name.
+function sftkWfRulesShown(rows, search, filter) {
+  if (filter && filter !== 'all' && filter !== 'other') return [];
+  const term = String(search || '').toLowerCase().trim();
+  return (rows || []).filter(r => r && r.name && (!term || r.name.toLowerCase().includes(term) || String(r.object).toLowerCase().includes(term)))
+    .sort((a, b) => a.name.localeCompare(b.name) || String(a.object).localeCompare(String(b.object)));
+}
+async function loadWorkflowRules(url, s) {
+  _wfRules = null; _wfRulesNote = '';
+  let recs = [];
+  try {
+    const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: url, sid: s, _suppressError: true, _silentError: true,
+      query: 'SELECT Id, Name, TableEnumOrId, NamespacePrefix, ManageableState FROM WorkflowRule' });
+    if (!q || q.error || !Array.isArray(q.records)) { if (url === orgUrl) { _wfRules = []; _wfRulesNote = 'The workflow rules could not be listed.'; } return; }
+    recs = q.records;
+  } catch (_) { if (url === orgUrl) { _wfRules = []; _wfRulesNote = 'The workflow rules could not be listed.'; } return; }
+  const metaById = {};
+  const ask = recs.slice(0, SFTK_WF_ACTIVE_MAX);
+  let at = 0;
+  const worker = async () => {
+    while (at < ask.length) {
+      const r = ask[at++];
+      try {
+        const m = await sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: url, sid: s, _suppressError: true, _silentError: true,
+          query: `SELECT Id, FullName, Metadata FROM WorkflowRule WHERE Id = '${String(r.Id).replace(/[^A-Za-z0-9]/g, '')}'` });
+        if (m && !m.error && Array.isArray(m.records) && m.records[0]) metaById[r.Id] = m.records[0];
+      } catch (_) { /* its state stays "not read" */ }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  if (url !== orgUrl) return;   // the org was switched while this read
+  _wfRules = recs.map(r => sftkWfRuleRow(r, metaById[r.Id]));
+}
+// One workflow rule in the list: read-only, like a package flow's row — no tick box.
+function buildWorkflowRuleRow(f) {
+  const row = document.createElement('div');
+  row.className = 'flow-managed-row flow-wfrule-row';
+  row.dataset.wfrule = f.id;
+  const add = (cls, text, title) => { const s = document.createElement('span'); s.className = cls; s.textContent = text; if (title) s.title = title; row.appendChild(s); return s; };
+  add('flow-managed-lock', f.managed ? '🔒' : '', f.managed ? 'Installed by a managed package. It cannot be changed here.' : '');
+  add('flow-kind-ico', '📜', 'Workflow rule');
+  add('flow-managed-name', f.name, `${f.object ? f.object + '.' : ''}${f.name}`);
+  add('badge flow-managed-ns', f.object ? `workflow rule · ${f.object}` : 'workflow rule', 'A workflow rule, not a flow. It is listed so the automation of the org is in one place; it cannot be deleted, backed up or switched from here.');
+  if (f.managed) add('badge flow-managed-ns', f.ns ? `package · ${f.ns}` : 'package', 'Installed by a managed package');
+  if (f.active === null) add('badge badge-draft', 'state not read', 'Salesforce gives the state of a workflow rule one rule per call; this one was not asked or its read failed.');
+  else add(`badge ${f.active ? 'badge-active' : 'badge-draft'}`, f.active ? 'Active' : 'Inactive');
+  if (f.id && orgUrl) {
+    const a = document.createElement('a');
+    a.className = 'flow-managed-meta flow-wfrule-open'; a.textContent = 'open in Setup ↗'; a.target = '_blank'; a.rel = 'noopener';
+    a.href = `${String(orgUrl).replace(/\/+$/, '')}/lightning/setup/WorkflowRules/page?address=${encodeURIComponent('/' + f.id)}`;
+    row.appendChild(a);
+  }
+  return row;
 }
 
 // PURE. The managed package flows the list shows under the search and the kind tab picked.

@@ -2360,6 +2360,8 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .flow-managed-sub { font-weight: 400; color: var(--subtext); font-size: 11.5px; margin-left: 4px; }
 /* 2026-11-27: a package flow is a row of the list itself — a card like .flow-group, a lock where the tick box would be */
 .flow-managed-row { display: flex; align-items: center; gap: 8px; margin: 4px 8px; padding: 7px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); font-size: 12.5px; color: var(--text); }
+.flow-wfrule-open { text-decoration: none; color: var(--brand); }
+.flow-wfrule-open:hover { text-decoration: underline; }
 .flow-managed-lock { width: 16px; text-align: center; font-size: 12px; cursor: help; }
 .flow-managed-row .flow-managed-name { color: var(--subtext); }
 .flow-managed-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

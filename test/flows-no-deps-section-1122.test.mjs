@@ -126,3 +126,30 @@ describe('a managed package flow is marked on every view of the Flows page', () 
   it('⚙ API versions: the chip it always had', () => { expect(DM).toMatch(/dep-pill dep-pill-hint" title="Managed package flow/); });
   it('🗂 Flows: a lock and a "package" badge on the row itself (2026-11-27: no section of their own)', () => { expect(PJ).toContain("add('flow-managed-lock', '🔒', 'Installed by a managed package."); expect(PJ).not.toContain('🔒 Managed package flows <b>'); });
 });
+
+// 2026-11-27, the owner: "can we also show package process builders, workflows, and also not package version of
+// them if exists" — a process is a flow and was listed; a workflow RULE is now listed too, read-only, under Other.
+describe('workflow rules are on the Flows list', () => {
+  const row = extractFunction('popup.js', 'sftkWfRuleRow'), shown = extractFunction('popup.js', 'sftkWfRulesShown');
+  const A = row({ Id: '01Q1', Name: 'Notify owner', TableEnumOrId: '01I000000000001', NamespacePrefix: null, ManageableState: 'unmanaged' }, { FullName: 'Case.Notify owner', Metadata: { active: true } });
+  const B = row({ Id: '01Q2', Name: 'Sync', TableEnumOrId: 'pkg__Thing__c', NamespacePrefix: 'pkg', ManageableState: 'installed' }, null);
+  it('the object comes from the full name where the row carries an id; the state is said only when it was read', () => {
+    expect(A).toEqual({ id: '01Q1', name: 'Notify owner', object: 'Case', ns: '', managed: false, active: true });
+    expect(B).toEqual({ id: '01Q2', name: 'Sync', object: 'pkg__Thing__c', ns: 'pkg', managed: true, active: null });
+  });
+  it('listed under All and Other only, by name, narrowed by the search on the name or the object', () => {
+    expect(shown([B, A], '', 'all').map(r => r.name)).toEqual(['Notify owner', 'Sync']);
+    expect(shown([B, A], '', 'other').length).toBe(2);
+    expect(shown([B, A], '', 'RecordTriggeredFlow')).toEqual([]);
+    expect(shown([B, A], 'case', 'all').map(r => r.name)).toEqual(['Notify owner']);
+    expect(shown(null, '', 'all')).toEqual([]);
+  });
+  it('the row is read-only: no tick box, a lock only for a package rule, a link to Setup; the tabs count the rules', () => {
+    const box = PJ.slice(PJ.indexOf('function buildWorkflowRuleRow('), PJ.indexOf('// PURE. The managed package flows the list shows'));
+    expect(box).not.toContain('checkbox');
+    expect(box).toContain("add('flow-managed-lock', f.managed ? '🔒' : ''");
+    expect(box).toContain('/lightning/setup/WorkflowRules/page?address=');
+    expect(PJ).toContain('kindCounts.all += wfN; kindCounts.other += wfN;');
+    expect(PJ).toContain("loadWorkflowRules(loadOrgUrl, loadSid).then(() => { if (loadOrgUrl === orgUrl) renderFlowList(); });");
+  });
+});
