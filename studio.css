@@ -7063,3 +7063,16 @@ a.ds-dep-open:hover { text-decoration: underline; }
 .ds-flask-t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); font-size: 0; }
 /* 🔄 Rescan sits at the head of the column of rescan ticks (2026-11-27) */
 .ds-dep-plan th.ds-dep-rescan-th { text-transform: none; letter-spacing: 0; text-align: right; white-space: nowrap; cursor: default; }
+/* the parent match window: source above target, the fields of a composite key wrap (owner 2026-11-27, a screenshot
+   of the labels drawn over the second field: "this view looks broken") */
+.ds-rec-display-row:has(> .ds-rec-mf-col > .ds-pm-first) { flex-direction: column; align-items: stretch; gap: 8px; }
+.ds-rec-display-row:has(> .ds-rec-mf-col > .ds-pm-first) > .ds-rec-mf-arrow { display: none; }
+.ds-rec-display-row:has(> .ds-rec-mf-col > .ds-pm-first) > .ds-rec-mf-col { flex-wrap: wrap; row-gap: 6px; min-width: 0; }
+.ds-rec-display-row:has(> .ds-rec-mf-col > .ds-pm-first) > .ds-rec-mf-col > .ds-rec-display-lbl:first-child { flex: 0 0 118px; }
+.ds-rec-display-row:has(> .ds-rec-mf-col > .ds-pm-first) .ds-pm-more { display: contents; }
+.ds-rec-display-row:has(> .ds-rec-mf-col > .ds-pm-first) .ds-select-sm { flex: 1 1 220px; min-width: 180px; max-width: 100%; }
+
+/* the record window: the final owner as a name, and a parent that comes along (2026-11-27) */
+.ds-ve-own-final { display: block; font-size: 13px; margin-bottom: 2px; }
+.ds-ve-land-ok { color: var(--c-ok-fg, #15803d); }
+:root.ds-dark .ds-ve-land-ok { color: #4ade80; }

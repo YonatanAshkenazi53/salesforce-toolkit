@@ -33,10 +33,10 @@ describe('the hover text of a match option', () => {
 });
 
 describe('source and target', () => {
-  it('hold the same three lines in the same order, and stretch to one height', () => {
+  it('hold the same lines in the same order, and stretch to one height (2026-11-27: the hint under each picker is gone)', () => {
     const src = BL.slice(BL.indexOf('ds-bld-col-src'), BL.indexOf('ds-builder-orgs-flow'));
     const tgt = BL.slice(BL.indexOf('ds-bld-col-tgt'), BL.indexOf('ds-builder-owner-row'));
-    for (const col of [src, tgt]) expect(col.indexOf('<select')).toBeLessThan(col.indexOf('ds-bld-tgt-hint'));
+    for (const col of [src, tgt]) { expect(col).toContain('<select'); expect(col).not.toContain('ds-bld-tgt-hint'); }
     const row = CSS.slice(CSS.lastIndexOf('.ds-builder-orgs-row {\n  display: grid;'));
     expect(row.slice(0, row.indexOf('}'))).toContain('align-items: stretch;');
   });

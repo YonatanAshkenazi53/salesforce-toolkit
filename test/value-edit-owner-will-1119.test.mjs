@@ -27,7 +27,8 @@ describe('who the record will belong to', () => {
   it('the running user’s name is read from the target with the record, once per org', () => {
     expect(VE).toContain("path: 'services/oauth2/userinfo'");
     expect(VE).toContain('runMe = await sftkVeRunningUser(ts);');
-    expect(VE).toContain('<span class="ds-ve-own-will">${esc(dfl)}</span>');
+    expect(VE).toContain('${esc(dfl)}</span>`;');   // 2026-11-27: the final owner's name leads the sentence (ownWillHtml)
+    expect(VE).toContain(': ownWillHtml(fin, dfl)}</div>');
   });
 });
 

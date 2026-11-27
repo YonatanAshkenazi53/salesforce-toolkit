@@ -208,7 +208,7 @@ describe('the new page owns no engine: same scan, same selection, same run', () 
     expect(RC).toContain('const rowState = r => sftkRecChildRowState(r, depth, pMissingSet, pExistsSet);');
   });
   it('a child row helper reads a VIEW rooted at the real node, not a clone', () => {
-    expect(DV).toContain('const prof = isRoot ? p : { ...p, tree: node, lastScan: s };');
+    expect(DV).toContain('const prof = isRoot ? p : { ...p, tree: node, lastScan: s, _full: p };');   // 2026-11-27: and the whole deployment, for the record window
   });
   it('orphans stay out of bulk delete, a locked source switches ← off, a blocked relink stays off', () => {
     expect(DV).toContain('if (on && r.orphan) continue;');

@@ -69,6 +69,7 @@ describe('the editor asks the target and passes the answer on', () => {
     expect(VE).toContain("+ (mapOn && fbSaid.note ? ' ' + fbSaid.note : '');");
     expect(VE).not.toContain("fallbackName: (p.ownerMapping && p.ownerMapping.fallbackUserName) || ''");
     expect(VE).toContain('data-ve-own-dfl="${esc(dfl)}"');
-    expect(VE).toContain('<span class="ds-ve-own-will">${esc(dfl)}</span>');
+    expect(VE).toContain('${esc(dfl)}</span>`;');   // 2026-11-27: the final owner's name leads the sentence (ownWillHtml)
+    expect(VE).toContain(': ownWillHtml(fin, dfl)}</div>');
   });
 });

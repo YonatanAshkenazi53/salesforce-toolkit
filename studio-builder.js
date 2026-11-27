@@ -118,7 +118,6 @@ function renderBuilder() {
           <select id="dsProfileSrcOrg" class="ds-select" aria-label="Source org — where records come from">
             <option value="">— Select source org —</option>${orgOpts(p.sourceOrg)}${gone(p.sourceOrg)}
           </select>
-          <div class="ds-bld-tgt-hint">The object list and the records you pick are read from this org</div>
         </div>
         <div class="ds-builder-orgs-flow">
           <button class="ds-builder-orgs-swap" id="dsProfileSwapOrgs" aria-label="Swap source and target orgs"
@@ -129,7 +128,6 @@ function renderBuilder() {
           <select id="dsProfileTgtOrg" class="ds-select" aria-label="Default target org — where records are written">
             <option value="">— Select target org —</option>${orgOpts(p.targetOrg, p.sourceOrg)}${gone(p.targetOrg)}
           </select>
-          <div class="ds-bld-tgt-hint">Field mapping previews use this org · the Deploy page lets you pick any open org at run time</div>
         </div>
       </div>`;
       })()}
@@ -1456,7 +1454,7 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
             const nMask = bldPiiCountForObject(_editingProfile?.piiPolicy, objName);
             // a button since 2026-10-27 (user: "when you masked fields you can't cancel it. also i dont understand how
             // the masking does"): it lists the masked fields, says what masking does, and unmasks one or all
-            return nMask && sftkShips('pii') ? `<button class="ds-config-badge ds-badge-masked" data-pii-chip="${esc(objName)}" title="${nMask} ${esc(objName)} field(s) are written masked — click to see which, what that means, and to unmask">${dsIcon('lock')}${nMask} masked</button>` : '';
+            return nMask && sftkShips('pii') ? `<button class="ds-config-badge ds-badge-masked" data-pii-chip="${esc(objName)}" title="${nMask} ${esc(objName)} field(s) are written masked, on every record of this object the deployment writes — it counts fields, not records. Click to see which, what that means, and to unmask">${dsIcon('lock')}${nMask} ${nMask === 1 ? 'field' : 'fields'} masked</button>` : '';
           })()}
           ${!isRoot && cfOn ? `<button class="ds-btn ds-btn-xs ds-btn-config ds-btn-config--active" data-order-btn="${esc(pathKey)}" title="${esc(cfTitle)}">
             ⤴ Created before parent — click for the normal order

@@ -1335,7 +1335,7 @@ async function _depParentMatchEdit(p, scan, step) {
           <button class="ds-btn ds-btn-xs" id="dsPmSug" title="Ranked single-field keys for ${esc(step.refObj)}, each graded against both live orgs">💡 Suggestions</button>
         </div>
         <div class="ds-rec-display-row" style="margin-top:8px">
-          <div class="ds-rec-mf-col"><span class="ds-rec-display-lbl">Match on source:</span><select id="dsDepPmatchSel" class="ds-select ds-select-sm" style="min-width:300px">${optsHtml()}</select>
+          <div class="ds-rec-mf-col"><span class="ds-rec-display-lbl">Match on source:</span><select id="dsDepPmatchSel" class="ds-select ds-select-sm ds-pm-first">${optsHtml()}</select>
             <span id="dsPmMore" class="ds-pm-more"></span></div>
           <span class="ds-rec-mf-arrow">↔</span>
           <div class="ds-rec-mf-col"><span class="ds-rec-display-lbl">Match on target:</span><span id="dsPmTgt" class="ds-subtext" style="font-size:12px"></span></div>
@@ -2022,7 +2022,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const node = isRoot ? p.tree : getNodeByPath(p.tree, cur.pathKey);
   // The profile a row's helpers read: the deployment itself, or a VIEW of it
   // rooted at the child node (not a clone — a 🔗 pick lands on the real node).
-  const prof = isRoot ? p : { ...p, tree: node, lastScan: s };
+  const prof = isRoot ? p : { ...p, tree: node, lastScan: s, _full: p };   // _full: the whole deployment, for what must see the other objects (the record window: is the parent written by this run?)
   const sel = isRoot ? null : _depChildSel(cur.pathKey);
   const all = s[tabDef.bucket] || [];
   const info = sftkScanBucketInfo(s, tabDef.bucket);

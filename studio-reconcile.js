@@ -6053,6 +6053,9 @@ function _recRunVerdictTop(prog, status, verdictText, o) {
   for (const c of cards) top.appendChild(c);
   if (!o.fold) { const more = document.createElement('div'); more.className = 'ds-prog-verdict-more'; more.textContent = 'The full log of this run is below.'; top.appendChild(more); }
   if (hdr && hdr.nextSibling) prog.insertBefore(top, hdr.nextSibling); else prog.appendChild(top);
+  // a finished dry run: its headline says "Dry run … Nothing was written", so the header line above it says it
+  // twice and goes (owner 2026-11-27, a screenshot: "delete the marked line from here")
+  if (o.fold && hdr) hdr.remove();
   if (o.fold) {
     const rest = []; for (let n = top.nextSibling; n; n = n.nextSibling) rest.push(n);
     // an error line of the run is never folded away: it is said again under the table (the headline's own line is not)

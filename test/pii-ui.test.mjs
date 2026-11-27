@@ -211,7 +211,7 @@ describe('tree config row — the "N masked" chip (source)', () => {
     const after = BUILDER.slice(i, i + 1600);
     expect(after).toContain("bldPiiCountForObject(_editingProfile?.piiPolicy, objName)");
     expect(after).toContain('ds-badge-masked');
-    expect(after).toMatch(/\$\{nMask\} masked/);
+    expect(after).toContain("${nMask} ${nMask === 1 ? 'field' : 'fields'} masked");   // 2026-11-27: it counts fields, and says so
   });
 });
 

@@ -47,6 +47,39 @@ function sftkVeOwnerLine(o) {
   if (x.src.queue) return `Will be given to the queue in ${tl} with the same API name as ${x.src.name}, when it takes this object — and when there is none, ${fb || `it stays with ${cur}`}.`;
   return `Will be given to the active user in ${tl} named ${x.src.name} — and when there is no such user, ${fb || `it stays with ${cur}`}.`;
 }
+// WHO THE RECORD BELONGS TO AFTER THE WRITE, as one name — shown first on the Owner row, before the sentence that
+// explains it (owner 2026-11-27: "i want to see who the final owner will be on the actual write. in the right side").
+// '' when it cannot be named from here (a queue matched by API name, several records). PURE.
+//   o: sftkVeOwnerLine's, and { matched: the active user in the target with the source owner's name, '' = none }
+function sftkVeOwnerFinal(o) {
+  const x = o || {};
+  if (x.many) return '';
+  const stays = x.upd ? (x.tgtName || '') : (x.me || '');
+  if (!x.mapOn) return stays;
+  if (x.src && x.src.queue) return '';
+  if (x.src && x.matched) return x.matched;
+  return x.fallbackName || stays;
+}
+// IS THE PARENT A LOOKUP POINTS AT WRITTEN BY THIS SAME RUN? The tree's objects are walked with the page's scan:
+// a parent the target lacks is inserted with the record ("parent missing — comes along" on the row), and the lookup
+// is connected to it, so the window must not call that lookup empty (owner 2026-11-27). PURE.
+//   → { inTree: refObj is an object of the deployment, comes: parentId is one of its records the target lacks,
+//       pairedId: the target record the scan matched parentId with ('' = none) — its name may differ from the source's }
+function sftkVeParentInRun(tree, scan, refObj, parentId) {
+  const out = { inTree: false, comes: false, pairedId: '' };
+  const walk = (node, key) => {
+    if (!node) return;
+    if ((node.objectType || node.childSObject) === refObj) {
+      out.inTree = true;
+      const s = key === '' ? scan : (scan && scan.children && scan.children[key]);
+      if (parentId && s && (s.missingInTarget || []).some(r => (r && r.sourceId ? r.sourceId : r) === parentId)) out.comes = true;
+      if (parentId && s && !out.pairedId) { const hit = [...(s.changed || []), ...(s.identical || [])].find(r => r && r.sourceId === parentId && r.targetId); if (hit) out.pairedId = hit.targetId; }
+    }
+    (node.children || []).forEach((c, i) => walk(c, key === '' ? String(i) : key + '.' + i));
+  };
+  walk(tree, '');
+  return out;
+}
 // WHAT THE OWNER ROW MAY SAY ABOUT THE FALLBACK on THIS object (QA 1.1 regression, finding 13: the row promised
 // "the fallback owner Support (queue)" on an Account, which that queue does not take). The engine
 // (background.js, sftkOwnerFallbackFor) uses a fallback USER on every object, and a fallback QUEUE only on an
@@ -268,6 +301,19 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     : { name: fbName, note: '' };
   const ownerOf = rec => { const o = rec && rec.Owner; return o && o.Name != null ? { name: o.Name, queue: String(o.Type || '').toLowerCase() === 'queue' || /^00G/.test(String(rec.OwnerId || '')) } : null; };
   const ownerText = o => o ? `${o.queue ? '👥' : '👤'} ${o.name}${o.queue ? ' (queue)' : ''}` : null;
+  // the final owner, as a name: with owners matched, the active user of the same name is asked for in the target
+  let ownMatched = '';
+  if (hasOwner && !many && om.mode === 'match' && tgtSess && tgtSess.sid) {
+    const so = ownerOf(srcRec);
+    if (so && !so.queue) {
+      try {
+        const r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true, query: `SELECT Id, Name FROM User WHERE IsActive = true AND Name = '${String(so.name).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' LIMIT 1` });
+        if (r && !r.error && r.records && r.records[0]) ownMatched = r.records[0].Name;
+      } catch (_) { ownMatched = ''; }
+      if (!host.isConnected) return;
+    }
+  }
+  const ownWillHtml = (fin, dfl) => `<span class="ds-ve-own-will">${fin ? `<b class="ds-ve-own-final">👤 ${esc(fin)}</b>` : ''}${esc(dfl)}</span>`;
   const ownerRow = () => {
     if (!hasOwner) return '';
     const picks = ids.map(id => ovOf(id).OwnerId);
@@ -281,11 +327,12 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     // left out of the sentence, and a second sentence says so (sftkVeFallbackSaid)
     const dfl = sftkVeOwnerLine({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, tgtL, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '' })
       + (mapOn && fbSaid.note ? ' ' + fbSaid.note : '');
+    const fin = sftkVeOwnerFinal({ many, mapOn, src, me: runMe, fallbackName: fbSaid.name, upd: mode === 'chg', tgtName: tgtOwn ? tgtOwn.name : '', matched: ownMatched });
     const curName = cur && cur !== '__mixed__' ? nameOf(cur) : '';
     return `<tr class="ds-ve-row ds-ve-owner${cur && cur !== '__mixed__' ? ' ds-ve-row-on' : ''}" data-ve-row="OwnerId" data-ve-search="owner ownerid user queue"><th scope="row">Owner<div class="ds-dep-muted">OwnerId · a user${ownerCanQueue ? ' or a queue' : ''} in ${esc(tgtL)}</div></th>${many ? '' : `<td class="ds-ve-src">${src ? val(ownerText(src)) : val(null)}</td>`}${many || !tgtId ? '' : `<td class="ds-ve-tgt">${tgtOwn ? val(ownerText(tgtOwn)) : val(null)}</td>`}<td class="ds-ve-cell">
-      <div class="ds-ve-lkp ds-ve-own" data-ve-own="1" data-ve-own-dfl="${esc(dfl)}">
+      <div class="ds-ve-lkp ds-ve-own" data-ve-own="1" data-ve-own-dfl="${esc(dfl)}" data-ve-own-final="${esc(fin)}">
         <input type="search" class="ds-input ds-input-sm ds-ve-own-in${curName ? ' ds-ve-lkp-in-on' : ''}" value="${esc(curName)}" placeholder="🔍 pick a user${ownerCanQueue ? ' or a queue' : ''} in ${esc(tgtL)}…" aria-label="Pick the owner this record is written with in ${esc(tgtL)}"><div class="ds-lkpo-results ds-ve-own-res" style="display:none"></div>
-        <div class="ds-ve-lkp-cur">${cur === '__mixed__' ? '<span class="ds-dep-muted">different picks per record</span>' : cur ? `<span class="ds-ve-lkp-pick">✓ owner: <b>${esc(curName)}</b> <span class="ds-dep-muted">${esc(cur)}</span></span> <button class="ds-btn ds-btn-xs" data-ve-own-clear="1" title="Forget this pick — the owner is matched by name again">✕ back to matching</button>` : `<span class="ds-ve-own-will">${esc(dfl)}</span>`}</div>
+        <div class="ds-ve-lkp-cur">${cur === '__mixed__' ? '<span class="ds-dep-muted">different picks per record</span>' : cur ? `<span class="ds-ve-lkp-pick">✓ owner: <b>${esc(curName)}</b> <span class="ds-dep-muted">${esc(cur)}</span></span> <button class="ds-btn ds-btn-xs" data-ve-own-clear="1" title="Forget this pick — the owner is matched by name again">✕ back to matching</button>` : ownWillHtml(fin, dfl)}</div>
       </div></td></tr>`;
   };
   const piiNote = p.piiPolicy && Object.values(p.piiPolicy).some(Boolean) ? ' A field the PII policy covers keeps its masked value — the policy wins.' : '';
@@ -424,7 +471,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
       const tr = box.closest('tr');
       box.querySelector('.ds-ve-lkp-cur').innerHTML = id
         ? `<span class="ds-ve-lkp-pick">✓ owner: <b>${esc(name)}</b> <span class="ds-dep-muted">${esc(id)}</span></span> <button class="ds-btn ds-btn-xs" data-ve-own-clear="1" title="Forget this pick — the owner is matched by name again">✕ back to matching</button>`
-        : `<span class="ds-ve-own-will">${esc(box.dataset.veOwnDfl || '')}</span>`;
+        : ownWillHtml(box.dataset.veOwnFinal || '', box.dataset.veOwnDfl || '');
       inp.value = id ? name : ''; inp.classList.toggle('ds-ve-lkp-in-on', !!id);
       if (tr) tr.classList.toggle('ds-ve-row-on', !!id);
       box.querySelector('[data-ve-own-clear]')?.addEventListener('click', async () => {
@@ -525,9 +572,24 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
       } else {
         // a parent this same run inserts is connected after insert (the engine's late link) — not empty
         const parentId = srcRec ? srcRec[field] : null;
-        const inTree = typeof collectTreeObjects === 'function' && p.tree && collectTreeObjects(p.tree).has(refObj);
-        const insertedToo = inTree && p.tree && p.tree.objectType === obj && refObj === obj && parentId && ((p.lastScan && p.lastScan.missingInTarget) || []).some(r => (r && r.sourceId ? r.sourceId : r) === parentId);
-        if (insertedToo) land.innerHTML = `✓ <b>${esc(nm)}</b> is inserted by this run too — the lookup is connected after insert`;
+        const full = p._full || p;   // a child object is opened with its own node as the tree: the parent object is in the whole deployment
+        const pr = sftkVeParentInRun(full.tree, full.lastScan, refObj, parentId);
+        const inTree = pr.inTree, insertedToo = pr.comes;
+        // the record's own parent in the tree, matched by the scan under another name in the target: the run links
+        // the child to that record (the scan's pair), so it is said by its name there
+        if (!insertedToo && pr.pairedId && node && field === node.field) {
+          let tn = '';
+          try { const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true, query: `SELECT Id, Name FROM ${refObj} WHERE Id = '${String(pr.pairedId).replace(/[^A-Za-z0-9]/g, '')}' LIMIT 1` }); tn = (q && !q.error && q.records && q.records[0] && q.records[0].Name) || ''; } catch (_) { tn = ''; }
+          if (!land.isConnected) return;
+          land.className = 'ds-ve-land ds-ve-land-ok';
+          land.innerHTML = `✓ lands on <b>${esc(tn || pr.pairedId)}</b> — the ${esc(refObj)} in ${esc(tgtL)} that the scan matched “${esc(nm)}” with`;
+          return;
+        }
+        if (insertedToo) land.className = 'ds-ve-land ds-ve-land-ok';
+        // the record's own parent in the tree comes along by itself; another record of the deployment only when it is selected too
+        if (insertedToo) land.innerHTML = (node && field === node.field)
+          ? `✓ lands on <b>${esc(nm)}</b> — not in ${esc(tgtL)} yet: this run inserts it with the record (it comes along), and the lookup is connected to it`
+          : `✓ lands on <b>${esc(nm)}</b> when this run inserts it too — it is not in ${esc(tgtL)} yet; left out of the run, the lookup lands empty`;
         else if (inTree) { land.className = 'ds-ve-land'; land.innerHTML = `ℹ no ${esc(refObj)} named “${esc(nm)}” in ${esc(tgtL)} yet — ${esc(refObj)} is part of this deployment: inserted in the same run it is connected after insert, otherwise pick one here or the lookup lands empty`; }
         else { land.className = 'ds-ve-land ds-ve-land-bad'; land.innerHTML = `⚠ no ${esc(refObj)} named “${esc(nm)}” in ${esc(tgtL)} — the lookup lands EMPTY unless you pick one`; }
       }
