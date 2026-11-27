@@ -6976,6 +6976,9 @@ details.ds-dep-pause:not([open]) > summary.ds-dep-pause-hd { margin-bottom: 0; }
 /* a record that is opening: the Toolkit's own loader, full size (owner 2026-11-19) */
 .ds-rec-opening { font-style: normal; padding: 28px 8px; display: flex; justify-content: center; }
 .ds-rec-opening .sftk-cat { width: 72px; height: 72px; }
+/* a modal that is nothing but the wait: the cat is the content (owner 2026-11-27: "kitty should be bigger") */
+.ds-modal-body.ds-modal-wait .lp-robot-loading .sftk-cat { width: 136px; height: 136px; }
+.ds-modal-body.ds-modal-wait .lp-robot-msg { font-size: 13px; margin-top: 10px; }
 .ds-prog-hdr { display: flex; align-items: center; gap: 14px; }
 
 /* the record editor's Owner row says who the record will belong to (owner 2026-11-19) */

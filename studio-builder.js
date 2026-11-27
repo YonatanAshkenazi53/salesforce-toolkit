@@ -2523,7 +2523,7 @@ function bldPiiTreatmentOptions(fieldType) {
   const by = {
     email:    ['email-person', 'email'],
     phone:    ['phone-keep', 'il-mobile', 'il-phone'],
-    string:   ['person-name', 'first-name', 'last-name', 'company', 'street', 'phone-keep', 'email-person', 'il-id', 'us-ssn', 'credit-card', 'card-last4', 'iban', 'digits', 'scrub'],
+    string:   ['person-name', 'first-name', 'last-name', 'company', 'street', 'city', 'postal', 'phone-keep', 'email-person', 'il-id', 'us-ssn', 'credit-card', 'card-last4', 'iban', 'digits', 'scrub'],
     textarea: ['scrub', 'street'],
     date:     ['date-shift'],
     datetime: ['date-shift'],
@@ -2534,10 +2534,10 @@ function bldPiiTreatmentOptions(fieldType) {
   const out = [];
   for (const id of ids) {
     const p = list.find(x => x.id === id);
-    if (p) out.push({ value: id, label: `🎭 ${p.label}`, title: p.caveat || '' });
+    if (p) out.push({ value: id, label: `🎭 ${p.label}`, title: `${p.caveat ? p.caveat + ' ' : ''}Example: ${p.sample}` });
   }
-  if (sftkPiiMaskable({ type: t })) out.push({ value: 'hash', label: '# pseudonym — a code made from the value', title: 'The value is replaced by a code computed from it. The same value always gives the same code, so records still match and join, and the code cannot be turned back into the value. A text becomes letters and digits, an email stays an email (at masked.invalid), a phone stays digits, a number stays a number.' });
-  out.push({ value: 'null', label: '∅ write empty', title: 'The field is written empty. A required field cannot be emptied — the run says so.' });
+  if (sftkPiiMaskable({ type: t })) out.push({ value: 'hash', label: '# pseudonym — a code made from the value', title: 'The value is replaced by a code computed from it. The same value always gives the same code, so records still match and join, and the code cannot be turned back into the value. A text becomes letters and digits, an email stays an email (at masked.invalid), a phone stays digits, a number stays a number. Example: Austin → 5t51jzu8fqhr · dana@acme.com → k3f9x2q1a7@masked.invalid' });
+  out.push({ value: 'null', label: '∅ write empty', title: 'The field is written empty. A required field cannot be emptied — the run says so. Example: Austin → (nothing)' });
   return out;
 }
 
@@ -2625,6 +2625,28 @@ function bldPiiPreviewHtml(pairs) {
   return pairs.map(p => `<span class="ds-pii-prev-pair"><span class="ds-pii-prev-from" title="${esc(p.from)}">${esc(cut(p.from))}</span> → <b class="ds-pii-prev-to" title="${esc(p.to)}">${esc(cut(p.to))}</b>${p.rec ? ` <span class="ds-pii-prev-rec" title="The record this example comes from">· from the record ${esc(cut(p.rec))}</span>` : ''}</span>`).join('');
 }
 
+// The hover of an option, with the example taken from THIS field (owner 2026-11-27: "for every option, i want
+// to see an example for the specific masked field"): what the option does, then the first value read from the
+// field and what that option writes for it. PURE.
+function bldPiiOptionTitle(title, pair) {
+  const what = String(title || '').replace(/ (Example|On this field): [\s\S]*$/, '');
+  if (!pair) return String(title || '');
+  const cut = s => { const t = String(s); return t.length > 48 ? t.slice(0, 45) + '…' : t; };
+  return `${what} On this field: ${cut(pair.from)} → ${cut(pair.to)}`;
+}
+// Every option of one treatment list gets its example from the field's own values; the closed list then carries
+// the hover of the option it shows.
+async function bldPiiFillOptionExamples(profile, objectApi, field, desc, sel, records) {
+  if (!sel || !(records || []).length) return;
+  for (const opt of [...sel.options]) {
+    let pairs = [];
+    try { pairs = await bldPiiPreviewPairs(profile, objectApi, field, desc, bldPiiRuleFromTreatment(opt.value), records, 1); } catch (_) { pairs = []; }
+    if (!sel.isConnected) return;
+    opt.title = bldPiiOptionTitle(opt.title, pairs[0]);
+  }
+  if (sel.classList.contains('ds-pii-sug-treat') && sel.selectedOptions[0]) sel.title = sel.selectedOptions[0].title;
+}
+
 // Fill every [data-pii-prev] cell of the open modal, in sequence (hashing is
 // cheap, the DOM paints as they land).
 async function bldPiiFillPreviews(profile, sections) {
@@ -2638,6 +2660,14 @@ async function bldPiiFillPreviews(profile, sections) {
       cell.innerHTML = '<span class="ds-pii-prev-none">…</span>';
       const pairs = await bldPiiPreviewPairs(profile, sec.obj, s.field, sec.descByField[s.field], rule, sec.records, 2);
       cell.innerHTML = bldPiiPreviewHtml(pairs);
+    }
+  }
+  // second pass, after every row shows its preview: the hover of each option
+  for (const sec of sections) {
+    if (!sec || !sec.records) continue;
+    for (const s of (sec.sugg || [])) {
+      const sel = document.querySelector(`#dsModalBox [data-pii-treat="${CSS.escape(sec.obj + '.' + s.field)}"]`);
+      if (sel) await bldPiiFillOptionExamples(profile, sec.obj, s.field, sec.descByField[s.field], sel, sec.records);
     }
   }
 }
@@ -2665,7 +2695,7 @@ async function bldOpenPiiSuggestModal(opts) {
   const byObj = o.recordsByObj && typeof o.recordsByObj === 'object' ? o.recordsByObj : null;
   const objs = byObj ? Object.keys(byObj).filter(k => (byObj[k] || []).length) : [...collectTreeObjects(p.tree)];
   showModal(`<div class="ds-modal-header">🎭 Suggest PII treatments${o.scope ? ` — ${esc(o.scope)}` : ''}</div>
-    <div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">
+    <div class="ds-modal-body ds-modal-wait" style="text-align:center;padding:40px;color:var(--subtext)">
       ${window.sftkCatSm ? sftkCatSm(byObj ? `Reading ${objs.length} object(s) — fields, classification and the values of the records themselves…` : `Reading ${objs.length} object(s) — fields, classification and 200 real rows each…`) : 'Reading…'}
     </div>`);
   const sess = _builderSession();
@@ -2732,7 +2762,7 @@ async function bldOpenPiiSuggestModal(opts) {
           <label class="ds-pii-sug-pick"><input type="checkbox" data-pii-key="${esc(key)}" data-pii-sure="${s.sure ? '1' : ''}" ${existing ? '' : (s.sure ? 'checked' : '')} title="${existing ? 'Already covered — tick to change its treatment' : 'Tick to apply the treatment on the right'}"></label>
           <span class="ds-pii-sug-field" title="${esc(key)} · ${esc(ftype || '?')}"><strong>${esc(s.field)}</strong>
             <span class="ds-pii-sug-reason">${esc(s.reason)}${existing ? ` · <em>now: ${esc(bldPiiRuleWords(existing))}</em>` : ''}</span></span>
-          <select class="ds-select ds-select-sm ds-pii-sug-treat" data-pii-treat="${esc(key)}" title="What this field is written as">
+          <select class="ds-select ds-select-sm ds-pii-sug-treat" data-pii-treat="${esc(key)}" title="${esc((options.find(o => o.value === current) || {}).title || 'What this field is written as')}">
             ${options.map(o => `<option value="${esc(o.value)}" title="${esc(o.title)}" ${o.value === current ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
           </select>
           <span class="ds-pii-sug-prev" data-pii-prev="${esc(key)}">${sec.records ? '<span class="ds-pii-prev-none">…</span>' : '<span class="ds-pii-prev-none">no rows read</span>'}</span>
@@ -2783,6 +2813,7 @@ async function bldOpenPiiSuggestModal(opts) {
   // previews land as they are computed; a changed treatment re-computes its row
   bldPiiFillPreviews(p, sections);
   document.querySelectorAll('#dsModalBox [data-pii-treat]').forEach(sel => sel.addEventListener('change', async () => {
+    sel.title = (sel.selectedOptions[0] && sel.selectedOptions[0].title) || 'What this field is written as';
     const key = sel.dataset.piiTreat, dot = key.indexOf('.');
     const sec = sections.find(x => x.obj === key.slice(0, dot));
     const field = key.slice(dot + 1);
@@ -2862,6 +2893,7 @@ async function bldOpenPiiFieldModal(objectApi, field, opts) {
     if (prev) prev.innerHTML = bldPiiPreviewHtml(await bldPiiPreviewPairs(p, objectApi, field, desc, bldPiiRuleFromTreatment(sel.value), records, 3));
   };
   paint();
+  bldPiiFillOptionExamples(p, objectApi, field, desc, eid('dsPiiFieldTreat'), records);
   eid('dsPiiFieldTreat')?.addEventListener('change', paint);
   eid('dsPiiFieldApply')?.addEventListener('click', () => {
     const sel = eid('dsPiiFieldTreat');

@@ -217,6 +217,10 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
       : f.type === 'email' ? 'email-person'
       : f.type === 'phone' ? 'phone-keep'
       : /street/i.test(f.name) ? 'street'
+      // 2026-11-27: a city and a postal code had no pattern of their own, so a ticked one was written as a
+      // 30-character code (owner: "why billing address pii suggestions looks wierd to me?")
+      : (f.type === 'string' && (/(^|_)city(__c)?$/i.test(f.name) || /[a-z]City(__c)?$/.test(f.name))) ? 'city'   // a word of its own: BillingCity, City__c, Home_City__c — not Velocity__c
+      : (f.type === 'string' && /(postal_?code|zip_?code|zip)(__c)?$/i.test(f.name)) ? 'postal'
       : ((f.type === 'date' || f.type === 'datetime') && /birth|dob/i.test(f.name + ' ' + (f.label || ''))) ? 'date-shift'
       : (f.type === 'textarea' && typeof f.length === 'number' && f.length >= 1000) ? 'scrub'
       : null;
@@ -469,6 +473,10 @@ function sftkPiiStreetLists() {
       'River', 'Meadow', 'Sunset', 'Garden', 'Orchard', 'Valley', 'Ridge', 'Forest', 'Spring', 'Mill',
       'Bridge', 'Chapel', 'Station', 'Market', 'King', 'Queen', 'Castle', 'Tower', 'Summit'],
     kind: ['St', 'Ave', 'Rd', 'Blvd', 'Ln', 'Dr', 'Way', 'Ct'],
+    city: ['Fairview', 'Riverton', 'Lakewood', 'Oakdale', 'Ashford', 'Milton', 'Clayton', 'Georgetown', 'Springfield',
+      'Greenville', 'Franklin', 'Salem', 'Madison', 'Clinton', 'Arlington', 'Kingston', 'Bristol', 'Dover', 'Newport',
+      'Hudson', 'Marion', 'Auburn', 'Dayton', 'Lexington', 'Milford', 'Oxford', 'Burlington', 'Manchester', 'Ashland', 'Winchester'],
+    cityHe: ['גבעת האלון', 'נווה הדקל', 'כפר הגפן', 'רמת הברוש', 'קריית התמר', 'נווה הזית', 'גבעת הכרמל', 'רמת הגליל', 'כפר הירדן', 'קריית השלום'],
     he: ['הרצל', 'ויצמן', 'בן גוריון', 'רוטשילד', 'אלנבי', 'דיזנגוף', 'ז׳בוטינסקי', 'הנשיא', 'השלום',
       'הגפן', 'הזית', 'התמר', 'הדקל', 'האלון', 'הברוש', 'יפו', 'הירדן', 'הכרמל', 'הגליל', 'הנגב'],
   };
@@ -634,6 +642,10 @@ function sftkPiiPatternListV2() {
       caveat: 'Same country and length, check digits recomputed — shape-valid, never a real account.' },
     { id: 'street', label: 'Street address', sample: '42 Maple Ave',
       caveat: 'A fabricated street and number; keep city, state and postal code as they are — they identify an area, not a person.' },
+    { id: 'city', label: 'City', sample: 'Austin → Lakewood',
+      caveat: 'Another city name from a fixed list. The same city always becomes the same one, so records that shared a city still share one. It is not matched to the state or the postal code.' },
+    { id: 'postal', label: 'Postal code, same shape', sample: '78767 → 40213 · SW1A 1AA → KD4R 7TC',
+      caveat: 'Every digit becomes another digit and every letter another letter; spaces and dashes stay where they are, so the length and the format survive. The result is not checked against a real postal area.' },
     { id: 'date-shift', label: 'Date moved 1–180 days', sample: '1984-03-21 → 1984-07-02',
       caveat: 'For birthdays and other personal dates: the age bracket survives, the exact day does not. Deterministic per value.' },
     { id: 'scrub', label: 'Free text: replace what looks like PII', sample: 'call 052-8461930 → call 053-2917403',
@@ -673,6 +685,21 @@ function sftkPiiPatternFormatV2(hex, patternId, fieldDesc, srcValue, persona, do
     const S = sftkPiiStreetLists();
     const num = 1 + Number(n % 199n);
     out = hebrew ? `${pick(S.he, 8)} ${num}` : `${num} ${pick(S.name, 8)} ${pick(S.kind, 16)}`;
+  } else if (patternId === 'city') {
+    const C = sftkPiiStreetLists(), list = hebrew ? C.cityHe : C.city;
+    out = pick(list, 8);
+    // never the city it replaces — take the next one
+    if (out.toLowerCase() === String(srcValue == null ? '' : srcValue).trim().toLowerCase()) out = list[(list.indexOf(out) + 1) % list.length];
+  } else if (patternId === 'postal') {
+    const src = String(srcValue == null ? '' : srcValue), d = digits(30, 0);
+    let k = 0;
+    out = src.replace(/[0-9A-Za-z]/g, ch => {
+      const v = Number(d[k++ % 30]);
+      if (ch >= '0' && ch <= '9') return String(v);
+      const base = ch <= 'Z' ? 65 : 97;
+      return String.fromCharCode(base + ((ch.charCodeAt(0) - base + 1 + v) % 26));
+    });
+    if (!/[0-9A-Za-z]/.test(src)) out = digits(5, 0);
   } else if (patternId === 'date-shift') {
     out = sftkPiiDateShift(srcValue, hex);
   } else if (patternId === 'person-name' || patternId === 'first-name' || patternId === 'last-name') {
