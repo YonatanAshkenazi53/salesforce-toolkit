@@ -2470,12 +2470,22 @@ function _depPausePaint(p) {
   };
   const withItems = rows.filter(r => r.total > 0), without = rows.filter(r => !r.total).map(r => r.object);
   const reading = kinds.some(k => !k.st.list && !k.st.error);
+  // One object at a time (owner 2026-11-27: "it looks confusing. every object needs to be a tab"): a tab per
+  // object that has automation, the tab says how many and how many are switched off; the first object this run
+  // writes is the one shown. One object alone needs no tabs.
+  if (!withItems.some(r => r.object === _depPauseTab)) _depPauseTab = ((withItems.find(r => r.written) || withItems[0]) || {}).object || '';
+  const offOf = r => (r.flows || []).concat(r.rules || []).filter(i => i.on).length;
+  const tabs = withItems.length > 1 ? `<div class="ds-dep-pause-tabs" role="tablist" aria-label="Object">${withItems.map(r => {
+    const off = r.written ? offOf(r) : 0;
+    return `<button type="button" role="tab" class="ds-dep-pause-tab" data-pause-tab="${esc(r.object)}" aria-selected="${r.object === _depPauseTab}" aria-pressed="${r.object === _depPauseTab}" title="${esc(r.object)}: ${r.total} automation${r.total === 1 ? '' : 's'}${r.written ? (off ? `, ${off} switched off for this run` : ', all stay on') : ' — no record of it is selected in this run'}">${esc(r.object)} <small>${r.total}${off ? ` · <span class="ds-dep-pause-taboff">${off} off</span>` : ''}</small></button>`;
+  }).join('')}</div>` : '';
   host.innerHTML = `
     <details class="ds-dep-pause ds-dep-fold" data-fold="pause"${_depFoldOpen('pause')}>
       <summary class="ds-dep-pause-hd"><span class="ds-dep-pause-title">⏸ Automation in ${esc(tgt)} on the objects of this deployment</span><span class="ds-dep-pause-sub">Tick what should be switched off while this run writes. Everything unticked stays on.</span></summary>
       <details class="ds-dep-pause-why"><summary>A ticked flow or validation rule is switched off before the first write and back on when the run ends. <span class="ds-dep-pause-morelink">more</span></summary><div class="ds-dep-pause-whybody">They are switched back on when the run ends — also when it fails or is cancelled. A ⏰ scheduled flow that starts on one of these objects is listed too, unticked: it runs on its clock, not on a write. Duplicate rules are never switched off: with “Bypass” chosen, the writes on a ticked object carry the duplicate-rule header — a rule set to Alert lets the records through, a rule set to Block still blocks. Apex triggers are not listed and cannot be switched off from here. A 🧪 dry run switches nothing off; it says under each refusal what your ticks would change.</div></details>
       ${lines.map(x => `<div class="ds-dep-pause-line">${x}</div>`).join('')}
-      ${withItems.map(card).join('')}
+      ${tabs}
+      ${withItems.filter(r => r.object === _depPauseTab).map(card).join('')}
       ${!reading && !withItems.length && !lines.length ? `<div class="ds-dep-pause-empty">No active validation rule, record-triggered flow or duplicate rule on the objects of this deployment in ${esc(tgt)}.</div>` : ''}
       ${withItems.length && without.length ? `<div class="ds-dep-pause-empty" title="${esc(without.join(', '))}">No active automation of these kinds on the other ${without.length} object${without.length === 1 ? '' : 's'} <span class="ds-dep-pause-emptynames">(${esc(without.slice(0, 5).join(', '))}${without.length > 5 ? '…' : ''})</span></div>` : ''}
     </details>`;
@@ -2484,6 +2494,7 @@ function _depPausePaint(p) {
     if (cb.checked) _depPauseSkip.delete(cb.dataset.key); else _depPauseSkip.add(cb.dataset.key);
     _depPausePaint(p);
   }));
+  host.querySelectorAll('[data-pause-tab]').forEach(b => b.addEventListener('click', () => { _depPauseTab = b.dataset.pauseTab; _depPausePaint(p); }));
   host.querySelectorAll('.ds-dep-pause-all').forEach(b => b.addEventListener('click', () => {
     const want = b.dataset.want === 'on';
     for (const cb of host.querySelectorAll(`.ds-dep-pause-cb[data-obj="${CSS.escape(b.dataset.obj)}"]:not([disabled])`)) {

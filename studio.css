@@ -6551,6 +6551,12 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-dep-pause-why[open] .ds-dep-pause-morelink { display: none; }
 .ds-dep-pause-whybody { margin-top: 4px; }
 /* an object = a card: its name, its count, all / none, then ONE ROW PER ITEM */
+.ds-dep-pause-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+.ds-dep-pause-tab { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 4px 11px; font: inherit; font-weight: 600; cursor: pointer; }
+.ds-dep-pause-tab small { font-weight: 400; color: var(--subtext); font-size: 11px; margin-left: 4px; }
+.ds-dep-pause-tab[aria-selected="true"] { border-color: var(--brand); background: var(--brand-bg); color: var(--brand-dark); }
+.ds-dep-pause-tab:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.ds-dep-pause-taboff { color: var(--warn, #b7791f); font-weight: 600; }
 .ds-dep-pause-obj { border: 1px solid var(--border); border-radius: 6px; margin: 0 0 8px; overflow: hidden; }
 .ds-dep-pause-objhd { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--surface2); border-bottom: 1px solid var(--border); }
 .ds-dep-pause-count { color: var(--subtext); font-size: 11.5px; }
