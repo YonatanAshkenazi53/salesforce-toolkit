@@ -7056,3 +7056,10 @@ a.ds-dep-open:hover { text-decoration: underline; }
 /* Deploy: why the last read of the two orgs did not finish, on the card that offers the read */
 .ds-dep-readfail { color: var(--danger, #b42318); background: color-mix(in srgb, var(--danger, #b42318) 8%, transparent); border-radius: 6px; padding: 8px 10px; margin: 6px 0 10px; }
 .ds-dep-readfail[hidden] { display: none; }
+
+/* the dry run's mark: the flask icon in place of the emoji, which stays in the text for what reads it (2026-11-27) */
+.ds-flask { display: inline-flex; align-items: center; vertical-align: -0.15em; }
+.ds-flask > .ds-i { width: 1.05em; height: 1.05em; }
+.ds-flask-t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); font-size: 0; }
+/* 🔄 Rescan sits at the head of the column of rescan ticks (2026-11-27) */
+.ds-dep-plan th.ds-dep-rescan-th { text-transform: none; letter-spacing: 0; text-align: right; white-space: nowrap; cursor: default; }

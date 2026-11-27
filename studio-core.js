@@ -2118,3 +2118,40 @@ window.startTransferFrom = function(targetOrg) {
   renderTransfer();
 };
 
+
+// ── The dry run's mark is the flask icon, everywhere (owner 2026-11-27: "old icon is here as well. use something
+// new") ── The run log, the progress cards, the chips, the toasts and the dialogs all write the test-tube emoji in
+// their text. Instead of touching every string, the Studio draws it: each one that reaches the page is wrapped,
+// the flask icon is shown and the character stays in the text (hidden), so what reads the log's text still finds it.
+const SFTK_FLASK_CH = '\u{1F9EA}';
+function sftkFlaskify(root) {
+  if (!root || (root.nodeType !== 1 && root.nodeType !== 3)) return 0;
+  const todo = [];
+  if (root.nodeType === 3) { if (root.nodeValue.includes(SFTK_FLASK_CH)) todo.push(root); }
+  else { const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); for (let n = w.nextNode(); n; n = w.nextNode()) if (n.nodeValue.includes(SFTK_FLASK_CH)) todo.push(n); }
+  let made = 0;
+  for (const t of todo) {
+    const p = t.parentElement;
+    if (!p || p.closest('.ds-flask, script, style, textarea, option, title, [contenteditable]')) continue;
+    const frag = document.createDocumentFragment();
+    t.nodeValue.split(SFTK_FLASK_CH).forEach((part, i) => {
+      if (i) {
+        const s = document.createElement('span'); s.className = 'ds-flask';
+        s.innerHTML = `${dsIcon('flask')}<span class="ds-flask-t">${SFTK_FLASK_CH}</span>`;
+        frag.appendChild(s); made++;
+      }
+      if (part) frag.appendChild(document.createTextNode(part));
+    });
+    t.replaceWith(frag);
+  }
+  return made;
+}
+if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && document.documentElement) {
+  new MutationObserver(list => {
+    for (const m of list) {
+      if (m.type === 'characterData') sftkFlaskify(m.target);
+      else for (const n of m.addedNodes) sftkFlaskify(n);
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  if (document.body) sftkFlaskify(document.body);
+}

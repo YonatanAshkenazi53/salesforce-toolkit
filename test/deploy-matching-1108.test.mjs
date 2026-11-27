@@ -41,6 +41,8 @@ describe('scan everything', () => {
   });
   it('🔄 Rescan all on "What the two orgs hold", and 🔄 Refresh state, read every object', () => {
     expect(DV).toContain('id="dsDepRescanAll"');
+    // 2026-11-27 (owner, a screenshot: "rescan should be placed here"): at the head of the column of rescan ticks
+    expect(DV).toContain('<th class="ds-dep-rescan-th"><button class="ds-btn ds-btn-xs');
     // 2026-11-13: the one button reads every object, or only the ones ticked in the table
     expect(DV).toContain("_depRescan(p, from.length ? { from } : undefined);");
     expect(DV).toContain('class="ds-dep-rescan-cb" data-path="${esc(r.pathKey)}"');

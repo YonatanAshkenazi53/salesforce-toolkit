@@ -103,7 +103,7 @@ describe('wiring: saved on the user\'s actions only, put back once per scan, sai
     expect(DEP).toContain('const touched = () => _depSelRemember(p);');
     expect((DEP.match(/\n\s+touched\(\);\n/g) || []).length).toBe(5);   // push box, overwrite/updSrc, del/pull, relink, the All/None buttons
     expect(DEP).toContain("_depRetry = null;\n    _depSelRemember(p);");           // ↻ Retry / ▶ Continue picks
-    expect(DEP).toContain("for (const id of ids) { set.add(id); n++; }\n    }\n    _depSelRemember(p);");   // ✓ every insert
+    expect(DEP).toContain("u++; }\n    }\n    _depSelRemember(p);");   // 2026-11-27: every insert and update   // ✓ every insert
     const fn = DEP.slice(DEP.indexOf('function _depSummary('), DEP.indexOf('function _depSummary(') + 3000);
     expect(fn).not.toContain('_depSelRemember');
     const rescan = DEP.slice(DEP.indexOf('async function _depRescan('), DEP.indexOf('async function _depRescan(') + 1500);

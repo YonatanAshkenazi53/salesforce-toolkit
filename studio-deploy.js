@@ -320,6 +320,19 @@ function sftkDeployEveryInsert(scan) {
   return out;
 }
 
+// PURE. Every record both orgs hold with different values, per scanned object — the updates "✓ Tick every record"
+// adds to the inserts (owner 2026-11-27: "Should tick all records, both insert and updates"). The source wins,
+// as the Changed tab's "→ all" does.   → { pathKey: [sourceId] }
+function sftkDeployEveryChanged(scan) {
+  const out = {};
+  if (!scan) return out;
+  const ids = s => (s && s.changed || []).map(r => r.sourceId).filter(Boolean);
+  const root = ids(scan);
+  if (root.length) out[''] = root;
+  for (const [k, s] of Object.entries((scan && scan.children) || {})) { const l = ids(s); if (l.length) out[k] = l; }
+  return out;
+}
+
 // PURE. Which of a failed run's records can be ticked on this page right now?
 // Only Insert rows, and for a child only rows the page would let the user tick
 // (rowState is the classic parent rule). Changed rows are counted, not ticked:
@@ -600,8 +613,10 @@ async function renderDeploy() {
   // ── plan card ──
   const sum = k => plan.reduce((n, r) => n + ((r.cells[k] && r.cells[k].n) || 0), 0);
   const unscanned = plan.filter(r => !r.scanned);
-  // what "✓ Tick every insert" would tick: every missing record of every scanned object, the parent rule applied
+  // what "✓ Tick every record" would tick: every changed record, and every missing record of every scanned object, the parent rule applied
   const every = sftkDeployRetryPicks(scan, sftkDeployEveryInsert(scan), sftkRecChildRowState);
+  const everyChg = sftkDeployEveryChanged(scan), everyChgN = Object.values(everyChg).reduce((n, l) => n + l.length, 0);
+  const nf = n => Number(n || 0).toLocaleString('en-US');
   const cell = (r, k) => r.cells[k]
     ? `<td class="ds-dep-num${r.cells[k].n ? ` ds-dep-n-${k}` : ' ds-dep-muted'}" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="${k}" title="${r.cells[k].capped ? `${Number(r.cells[k].n || 0).toLocaleString('en-US')} in total — the list shows the first ${Number(r.cells[k].shown || 0).toLocaleString('en-US')} of them` : 'Show these records'}">${esc(r.cells[k].text)}</td>`
     : `<td class="ds-dep-num ds-dep-muted">${r.scanned ? '—' : ''}</td>`;
@@ -613,7 +628,7 @@ async function renderDeploy() {
         <thead><tr><th>Object</th><th class="ds-dep-num" title="Records read from the source for this deployment">In source</th><th class="ds-dep-num" title="Records read from the target">In target</th>
           <th class="ds-dep-num" title="In the source only — inserted when you select them">🔴 Insert</th><th class="ds-dep-num" title="In both orgs with different values — pick a winner per row">🟡 Changed</th>
           <th class="ds-dep-num" title="In the target only — never deleted unless you choose it">🔵 In target only</th><th class="ds-dep-num" title="Child records that exist in both orgs but point at a different parent">⇄ Link differs</th>
-          <th class="ds-dep-num" title="In both orgs with equal values — left alone">🟢 Synced</th><th class="ds-dep-num" title="The match key is held more than once where both orgs have it — the scan cannot tell which copy is which, so nothing is deployed for these until you pair each copy with its target or mark it as new">⚠ Needs a decision</th><th></th></tr></thead>
+          <th class="ds-dep-num" title="In both orgs with equal values — left alone">🟢 Synced</th><th class="ds-dep-num" title="The match key is held more than once where both orgs have it — the scan cannot tell which copy is which, so nothing is deployed for these until you pair each copy with its target or mark it as new">⚠ Needs a decision</th><th class="ds-dep-rescan-th"><button class="ds-btn ds-btn-xs${unscanned.length ? ' ds-btn-primary' : ''}" id="dsDepRescanAll" title="Read every object of this deployment in both orgs — the root and every child, read before or not, parents before their children — or only the objects ticked below. Nothing is changed.">${_depRescanLabel(plan.length, unscanned.length)}</button></th></tr></thead>
         <tbody>${plan.map(r => `<tr${r.pathKey === ((objects.find(o => o.pathKey === _depObjPath) || objects[0] || {}).pathKey) ? ' class="ds-dep-cur" aria-current="true"' : ''}>
           <td><button class="ds-dep-objlink" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="ins" style="padding-left:${r.depth * 16}px">${r.depth ? '↳ ' : ''}${esc(r.obj)}</button>
             <span class="ds-dep-sub">${r.depth ? `under ${esc(r.parentObj || '')}` : 'root'}</span></td>
@@ -628,8 +643,8 @@ async function renderDeploy() {
   // "זה נמצא במקום לא טוב … למעלה. באותו card מתחת between which orgs") — they were under the totals row.
   const actionsHtml = `<div class="ds-dep-orgs-acts">
       ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepPiiAll" title="Read the records this deployment inserts and suggest a PII treatment per field — each with a real example and the record it comes from; you tick what applies">🎭 Suggest PII treatment for all ${every.found.toLocaleString('en-US')} to insert</button> <span class="ds-dep-muted">${(() => { const n = Object.values(p.piiPolicy || {}).filter(Boolean).length; return n ? `${n} field${n === 1 ? ' is' : 's are'} masked now — ▸ record shows each value as it is written` : 'no field is masked yet'; })()}</span></div>` : ''}
-      <div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs${unscanned.length ? ' ds-btn-primary' : ''}" id="dsDepRescanAll" title="Read every object of this deployment in both orgs — the root and every child, read before or not, parents before their children. Nothing is changed.">${_depRescanLabel(plan.length, unscanned.length)}</button> ${unscanned.length ? `<b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan before calling this pair in sync.` : '<span class="ds-dep-muted" id="dsDepRescanNote">' + _depRescanNote(plan.length) + '</span>'}</div>
-      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString('en-US')} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
+      ${unscanned.length ? `<div class="ds-rec-card-line"><b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan before calling this pair in sync.</div>` : ''}
+      ${every.found || everyChgN ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks and every record the two orgs hold with different values (the source's values win), in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every record — ${[every.found ? `${nf(every.found)} to insert` : '', everyChgN ? `${nf(everyChgN)} to update` : ''].filter(Boolean).join(', ')}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
     </div>`;
 
   // ── notes: the same facts the classic header shows ──
@@ -759,9 +774,8 @@ async function renderDeploy() {
   document.querySelectorAll('.ds-dep-rescan-cb').forEach(cb => cb.addEventListener('change', () => {
     if (cb.checked) _depRescanPick.add(cb.dataset.path); else _depRescanPick.delete(cb.dataset.path);
     const n = document.querySelectorAll('.ds-dep-rescan-cb').length + document.querySelectorAll('[data-dep-scan]').length;
-    const b = eid('dsDepRescanAll'), note = eid('dsDepRescanNote');
+    const b = eid('dsDepRescanAll');
     if (b && !document.querySelector('[data-dep-scan]')) b.textContent = _depRescanLabel(n, 0);
-    if (note) note.textContent = _depRescanNote(n);
   }));
   eid('dsDepPiiAll')?.addEventListener('click', () => {
     const byObj = {};
@@ -774,15 +788,19 @@ async function renderDeploy() {
     if (!sc.total) return;
     _depPiiSuggest(p, sc.byObj, `the ${sc.total.toLocaleString('en-US')} record${sc.total === 1 ? '' : 's'} you selected`, { selected: true });
   });
-  // ✓ every insert in one press — the same sets the per-tab "All" buttons fill, object by object
+  // ✓ every insert and every update in one press — the same sets the per-tab "All" buttons fill, object by object
   eid('dsDepTickAll')?.addEventListener('click', () => {
-    let n = 0;
+    let n = 0, u = 0;
     for (const [k, ids] of Object.entries(every.picks)) {
       const set = k === '' ? _recSel.push : _depChildSel(k).push;
       for (const id of ids) { set.add(id); n++; }
     }
+    for (const [k, ids] of Object.entries(everyChg)) {
+      const set = k === '' ? _recSel.overwrite : _depChildSel(k).overwrite;
+      for (const id of ids) { set.add(id); if (k === '') _recSel.updSrc.delete(id); u++; }
+    }
     _depSelRemember(p);
-    showToast(`✓ ${n.toLocaleString('en-US')} record${n === 1 ? '' : 's'} ticked in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'} — untick what should stay out, then Deploy.`, 'success', 5000);
+    showToast(`✓ Ticked: ${[n ? `${nf(n)} to insert` : '', u ? `${nf(u)} to update with the source's values` : ''].filter(Boolean).join(', ')} — untick what should stay out, then Deploy.`, 'success', 5000);
     renderDeploy();
   });
   document.querySelectorAll('[data-dep-scan]').forEach(b => b.addEventListener('click', async () => {
@@ -1117,7 +1135,7 @@ async function _depPaintOrder(p, scan) {
     return `<div class="ds-ordstep${settled(s) ? ' ds-ordstep-done' : ''}${isNext ? ' ds-ordstep-next' : ''}">
       <span class="ds-ordstep-num">${i + 1}</span>
       <span class="ds-dep-ordwhat"><strong>${esc(s.refObj)}</strong> <span class="ds-lkp-hint">needed by ${need(s)}</span>
-        <span class="ds-dep-pmatch" title="The field of ${esc(s.refObj)} a lookup is resolved by: the child record's parent is found in ${esc(tgtL)} by this value. Change it when names repeat or differ between the orgs."> · matched by <b>${esc(matchedBy(s))}</b> <button class="ds-btn ds-btn-xs ds-dep-pmatch-btn" data-dep-pmatch-edit="${esc(s.refObj)}" title="Choose the field ${esc(s.refObj)} is matched by">✏</button></span></span>
+        <span class="ds-dep-pmatch" title="The field of ${esc(s.refObj)} a lookup is resolved by: the child record's parent is found in ${esc(tgtL)} by this value. Change it when names repeat or differ between the orgs."> · matched by <b>${esc(matchedBy(s))}</b> <button class="ds-btn ds-btn-xs ds-dep-pmatch-btn" data-dep-pmatch-edit="${esc(s.refObj)}" title="Choose the field ${esc(s.refObj)} is matched by: a lookup finds its parent in the target by this field's value">✏ Change match field</button></span></span>
       ${status}${isNext ? '<span class="ds-ordstep-arrow">← next</span>' : ''}
       <div class="ds-dep-pairs" data-dep-pairs-host="${esc(s.refObj)}" style="display:none"></div>
     </div>`;
@@ -1133,9 +1151,9 @@ async function _depPaintOrder(p, scan) {
     const parentLine = s => {
       const vd = s.vd || {}, by = vd.by || matchedBy(s), n = vd.aligned != null ? vd.aligned : null;
       const kept = Array.isArray(vd.pairs) && vd.pairs.length;
-      return `<div class="ds-dep-pline" data-dep-pline="${esc(s.refObj)}"><b>${esc(s.refObj)}</b> <span class="ds-dep-muted">needed by ${need(s)} · matched by <b>${esc(by)}</b>${n != null ? ` · ${n.toLocaleString('en-US')} record${n === 1 ? '' : 's'} aligned` : ''}${s.vd ? ` · checked ${esc(timeAgo(s.vd.at))}` : ''}</span>
-        ${kept ? `<button class="ds-btn ds-btn-xs" data-dep-pairs="${esc(s.refObj)}" title="Each ${esc(s.refObj)} record in ${esc(orgLabel(p.sourceOrg || ''))} and the ${esc(tgtL)} record it lands on — aligned by ${esc(by)}">📋 Show the ${n.toLocaleString('en-US')} aligned record${n === 1 ? '' : 's'}</button>` : `<button class="ds-btn ds-btn-xs" data-dep-pairs-check="${esc(s.refObj)}" title="Reads ${esc(s.refObj)} in both orgs again and keeps the aligned pairs">🔍 Check again to list them</button>`}
-        <button class="ds-btn ds-btn-xs ds-dep-pmatch-btn" data-dep-pmatch-edit="${esc(s.refObj)}" title="Choose the field ${esc(s.refObj)} is matched by">✏</button>
+      return `<div class="ds-dep-pline" data-dep-pline="${esc(s.refObj)}"><b>${esc(s.refObj)}</b> <span class="ds-dep-muted">needed by ${need(s)} · matched by <b>${esc(by)}</b>${n === 0 ? ' · aligned (no record to pair)' : n != null ? ` · ${n.toLocaleString('en-US')} record${n === 1 ? '' : 's'} aligned` : ''}${s.vd ? ` · checked ${esc(timeAgo(s.vd.at))}` : ''}</span>
+        ${kept ? `<button class="ds-btn ds-btn-xs" data-dep-pairs="${esc(s.refObj)}" title="Each ${esc(s.refObj)} record in ${esc(orgLabel(p.sourceOrg || ''))} and the ${esc(tgtL)} record it lands on — aligned by ${esc(by)}">📋 Show the ${n.toLocaleString('en-US')} aligned record${n === 1 ? '' : 's'}</button>` : `<button class="ds-btn ds-btn-xs" data-dep-pairs-check="${esc(s.refObj)}" title="Reads ${esc(s.refObj)} in both orgs again and keeps the aligned pairs">${n === 0 ? '🔍 Check again' : '🔍 Check again to list them'}</button>`}
+        <button class="ds-btn ds-btn-xs ds-dep-pmatch-btn" data-dep-pmatch-edit="${esc(s.refObj)}" title="Choose the field ${esc(s.refObj)} is matched by: a lookup finds its parent in the target by this field's value">✏ Change match field</button>
         <div class="ds-dep-pairs" data-dep-pairs-host="${esc(s.refObj)}" style="display:none"></div></div>`;
     };
     h.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ds-rec-card-good ds-dep-parents-synced ds-dep-fold ds-dep-subfold" data-fold="parents"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Parents synced ✓</span>
@@ -1930,10 +1948,6 @@ function _depRescanLabel(total, unread) {
   if (unread) return `🔎 Scan all ${total}`;
   const k = _depRescanPick.size;
   return k ? `🔄 Rescan the ${k} selected` : `🔄 Rescan all ${total}`;
-}
-function _depRescanNote(total) {
-  const k = _depRescanPick.size;
-  return k ? `only the ${k} ticked object${k === 1 ? '' : 's'} (and the objects under ${k === 1 ? 'it' : 'them'}) ${k === 1 ? 'is' : 'are'} read again in both orgs` : `every object, root and children, read again in both orgs — or tick “rescan” on the rows to read only some`;
 }
 async function _depRescan(p, opts) {
   const o = opts || {};

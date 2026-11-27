@@ -41,7 +41,11 @@ describe('wiring', () => {
     expect(DV).toMatch(/objects not read yet are not included/);
   });
   it('the press fills the same selection sets the per-tab All buttons fill, then repaints', () => {
-    const w = DV.slice(DV.indexOf("eid('dsDepTickAll')?.addEventListener"), DV.indexOf("eid('dsDepTickAll')?.addEventListener") + 700);
+    const w = DV.slice(DV.indexOf("eid('dsDepTickAll')?.addEventListener"), DV.indexOf("eid('dsDepTickAll')?.addEventListener") + 1100);
+    // 2026-11-27 (owner: "Should tick all records, both insert and updates"): the changed records too, source wins
+    expect(w).toMatch(/k === '' \? _recSel\.overwrite : _depChildSel\(k\)\.overwrite/);
+    expect(DV).toContain('✓ Tick every record — ');
+    expect(DV).not.toContain('✓ Tick every insert — ');
     expect(w).toMatch(/k === '' \? _recSel\.push : _depChildSel\(k\)\.push/);
     expect(w).toMatch(/renderDeploy\(\);/);
     expect(w).not.toMatch(/runReconcile|sendBg\(|_depRun\(|executeProfileTransfer/);   // ticks, never writes
