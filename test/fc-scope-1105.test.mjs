@@ -94,6 +94,6 @@ describe('wiring (2026-11-08: one scan, one list — "i dont think we need 3 tab
     expect(FC).toContain('⚠ Fix the <span title="the flows, layouts, Lightning pages and reports the tool rewrites itself');
   });
   it('the org sweep: a long retrieve says how long it has run (2026-11-08: "stuck at 2 prcnt")', () => {
-    expect(FC).toContain('in this retrieve — Salesforce says nothing until it lands; a big one takes minutes');
+    expect(FC).toContain('in this retrieve — Salesforce says nothing until it lands; a big scan takes minutes');
   });
 });

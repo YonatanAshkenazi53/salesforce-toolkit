@@ -4048,7 +4048,7 @@ const FieldCleaner = (() => {
       // cat started its animation again each time and never got past its first frames. It is drawn once; a tick
       // changes the words, the bar and the counts in place.
       const pct = s.planTotal ? Math.round(100 * (s.planDone || 0) / s.planTotal) : 0;
-      const live = el.querySelector('.fc-sweep-planning');
+      const live = el.querySelector('.fc-sweep-planning:not(.fc-sweep-running)');
       if (live) {
         const msg = live.querySelector('.lp-robot-msg'); if (msg) msg.textContent = `Listing the org’s metadata… ${s.planNote || ''}`;
         const bar = live.querySelector('.fc-sweep-bar > i'); if (bar) bar.style.width = pct + '%';
@@ -4106,11 +4106,13 @@ const FieldCleaner = (() => {
       // Salesforce reports nothing about a retrieve until it lands — a big one (every CustomObject) takes minutes
       // with the bar standing still; the line says how long this one has run so it never looks stuck
       const inRet = s.current && s.groupStartedAt ? Date.now() - s.groupStartedAt : 0;
-      const cur = s.current ? `retrieving ${esc(s.current)}…${inRet > 15000 ? ` ${sftkSweepFmtMs(inRet)} in this retrieve — Salesforce says nothing until it lands; a big one takes minutes` : ''}` : (s.reading ? 'reading the files…' : 'waiting for Salesforce…');
-      el.innerHTML = `<div class="fc-sweep">${sftkCatSm(`Reading the org… ${cur}`)}
+      const cur = s.current ? `retrieving ${esc(s.current)}…${inRet > 15000 ? ` ${sftkSweepFmtMs(inRet)} in this retrieve — Salesforce says nothing until it lands; a big scan takes minutes` : ''}` : (s.reading ? 'reading the files…' : 'waiting for Salesforce…');
+      const _cat = el.querySelector('.fc-sweep-running .sftk-cat');   // the cat that is already animating is kept across the once-a-second repaint (2026-11-28)
+      el.innerHTML = `<div class="fc-sweep fc-sweep-planning fc-sweep-running">${sftkCatSm(`Reading the org… ${cur}`)}
         <div class="fc-sweep-bar"><i style="width:${pct}%"></i></div>
         <div class="fc-sweep-meta"><span><b>${pct}%</b> · ${N(s.done)} of ${N(s.total)} components</span><span>retrieve ${N(Math.min(s.groupIdx + 1, s.groups.length))} of ${N(s.groups.length)}</span><span>${N(s.filesRead || 0)} files read</span><span><b>${sftkSweepFmtMs(eta)}</b> left${s.done ? '' : ' (estimated)'}</span>
         <button class="btn btn-secondary btn-sm" id="fcSweepStop"${s.stop ? ' disabled' : ''}>${s.stop ? 'Stopping after this retrieve…' : '⏹ Stop'}</button></div></div>`;
+      { const fresh = el.querySelector('.fc-sweep-running .sftk-cat'); if (_cat && fresh) fresh.replaceWith(_cat); }
       eid('fcSweepStop')?.addEventListener('click', () => { s.stop = true; renderOrgSweep(); });
       clearTimeout(s._tick); s._tick = setTimeout(() => { if (_orgSweep === s && s.status === 'running') renderOrgSweep(); }, 1000);
       return;
