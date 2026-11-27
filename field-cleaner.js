@@ -4044,7 +4044,21 @@ const FieldCleaner = (() => {
       return;
     }
     if (s.status === 'planning') {
-      el.innerHTML = `<div class="fc-sweep">${sftkCatSm(`Listing the org’s metadata… ${s.planNote || ''}`)}
+      // owner 2026-11-27 ("kitty animation too small and broken"): the card was rebuilt on every type listed, so the
+      // cat started its animation again each time and never got past its first frames. It is drawn once; a tick
+      // changes the words, the bar and the counts in place.
+      const pct = s.planTotal ? Math.round(100 * (s.planDone || 0) / s.planTotal) : 0;
+      const live = el.querySelector('.fc-sweep-planning');
+      if (live) {
+        const msg = live.querySelector('.lp-robot-msg'); if (msg) msg.textContent = `Listing the org’s metadata… ${s.planNote || ''}`;
+        const bar = live.querySelector('.fc-sweep-bar > i'); if (bar) bar.style.width = pct + '%';
+        const m = live.querySelectorAll('.fc-sweep-meta > span');
+        if (m[0]) m[0].textContent = `${N(s.planDone || 0)} of ${N(s.planTotal || 0)} type${s.planTotal === 1 ? '' : 's'} listed`;
+        if (m[1]) m[1].textContent = `${N(s.listedCount || 0)} component${s.listedCount === 1 ? '' : 's'} so far`;
+        const st = eid('fcSweepStop'); if (st) { st.disabled = !!s.stop; st.textContent = s.stop ? 'Stopping…' : '⏹ Stop'; }
+        return;
+      }
+      el.innerHTML = `<div class="fc-sweep fc-sweep-planning">${sftkCatSm(`Listing the org’s metadata… ${s.planNote || ''}`)}
         <div class="fc-sweep-bar"><i style="width:${s.planTotal ? Math.round(100 * (s.planDone || 0) / s.planTotal) : 0}%"></i></div>
         <div class="fc-sweep-meta"><span>${N(s.planDone || 0)} of ${N(s.planTotal || 0)} type${s.planTotal === 1 ? '' : 's'} listed</span><span>${N(s.listedCount || 0)} component${s.listedCount === 1 ? '' : 's'} so far</span>
         <button class="btn btn-secondary btn-sm" id="fcSweepStop"${s.stop ? ' disabled' : ''}>${s.stop ? 'Stopping…' : '⏹ Stop'}</button></div></div>`;

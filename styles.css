@@ -7678,3 +7678,6 @@ body.sftk-dark .fc-plan-way.on[data-kind="delete"] { background: #4a1b1f; color:
 .adbg-log-cats { align-items: center; width: 100%; flex: 1 1 100%; box-sizing: border-box; }
 .adbg-log-cats .adbg-log-fontctl { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
 .adbg-log-fontlbl { font-size: 11.5px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--subtext); margin-right: 4px; white-space: nowrap; }
+
+/* Field Cleaner, "Listing the org's metadata": the cat at a size it can be seen at (owner 2026-11-27) */
+.fc-sweep-planning .lp-robot-sm .sftk-cat { width: 128px; height: 128px; }
