@@ -694,7 +694,7 @@ async function renderDeploy() {
       <div class="ds-dep-ab-row ds-dep-ab-top">
         <div class="ds-dep-summary" id="dsDepSummary"></div>
         <button class="ds-btn ds-btn-lg" id="dsDepPiiSel" disabled title="Reads every record you selected for an insert or an update, in every object, and suggests which fields to disguise — each with a real example. One Apply covers them all. Nothing is written to an org.">🎭 Disguise</button>
-        <button class="ds-btn ds-btn-lg" id="dsRecProbeBtn" disabled title="A real write that Salesforce rolls back: the selected inserts and updates go to the target in one transaction together with a record that always fails, so every validation rule, trigger, flow and duplicate rule runs on your real records — and nothing is kept. The first 200 records of each object. Deletes, updates and relinks are not part of it.">🧪 Dry run</button>
+        <button class="ds-btn ds-btn-lg" id="dsRecProbeBtn" disabled title="A real write that Salesforce rolls back: the selected inserts and updates go to the target in one transaction together with a record that always fails, so every validation rule, trigger, flow and duplicate rule runs on your real records — and nothing is kept. The first 200 records of each object. Deletes, updates and relinks are not part of it.">${dsIcon('flask')} Dry run</button>
         <button class="ds-btn ds-btn-lg ds-btn-primary" id="dsRecRunBtn" disabled>▶ Deploy</button>
       </div>
       <div class="ds-dep-ab-row ds-dep-ab-fields">

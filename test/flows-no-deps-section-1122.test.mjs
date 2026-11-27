@@ -50,12 +50,18 @@ describe('managed package flows are on the Flows list', () => {
     expect(shown(rows, '', 'ScheduledFlow', {})).toEqual([]);
   });
   it('not read yet is no row, not an error', () => { expect(shown(null, '', 'all', {})).toEqual([]); });
-  it('the list draws them at its end, read-only, and again when their read lands', () => {
-    expect(PJ).toContain('list.appendChild(buildManagedFlowsBox(shown, (mg || []).length));');
-    expect(PJ).toContain("if (loadOrgUrl === orgUrl) renderFlowList();   // the 🔒 managed package flows, at the end of the list");
-    const box = PJ.slice(PJ.indexOf('function buildManagedFlowsBox('), PJ.indexOf('// One card for a flow tree'));
+  // 2026-11-27 (owner: "show package flows with a lock but not a seperate tab … just say which flow is package
+  // one"): rows of the list itself, in its alphabetical order, counted by the tabs — no fold at the end
+  it('the list draws them in their place by name, read-only, and again when their read lands', () => {
+    expect(PJ).toContain("items.push({ label: f.label, el: buildManagedFlowRow(f) });");
+    expect(PJ).toContain("items.sort((a, b) => String(a.label).localeCompare(String(b.label)));");
+    expect(PJ).toContain("for (const f of sftkManagedFlowsShown(mgAll, '', 'all', trigMap)) { kindCounts.all++; kindCounts[sftkFlowKindTab(f.kind)]++; }");
+    expect(PJ).not.toContain('buildManagedFlowsBox');
+    expect(PJ).toContain("if (loadOrgUrl === orgUrl) renderFlowList();   // the 🔒 managed package flows, in their place in the list");
+    const box = PJ.slice(PJ.indexOf('function buildManagedFlowRow('), PJ.indexOf('// One card for a flow tree'));
     expect(box).not.toContain('checkbox');
-    expect(box).toContain('so they cannot be deleted, backed up or changed here');
+    expect(box).toContain('so it cannot be deleted, backed up or changed here');
+    expect(box).toContain("f.ns ? `package · ${f.ns}` : 'package'");
     expect(CSS).toContain('.flow-managed-row {');
   });
 });
@@ -118,5 +124,5 @@ describe('a managed package flow is marked on every view of the Flows page', () 
     expect(DM).toContain('🔒 managed package</span>');
   });
   it('⚙ API versions: the chip it always had', () => { expect(DM).toMatch(/dep-pill dep-pill-hint" title="Managed package flow/); });
-  it('🗂 Flows: their own section at the end of the list', () => { expect(PJ).toContain('🔒 Managed package flows <b>'); });
+  it('🗂 Flows: a lock and a "package" badge on the row itself (2026-11-27: no section of their own)', () => { expect(PJ).toContain("add('flow-managed-lock', '🔒', 'Installed by a managed package."); expect(PJ).not.toContain('🔒 Managed package flows <b>'); });
 });

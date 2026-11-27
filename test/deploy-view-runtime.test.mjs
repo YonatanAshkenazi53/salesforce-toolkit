@@ -31,6 +31,7 @@ describe('Deploy view — the page actually runs', () => {
       setMain: h => { mainHtml = h; },
       esc: s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
       dsViewHeader: o => `<header>${o.title}${o.subtitle}${o.actions}</header>`,
+      dsIcon: n => '<span data-i="' + n + '"></span>',
       orgLabel: u => String(u).replace(/^https?:\/\//, '').split('.')[0],
       prodBadge: () => '', timeAgo: () => '1m ago', showToast() {}, showModal() {}, renderProfiles() {},
       renderReconcile() {}, runReconcile() {}, scanReconcileChild: async () => ({}),

@@ -1026,7 +1026,7 @@ async function loadFlows() {
       DependencyMap.loadManagedFlows(loadOrgUrl, loadSid)
         .then(() => {
           patchFlowTypesFromDefinitions(loadOrgUrl);
-          if (loadOrgUrl === orgUrl) renderFlowList();   // the 🔒 managed package flows, at the end of the list
+          if (loadOrgUrl === orgUrl) renderFlowList();   // the 🔒 managed package flows, in their place in the list
           // The cached map paints before this list lands, so a managed
           // subflow target read "Not found" until something else repainted.
           if (loadOrgUrl === orgUrl && DependencyMap.treeStaleForManaged?.()
@@ -1506,6 +1506,11 @@ function renderFlowList() {
   const rows = sftkFlowListRows(flowGroups);
   // the kind picked on the tabs above the list; a tab whose kind is gone from the org falls back to All
   const kindCounts = sftkFlowKindCounts(rows, trigMap);
+  // 🔒 flows installed by managed packages are flows of the list like any other (owner 2026-11-27: "show package
+  // flows with a lock but not a seperate tab … and just say which flow is package one"): counted by the tabs,
+  // drawn in the list's own alphabetical order, read-only.
+  const mgAll = (typeof DependencyMap.getManagedFlows === 'function') ? DependencyMap.getManagedFlows() : null;
+  for (const f of sftkManagedFlowsShown(mgAll, '', 'all', trigMap)) { kindCounts.all++; kindCounts[sftkFlowKindTab(f.kind)]++; }
   if (_flowTypeFilter !== 'all' && !kindCounts[_flowTypeFilter]) _flowTypeFilter = 'all';
   _flowTypePaint(kindCounts);
   const kindHit = row => _flowTypeFilter === 'all' || sftkFlowKindTab(sftkFlowKindOfRow(row, trigMap)) === _flowTypeFilter;
@@ -1515,6 +1520,7 @@ function renderFlowList() {
     ? sftkFlowTreeBlocks(sftkFlowTreeOrder(rows, calls, rank)) : [], rows);
   blocks.sort((a, b) => a.rows[0].row.label.localeCompare(b.rows[0].row.label));
 
+  const items = [];   // { label, el } — the org's own flows and the package flows, one alphabetical list
   for (const bk of blocks) {
     // a tree shows whole when any of its flows matches the search — the tree is the unit
     // …and when any of its flows is of the kind picked: a record-triggered flow is shown with the subflows it calls
@@ -1522,20 +1528,20 @@ function renderFlowList() {
     if (!shown.length || !bk.rows.some(e => kindHit(e.row) && (!search || hit(e.row) || shown.length))) continue;
     if (bk.rows.length === 1) {
       visibleCount++;
-      list.appendChild(buildGroupElement(bk.rows[0].row.label, bk.rows[0].row.versions, depMap));
+      items.push({ label: bk.rows[0].row.label, el: buildGroupElement(bk.rows[0].row.label, bk.rows[0].row.versions, depMap) });
       continue;
     }
     visibleCount += bk.rows.length;
-    list.appendChild(buildTreeBox(bk, depMap));
+    items.push({ label: bk.rows[0].row.label, el: buildTreeBox(bk, depMap) });
   }
 
-  // 🔒 flows installed by managed packages, at the end of the list (owner 2026-11-22: "also we dont see package
-  // flows"). Read-only rows: Salesforce hides their contents and they cannot be deleted or backed up.
-  {
-    const mg = (typeof DependencyMap.getManagedFlows === 'function') ? DependencyMap.getManagedFlows() : null;
-    const shown = _flowUses ? [] : sftkManagedFlowsShown(mg, search, _flowTypeFilter, trigMap);   // their contents are hidden: a what-uses search cannot answer for them
-    if (shown.length) { visibleCount += shown.length; list.appendChild(buildManagedFlowsBox(shown, (mg || []).length)); }
+  // 🔒 package flows, each in its place by name. Their contents are hidden: a what-uses search cannot answer for them.
+  for (const f of (_flowUses ? [] : sftkManagedFlowsShown(mgAll, search, _flowTypeFilter, trigMap))) {
+    visibleCount++;
+    items.push({ label: f.label, el: buildManagedFlowRow(f) });
   }
+  items.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  for (const it of items) list.appendChild(it.el);
 
   list.style.display = visibleCount > 0 ? '' : 'none';
   emptyState.style.display = visibleCount === 0 && sortedLabels.length > 0 ? '' : 'none';
@@ -1628,29 +1634,20 @@ function sftkManagedFlowsShown(rows, search, filter, trigMap) {
   }
   return out.sort((a, b) => String(a.label).localeCompare(String(b.label)));
 }
-let _managedFlowsOpen = false;
-// The section itself: a fold, closed until asked for, one read-only row per flow.
-function buildManagedFlowsBox(shown, total) {
-  const box = document.createElement('details');
-  box.className = 'flow-managed';
-  box.open = _managedFlowsOpen || !!document.getElementById('searchInput').value.trim();
-  box.addEventListener('toggle', () => { _managedFlowsOpen = box.open; });
-  const sum = document.createElement('summary');
-  const n = shown.length;
-  sum.innerHTML = `🔒 Managed package flows <b>${n.toLocaleString('en-US')}</b>${n !== total ? ` <span class="flow-managed-sub">of ${Number(total).toLocaleString('en-US')}</span>` : ''} <span class="flow-managed-sub">installed by packages · Salesforce hides their contents, so they cannot be deleted, backed up or changed here</span>`;
-  box.appendChild(sum);
-  for (const f of shown) {
-    const row = document.createElement('div');
-    row.className = 'flow-managed-row';
-    const add = (cls, text, title) => { const s = document.createElement('span'); s.className = cls; s.textContent = text; if (title) s.title = title; row.appendChild(s); return s; };
-    add('flow-kind-ico', SFTK_FLOW_KIND_ICON[f.kind] || '•', humanProcessType(f.kind));
-    add('flow-managed-name', f.label, f.apiName);
-    if (f.ns) add('badge flow-managed-ns', f.ns, 'Namespace of the installed package');
-    add(`badge ${f.active ? 'badge-active' : 'badge-draft'}`, f.status);
-    add('flow-managed-meta', [f.version != null ? `v${f.version}` : '', f.apiVersion ? `API ${f.apiVersion}` : ''].filter(Boolean).join(' · '));
-    box.appendChild(row);
-  }
-  return box;
+// One package flow in the list: a row like any flow's, with a lock where the tick box would be — it cannot be
+// ticked, deleted, backed up or changed — and a badge that says which package it comes from.
+function buildManagedFlowRow(f) {
+  const row = document.createElement('div');
+  row.className = 'flow-managed-row';
+  row.dataset.api = f.apiName;
+  const add = (cls, text, title) => { const s = document.createElement('span'); s.className = cls; s.textContent = text; if (title) s.title = title; row.appendChild(s); return s; };
+  add('flow-managed-lock', '🔒', 'Installed by a managed package. Salesforce hides its contents, so it cannot be deleted, backed up or changed here.');
+  add('flow-kind-ico', SFTK_FLOW_KIND_ICON[f.kind] || '•', humanProcessType(f.kind));
+  add('flow-managed-name', f.label, f.apiName);
+  add('badge flow-managed-ns', f.ns ? `package · ${f.ns}` : 'package', f.ns ? `Installed by the managed package with the namespace ${f.ns}` : 'Installed by a managed package');
+  add(`badge ${f.active ? 'badge-active' : 'badge-draft'}`, f.status);
+  add('flow-managed-meta', [f.version != null ? `v${f.version}` : '', f.apiVersion ? `API ${f.apiVersion}` : ''].filter(Boolean).join(' · '));
+  return row;
 }
 
 // One card for a flow tree: the header ticks every version of every flow in it (half-ticked when only some are),
