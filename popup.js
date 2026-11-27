@@ -1541,14 +1541,15 @@ function renderFlowList() {
   // 🔒 package flows, each in its place by name. Their contents are hidden: a what-uses search cannot answer for them.
   for (const f of (_flowUses ? [] : sftkManagedFlowsShown(mgAll, search, _flowTypeFilter, trigMap))) {
     visibleCount++;
-    items.push({ label: f.label, el: buildManagedFlowRow(f) });
+    items.push({ label: f.label, pkg: 1, el: buildManagedFlowRow(f) });
   }
   // 📜 workflow rules, each in its place by name; like the package flows, a what-uses search cannot answer for them
   for (const f of (_flowUses ? [] : sftkWfRulesShown(_wfRules, search, _flowTypeFilter))) {
     visibleCount++;
-    items.push({ label: f.name, el: buildWorkflowRuleRow(f) });
+    items.push({ label: f.name, pkg: f.pkg || f.managed || f.ns ? 1 : 0, el: buildWorkflowRuleRow(f) });
   }
-  items.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  // the org's own rows first, by name; what a package installed after them, by name (owner 2026-11-28: "can we see package after the regular flows?")
+  items.sort((a, b) => ((a.pkg || 0) - (b.pkg || 0)) || String(a.label).localeCompare(String(b.label)));
   for (const it of items) list.appendChild(it.el);
 
   list.style.display = visibleCount > 0 ? '' : 'none';

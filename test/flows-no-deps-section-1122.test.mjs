@@ -53,8 +53,8 @@ describe('managed package flows are on the Flows list', () => {
   // 2026-11-27 (owner: "show package flows with a lock but not a seperate tab … just say which flow is package
   // one"): rows of the list itself, in its alphabetical order, counted by the tabs — no fold at the end
   it('the list draws them in their place by name, read-only, and again when their read lands', () => {
-    expect(PJ).toContain("items.push({ label: f.label, el: buildManagedFlowRow(f) });");
-    expect(PJ).toContain("items.sort((a, b) => String(a.label).localeCompare(String(b.label)));");
+    expect(PJ).toContain("items.push({ label: f.label, pkg: 1, el: buildManagedFlowRow(f) });");
+    expect(PJ).toContain("items.sort((a, b) => ((a.pkg || 0) - (b.pkg || 0)) || String(a.label).localeCompare(String(b.label)));");   // 2026-11-28: package rows after the org's own
     expect(PJ).toContain("for (const f of sftkManagedFlowsShown(mgAll, '', 'all', trigMap)) { kindCounts.all++; kindCounts[sftkFlowKindTab(f.kind)]++; }");
     expect(PJ).not.toContain('buildManagedFlowsBox');
     expect(PJ).toContain("if (loadOrgUrl === orgUrl) renderFlowList();   // the 🔒 managed package flows, in their place in the list");
