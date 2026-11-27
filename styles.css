@@ -5878,6 +5878,12 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   color: var(--subtext);
 }
 
+/* the object list and the field list while they load: the list is as wide as the page, so the cat is drawn
+   large (owner 2026-11-27: "kitty animation when the object list is loading is too small") */
+.fc-dd-loading .lp-robot-loading { padding: 22px 20px 26px; }
+.fc-dd-loading .lp-robot-loading .sftk-cat { width: 128px; height: 128px; }
+.fc-dd-loading .lp-robot-msg { font-size: 13px; }
+
 .fc-dd-main {
   display: block;
   font-size: 12px;
