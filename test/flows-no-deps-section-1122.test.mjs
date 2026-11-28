@@ -139,7 +139,7 @@ describe('workflow rules are on the Flows list', () => {
   });
   it('listed under All and Other only, by name, narrowed by the search on the name or the object', () => {
     expect(shown([B, A], '', 'all').map(r => r.name)).toEqual(['Notify owner', 'Sync']);
-    expect(shown([B, A], '', 'other').length).toBe(2);
+    expect(shown([B, A], '', 'wfrule').length).toBe(2); expect(shown([B, A], '', 'other').length).toBe(0);   // 2026-11-28: workflow rules have their own tab
     expect(shown([B, A], '', 'RecordTriggeredFlow')).toEqual([]);
     expect(shown([B, A], 'case', 'all').map(r => r.name)).toEqual(['Notify owner']);
     expect(shown(null, '', 'all')).toEqual([]);
@@ -149,7 +149,7 @@ describe('workflow rules are on the Flows list', () => {
     expect(box).not.toContain('checkbox');
     expect(box).toContain("add('flow-managed-lock', f.managed ? '🔒' : ''");
     expect(box).toContain('/lightning/setup/WorkflowRules/page?address=');
-    expect(PJ).toContain('kindCounts.all += wfN; kindCounts.other += wfN;');
+    expect(PJ).toContain('kindCounts.all += wfN; kindCounts.wfrule += wfN;');   // 2026-11-28: their own tab
     expect(PJ).toContain("loadWorkflowRules(loadOrgUrl, loadSid).then(() => { if (loadOrgUrl === orgUrl) renderFlowList(); });");
   });
 });
@@ -173,5 +173,21 @@ describe('whose flows: two tabs, and a process says it is one', () => {
   it('a Process Builder process is named, a flow is not', () => {
     const f = new Function('return ' + grab('sftkFlowProcessWord'))();
     expect([f('Workflow'), f('CustomEvent'), f('InvocableProcess'), f('Flow'), f('AutoLaunchedFlow'), f('')]).toEqual(['process builder', 'process builder', 'process builder', '', '', '']);
+  });
+});
+
+// 2026-11-28 (owner): "Maybe we should also display all process builders and workflow rules?" — a tab for each
+describe('Process Builder and Workflow rules have their own kind tabs', () => {
+  const PJ3 = readFileSync(new URL('../popup.js', import.meta.url), 'utf8'), H3 = readFileSync(new URL('../popup.html', import.meta.url), 'utf8');
+  it('the two tabs exist and show only while the org has such rows', () => {
+    expect(H3).toContain('data-ftype="process"'); expect(H3).toContain('data-ftype="wfrule"');
+    expect(PJ3).toContain("if (k === 'other' || k === 'process' || k === 'wfrule') b.style.display = n ? '' : 'none';");
+  });
+  it('a package process is under the Process Builder tab too', () => {
+    globalThis.resolveFlowType = p => p;
+    const shown = extractFunction('popup.js', 'sftkManagedFlowsShown');
+    const rows = [{ apiName: 'p__PB', label: 'PB', processType: 'Workflow', active: null, latest: null }, { apiName: 'p__F', label: 'F', processType: 'Flow', active: null, latest: null }];
+    expect(shown(rows, '', 'process', {}).map(r => r.apiName)).toEqual(['p__PB']);
+    expect(shown(rows, '', 'other', {})).toEqual([]);
   });
 });

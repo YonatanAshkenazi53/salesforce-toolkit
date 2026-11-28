@@ -1440,13 +1440,15 @@ function sftkFlowKindOfRow(row, trigMap) {
   return pt;
 }
 const SFTK_FLOW_KIND_TABS = ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'];
-// Which tab a kind is shown under: its own, or "other" (Process Builder, platform event, orchestration …). PURE.
-function sftkFlowKindTab(kind) { return ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'].includes(kind) ? kind : 'other'; }
+// Which tab a kind is shown under: its own, "process" for a Process Builder process, or "other" (platform event,
+// orchestration …). PURE. Workflow rules are not flows: the list counts them under their own "wfrule" tab
+// (owner 2026-11-28: "Maybe we should also display all process builders and workflow rules?").
+function sftkFlowKindTab(kind) { return ['Workflow', 'CustomEvent', 'InvocableProcess'].includes(kind) ? 'process' : ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'].includes(kind) ? kind : 'other'; }
 // PURE. Is a flow of this kind a guest under the kind tab picked (shown for its tree, not counted by the tab)?
 function sftkFlowOtherKind(filter, kind) { return !!filter && filter !== 'all' && sftkFlowKindTab(kind) !== filter; }
-// How many flows each tab holds. PURE.→ { all, RecordTriggeredFlow, Flow, AutoLaunchedFlow, ScheduledFlow, other }
+// How many flows each tab holds. PURE.→ { all, RecordTriggeredFlow, Flow, AutoLaunchedFlow, ScheduledFlow, process, wfrule, other }
 function sftkFlowKindCounts(rows, trigMap) {
-  const out = { all: 0, RecordTriggeredFlow: 0, Flow: 0, AutoLaunchedFlow: 0, ScheduledFlow: 0, other: 0 };
+  const out = { all: 0, RecordTriggeredFlow: 0, Flow: 0, AutoLaunchedFlow: 0, ScheduledFlow: 0, process: 0, wfrule: 0, other: 0 };
   for (const r of (rows || [])) { out.all++; out[sftkFlowKindTab(sftkFlowKindOfRow(r, trigMap))]++; }
   return out;
 }
@@ -1480,7 +1482,7 @@ function _flowTypePaint(counts) {
     b.textContent = `${b.dataset.label} ${n.toLocaleString('en-US')}`;
     b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
     b.classList.toggle('flow-type-none', !n && k !== 'all');
-    if (k === 'other') b.style.display = n ? '' : 'none';
+    if (k === 'other' || k === 'process' || k === 'wfrule') b.style.display = n ? '' : 'none';
   });
 }
 
@@ -1540,8 +1542,8 @@ function renderFlowList() {
   // flows with a lock but not a seperate tab … and just say which flow is package one"): counted by the tabs,
   // drawn in the list's own alphabetical order, read-only.
   if (OWN_PKG) for (const f of mgEvery) { kindCounts.all++; kindCounts[sftkFlowKindTab(f.kind)]++; }
-  const wfN = wfEvery.filter(f => wfPkg(f) === OWN_PKG).length;   // 📜 workflow rules: under Other
-  kindCounts.all += wfN; kindCounts.other += wfN;
+  const wfN = wfEvery.filter(f => wfPkg(f) === OWN_PKG).length;   // 📜 workflow rules: their own tab
+  kindCounts.all += wfN; kindCounts.wfrule += wfN;
   if (_flowTypeFilter !== 'all' && !kindCounts[_flowTypeFilter]) _flowTypeFilter = 'all';
   _flowTypePaint(kindCounts);
   const kindHit = row => _flowTypeFilter === 'all' || sftkFlowKindTab(sftkFlowKindOfRow(row, trigMap)) === _flowTypeFilter;
@@ -1671,9 +1673,9 @@ function sftkWfRuleRow(r, meta) {
     ns: String((r && r.NamespacePrefix) || ''), managed: /^installed/i.test(String((r && r.ManageableState) || '')),
     active: md && typeof md.active === 'boolean' ? md.active : null };
 }
-// PURE. The workflow rules the list shows under the search and the tab picked (All and Other only), by name.
+// PURE. The workflow rules the list shows under the search and the tab picked (All and Workflow rules only), by name.
 function sftkWfRulesShown(rows, search, filter) {
-  if (filter && filter !== 'all' && filter !== 'other') return [];
+  if (filter && filter !== 'all' && filter !== 'wfrule') return [];
   const term = String(search || '').toLowerCase().trim();
   return (rows || []).filter(r => r && r.name && (!term || r.name.toLowerCase().includes(term) || String(r.object).toLowerCase().includes(term)))
     .sort((a, b) => a.name.localeCompare(b.name) || String(a.object).localeCompare(String(b.object)));
@@ -1736,7 +1738,7 @@ function sftkManagedFlowsShown(rows, search, filter, trigMap) {
     if (term && !(String(label).toLowerCase().includes(term) || String(f.apiName).toLowerCase().includes(term))) continue;
     const trig = trigMap && trigMap[f.apiName];
     const kind = (typeof resolveFlowType === 'function' ? resolveFlowType(f.processType || '', trig) : (f.processType || '')) || '';
-    const tab = ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'].includes(kind) ? kind : 'other';
+    const tab = ['Workflow', 'CustomEvent', 'InvocableProcess'].includes(kind) ? 'process' : ['RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow'].includes(kind) ? kind : 'other';
     if (filter && filter !== 'all' && tab !== filter) continue;
     const gov = f.active || f.latest || null;
     const i = String(f.apiName).indexOf('__');

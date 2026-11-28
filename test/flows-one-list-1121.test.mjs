@@ -27,11 +27,11 @@ describe('the kind of a flow', () => {
     expect(kind(row('X'), {})).toBe('');
   });
   it('a kind without a tab of its own is counted under Other', () => {
-    expect(tab('Workflow')).toBe('other'); expect(tab('PlatformEventFlow')).toBe('other'); expect(tab('Flow')).toBe('Flow');
+    expect(tab('Workflow')).toBe('process'); expect(tab('InvocableProcess')).toBe('process'); expect(tab('PlatformEventFlow')).toBe('other'); expect(tab('Flow')).toBe('Flow');   // 2026-11-28: Process Builder has its own tab
     expect(counts([
       row('Acc_After', { ProcessType: 'AutoLaunchedFlow', Status: 'Active' }), row('Nightly', { ProcessType: 'AutoLaunchedFlow', Status: 'Active' }),
       row('Sub', { ProcessType: 'AutoLaunchedFlow', Status: 'Active' }), row('Wizard', { ProcessType: 'Flow', Status: 'Active' }), row('PB', { ProcessType: 'Workflow', Status: 'Active' }),
-    ], TRIG)).toEqual({ all: 5, RecordTriggeredFlow: 1, Flow: 1, AutoLaunchedFlow: 1, ScheduledFlow: 1, other: 1 });
+    ], TRIG)).toEqual({ all: 5, RecordTriggeredFlow: 1, Flow: 1, AutoLaunchedFlow: 1, ScheduledFlow: 1, process: 1, wfrule: 0, other: 0 });
   });
 });
 
@@ -40,7 +40,7 @@ describe('one Flows view', () => {
     expect(HTML).toContain('data-view="versions" role="tab" aria-selected="true"');
     expect(HTML).toContain('>🗂 Flows</button>');
     expect(HTML).not.toContain('data-view="deps"');
-    for (const k of ['all', 'RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow', 'other']) expect(HTML).toContain(`data-ftype="${k}"`);
+    for (const k of ['all', 'RecordTriggeredFlow', 'Flow', 'AutoLaunchedFlow', 'ScheduledFlow', 'process', 'wfrule', 'other']) expect(HTML).toContain(`data-ftype="${k}"`);
     expect(HTML).not.toContain('flowDepsFold'); expect(HTML).not.toContain('id="depTreeContainer"');
   });
   it('a tree is shown whole when one of its flows is of the kind picked; a kind gone from the org falls back to All', () => {
@@ -79,7 +79,7 @@ describe('Select All under a kind tab (QA regression run, 2026-11-21)', () => {
   it('takes only the flows of the kind picked; All takes every flow', () => {
     const sched = row('Nightly', { ProcessType: 'AutoLaunchedFlow', Status: 'Active' }), screen = row('Wizard', { ProcessType: 'Flow', Status: 'Active' }), pb = row('PB', { ProcessType: 'Workflow', Status: 'Active' });
     expect(selectable('ScheduledFlow', sched, TRIG)).toBe(true); expect(selectable('ScheduledFlow', screen, TRIG)).toBe(false);
-    expect(selectable('other', pb, TRIG)).toBe(true); expect(selectable('other', sched, TRIG)).toBe(false);
+    expect(selectable('process', pb, TRIG)).toBe(true); expect(selectable('other', pb, TRIG)).toBe(false); expect(selectable('other', sched, TRIG)).toBe(false);
     for (const r of [sched, screen, pb]) { expect(selectable('all', r, TRIG)).toBe(true); expect(selectable('', r, TRIG)).toBe(true); }
     expect(PJ).toContain("if (!sftkFlowKindSelectable(_flowTypeFilter, { apiName: (versions[0] || {}).ApiName, versions }, trigMap)) continue;");
   });
