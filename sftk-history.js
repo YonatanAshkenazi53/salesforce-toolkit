@@ -537,7 +537,7 @@ async function sftkHistoryUndoMany(entries, opts) {
 const SFTK_TOOLKIT_TOOLS = {
   'Field Cleaner': 'fields', 'Lightning Pages': 'pages', 'Apex Debugger': 'debugger', 'License Manager': 'licenses',
   'Copy Permissions': 'copy-perms', 'Flow switches': 'flows', 'API versions': 'flows',   // one Flows page (2026-10-17)
-  'Flow delete': 'flows', 'Flow interviews': 'flows', 'Flow Access': 'flow-access',
+  'Flow delete': 'flows', 'Flow interviews': 'flows', 'Workflow rules': 'flows', 'Flow Access': 'flow-access',
 };
 const SFTK_TOOLKIT_TAB_LABELS = {
   flows: 'Flows', debugger: 'Debugger', pages: 'Lightning Pages', fields: 'Field Cleaner',

@@ -144,10 +144,10 @@ describe('workflow rules are on the Flows list', () => {
     expect(shown([B, A], 'case', 'all').map(r => r.name)).toEqual(['Notify owner']);
     expect(shown(null, '', 'all')).toEqual([]);
   });
-  it('the row is read-only: no tick box, a lock only for a package rule, a link to Setup; the tabs count the rules', () => {
-    const box = PJ.slice(PJ.indexOf('function buildWorkflowRuleRow('), PJ.indexOf('// PURE. The managed package flows the list shows'));
-    expect(box).not.toContain('checkbox');
-    expect(box).toContain("add('flow-managed-lock', f.managed ? '🔒' : ''");
+  it('a tick box for the org\'s own rule (2026-11-28), a lock only for a package rule, a link to Setup; the tabs count the rules', () => {
+    const box = PJ.slice(PJ.indexOf('function buildWorkflowRuleRow('), PJ.indexOf('// ── Workflow rules: tick, back up, delete, restore'));
+    expect(box).toContain("if (sftkWfTickable(f)) {");
+    expect(box).toContain("} else add('flow-managed-lock', f.managed ? '🔒' : ''");
     expect(box).toContain('/lightning/setup/WorkflowRules/page?address=');
     expect(PJ).toContain('kindCounts.all += wfN; kindCounts.wfrule += wfN;');   // 2026-11-28: their own tab
     expect(PJ).toContain("loadWorkflowRules(loadOrgUrl, loadSid).then(() => { if (loadOrgUrl === orgUrl) renderFlowList(); });");
@@ -189,5 +189,43 @@ describe('Process Builder and Workflow rules have their own kind tabs', () => {
     const rows = [{ apiName: 'p__PB', label: 'PB', processType: 'Workflow', active: null, latest: null }, { apiName: 'p__F', label: 'F', processType: 'Flow', active: null, latest: null }];
     expect(shown(rows, '', 'process', {}).map(r => r.apiName)).toEqual(['p__PB']);
     expect(shown(rows, '', 'other', {})).toEqual([]);
+  });
+});
+
+// 2026-11-28 (owner): "And make sure they can be backed up, etc" — workflow rules: tick, back up, delete, restore
+describe('workflow rules can be backed up, deleted and restored', () => {
+  const PJ4 = readFileSync(new URL('../popup.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const fn = name => { const a = PJ4.indexOf('function ' + name + '('); let d = 0, i = PJ4.indexOf('{', a); for (; i < PJ4.length; i++) { if (PJ4[i] === '{') d++; else if (PJ4[i] === '}' && --d === 0) break; } return new Function('return ' + PJ4.slice(a, i + 1))(); };
+  it('only the org\'s own rule can be ticked', () => {
+    const t = fn('sftkWfTickable');
+    expect([t({ id: '01Q1' }), t({ id: '01Q1', managed: true }), t({ id: '01Q1', ns: 'pkg' }), t({}), t(null)]).toEqual([true, false, false, false, false]);
+  });
+  it('a backup entry needs the metadata that was read; a restore sends it switched off and leaves the backup as it was', () => {
+    const entry = fn('sftkWfBackupEntry'), body = fn('sftkWfRestoreBody');
+    expect(entry({ name: 'R', object: 'Account' }, null)).toBe(null);
+    expect(entry({ name: 'R', object: 'Account' }, { FullName: 'Account.R' })).toBe(null);
+    const e = entry({ name: 'R', object: 'Account' }, { FullName: 'Account.R', Metadata: { active: true, triggerType: 'onCreateOnly' } });
+    expect(e).toEqual({ FullName: 'Account.R', Name: 'R', Object: 'Account', Active: true, Metadata: { active: true, triggerType: 'onCreateOnly' } });
+    expect(body(e)).toEqual({ FullName: 'Account.R', Metadata: { active: false, triggerType: 'onCreateOnly' } });
+    expect(e.Metadata.active).toBe(true);
+  });
+  it('the rules of a bundle become rows of the Restore panel; a bundle of flows only has none', () => {
+    const rows = fn('sftkWfRestoreRows');
+    expect(rows({ flows: [{}] })).toEqual([]);
+    expect(rows({ workflowRules: [{ FullName: 'Account.R', Name: 'R', Active: true, Metadata: { active: true } }, { FullName: 'x' }, null] }))
+      .toEqual([{ _wf: true, MasterLabel: 'R', ApiName: 'Account.R', FullName: 'Account.R', VersionNumber: '', Status: 'Active', Metadata: { active: true } }]);
+  });
+  it('no backup, no delete; the zip goes down before the first delete; a restore never overwrites', () => {
+    const del = PJ4.slice(PJ4.indexOf('async function onWfDeleteClick('), PJ4.indexOf('async function performWfRestore('));
+    expect(del.indexOf('if (missed.length) {')).toBeLessThan(del.indexOf('sftkConfirmDestructive('));
+    expect(del.indexOf('_wfDownloadZip(entries);')).toBeGreaterThan(del.indexOf('if (!ok) return;'));
+    expect(del.indexOf('_wfDownloadZip(entries);')).toBeLessThan(del.indexOf("type: 'SF_TOOLING_DELETE'"));
+    const res = PJ4.slice(PJ4.indexOf('async function performWfRestore('), PJ4.indexOf('// PURE. The managed package flows the list shows'));
+    expect(res).toContain("type: 'SF_REST_POST'"); expect(res).not.toContain('SF_PATCH');
+  });
+  it('Select All takes nothing of the org\'s own under the Package flows tab, and Deselect All clears the rules too', () => {
+    expect(PJ4).toContain("for (const [label, versions] of Object.entries(_flowOwnTab === 'pkg' ? {} : flowGroups)) {");
+    expect(PJ4).toContain('selectedIds.clear(); selectedWf.clear();');
+    expect(PJ4).toContain('const count = selectedIds.size + selectedWf.size;');
   });
 });

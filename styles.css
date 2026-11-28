@@ -7689,3 +7689,6 @@ body.sftk-dark .fc-plan-way.on[data-kind="delete"] { background: #4a1b1f; color:
 .flow-own-btn.active { color: var(--accent, #0176d3); border-bottom-color: var(--accent, #0176d3); }
 .flow-own-btn:focus-visible { outline: 2px solid var(--accent, #0176d3); outline-offset: -2px; }
 .flow-own-n { font-weight: 500; opacity: .8; margin-left: 2px; }
+
+/* Flows: an org workflow rule's tick box (2026-11-28) */
+.flow-wfrule-cb { width: 16px; height: 16px; margin: 0; flex: none; cursor: pointer; }

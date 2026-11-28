@@ -1683,6 +1683,7 @@ function sftkWfRulesShown(rows, search, filter) {
 async function loadWorkflowRules(url, s) {
   _wfRules = null; _wfRulesNote = '';
   let recs = [];
+  const keepTicks = new Set(selectedWf);
   try {
     const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: url, sid: s, _suppressError: true, _silentError: true,
       query: 'SELECT Id, Name, TableEnumOrId, NamespacePrefix, ManageableState FROM WorkflowRule' });
@@ -1705,17 +1706,25 @@ async function loadWorkflowRules(url, s) {
   await Promise.all([worker(), worker(), worker(), worker()]);
   if (url !== orgUrl) return;   // the org was switched while this read
   _wfRules = recs.map(r => sftkWfRuleRow(r, metaById[r.Id]));
+  selectedWf = new Set(_wfRules.filter(r => keepTicks.has(r.id) && selectedWf.has(r.id) && sftkWfTickable(r)).map(r => r.id));   // a tick outlives a re-read only while its rule does
 }
-// One workflow rule in the list: read-only, like a package flow's row — no tick box.
+// One workflow rule in the list. The org's own rule has a tick box: it can be backed up, deleted and restored
+// (owner 2026-11-28: "And make sure they can be backed up, etc"). A package's rule is read-only, with a lock.
 function buildWorkflowRuleRow(f) {
   const row = document.createElement('div');
   row.className = 'flow-managed-row flow-wfrule-row';
   row.dataset.wfrule = f.id;
   const add = (cls, text, title) => { const s = document.createElement('span'); s.className = cls; s.textContent = text; if (title) s.title = title; row.appendChild(s); return s; };
-  add('flow-managed-lock', f.managed ? '🔒' : '', f.managed ? 'Installed by a managed package. It cannot be changed here.' : '');
+  if (sftkWfTickable(f)) {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.className = 'flow-wfrule-cb'; cb.checked = selectedWf.has(f.id);
+    cb.setAttribute('aria-label', `Select the workflow rule ${f.name}`);
+    cb.addEventListener('change', () => { if (cb.checked) selectedWf.add(f.id); else selectedWf.delete(f.id); updateActionBar(); updateSelectionSummary(); });
+    row.appendChild(cb);
+  } else add('flow-managed-lock', f.managed ? '🔒' : '', f.managed ? 'Installed by a managed package. It cannot be changed here.' : '');
   add('flow-kind-ico', '📜', 'Workflow rule');
   add('flow-managed-name', f.name, `${f.object ? f.object + '.' : ''}${f.name}`);
-  add('badge flow-managed-ns', f.object ? `workflow rule · ${f.object}` : 'workflow rule', 'A workflow rule, not a flow. It is listed so the automation of the org is in one place; it cannot be deleted, backed up or switched from here.');
+  add('badge flow-managed-ns', f.object ? `workflow rule · ${f.object}` : 'workflow rule', sftkWfTickable(f) ? 'A workflow rule, not a flow. Tick it to back it up or delete it; Restore re-creates it from a backup, inactive. The actions it fires (field updates, email alerts, tasks, outbound messages) are separate components: they are not in the backup and a delete leaves them in the org.' : 'A workflow rule installed by a package: read-only.');
   if (f.managed) add('badge flow-managed-ns', f.ns ? `package · ${f.ns}` : 'package', 'Installed by a managed package');
   if (f.active === null) add('badge badge-draft', 'state not read', 'Salesforce gives the state of a workflow rule one rule per call; this one was not asked or its read failed.');
   else add(`badge ${f.active ? 'badge-active' : 'badge-draft'}`, f.active ? 'Active' : 'Inactive');
@@ -1726,6 +1735,131 @@ function buildWorkflowRuleRow(f) {
     row.appendChild(a);
   }
   return row;
+}
+
+// ── Workflow rules: tick, back up, delete, restore (owner 2026-11-28) ──
+// Read, delete and create all go through the Tooling API's WorkflowRule (probed live on API 68: the query returns
+// FullName + Metadata, a POST of { FullName, Metadata } creates the rule). A restore only CREATES — a rule of that
+// name on that object is never overwritten — and the rule comes back INACTIVE, as a restored flow comes back a Draft.
+let selectedWf = new Set();   // the WorkflowRule ids ticked
+// PURE. Only the org's own rule can be ticked.
+function sftkWfTickable(f) { return !!(f && f.id && !f.managed && !f.ns); }
+// PURE. One rule of the backup bundle, from the list's row and the Tooling read; null when the read holds no metadata.
+function sftkWfBackupEntry(row, rec) {
+  if (!rec || !rec.FullName || !rec.Metadata || typeof rec.Metadata !== 'object') return null;
+  return { FullName: String(rec.FullName), Name: String((row && row.name) || ''), Object: String((row && row.object) || ''), Active: rec.Metadata.active === true, Metadata: rec.Metadata };
+}
+// PURE. What a restore sends: the rule as it was backed up, switched off.
+function sftkWfRestoreBody(entry) { return { FullName: String(entry.FullName), Metadata: { ...entry.Metadata, active: false } }; }
+// PURE. A backup bundle's rules as rows of the Restore panel (beside its flows).
+function sftkWfRestoreRows(bundle) {
+  return ((bundle && Array.isArray(bundle.workflowRules)) ? bundle.workflowRules : []).filter(w => w && w.FullName && w.Metadata)
+    .map(w => ({ _wf: true, MasterLabel: w.Name || w.FullName, ApiName: w.FullName, FullName: w.FullName, VersionNumber: '', Status: w.Active ? 'Active' : 'Inactive', Metadata: w.Metadata }));
+}
+// PURE. The selection line's words for the rules ticked.
+function sftkWfSelectedWords(n) { return n ? `${n} workflow rule${n === 1 ? '' : 's'}` : ''; }
+function _wfToast(ok, text) {
+  const list = document.getElementById('flowList'); if (!list) return;
+  const t = document.createElement('div'); t.className = 'result-toast';
+  const d = document.createElement('div'); d.className = ok ? 'toast-success' : 'toast-error'; d.textContent = text; t.appendChild(d);
+  list.style.display = ''; list.insertBefore(t, list.firstChild);
+  setTimeout(() => t.remove(), ok ? 8000 : 20000);
+}
+// Reads the metadata of the rules ticked. → { rows, entries, missed: [names] }
+async function _wfReadTicked() {
+  const rows = (_wfRules || []).filter(r => selectedWf.has(r.id) && sftkWfTickable(r));
+  const entries = [], missed = [];
+  for (let i = 0; i < rows.length; i++) {
+    showScanProgress(true, `⬇ Reading workflow rules… ${i} / ${rows.length}`);
+    let rec = null;
+    try {
+      const m = await sendBg({ type: 'SF_QUERY', tooling: true, orgUrl, sid, _suppressError: true, _silentError: true,
+        query: `SELECT Id, FullName, Metadata FROM WorkflowRule WHERE Id = '${String(rows[i].id).replace(/[^A-Za-z0-9]/g, '')}'` });
+      rec = (m && !m.error && Array.isArray(m.records) && m.records[0]) || null;
+    } catch (_) { /* counted as missed */ }
+    const e = sftkWfBackupEntry(rows[i], rec);
+    if (e) entries.push(e); else missed.push(rows[i].name);
+  }
+  showScanProgress(false);
+  return { rows, entries, missed };
+}
+function _wfDownloadZip(entries) {
+  const bundle = { _info: 'Salesforce Toolkit backup bundle — restore via the 📥 Restore mode', backupDate: new Date().toISOString(), orgUrl, version: 2, flows: [], workflowRules: entries };
+  const b64 = sftkBuildStoredZip([{ name: 'backup.json', data: JSON.stringify(bundle, null, 2) }]);
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = `SF_Backup_${sftkLocalDay()}_${entries.length}workflowrule${entries.length !== 1 ? 's' : ''}.zip`;
+  a.click(); URL.revokeObjectURL(url);
+}
+async function onWfBackupClick() {
+  if (!selectedWf.size) return;
+  const { rows, entries, missed } = await _wfReadTicked();
+  if (!rows.length) return;
+  if (!entries.length) { _wfToast(false, `⚠ The ${sftkWfSelectedWords(rows.length)} could not be read: nothing was backed up.`); return; }
+  _wfDownloadZip(entries);
+  if (missed.length) _wfToast(false, `⚠ ${missed.length} of ${rows.length} workflow rules could not be read and are NOT in the zip: ${missed.slice(0, 8).join(', ')}${missed.length > 8 ? ' …' : ''}`);
+  _wfToast(true, `✅ Backed up ${sftkWfSelectedWords(entries.length)} — file downloaded. The actions a rule fires are separate components and are not in the backup.`);
+}
+async function onWfDeleteClick() {
+  if (!selectedWf.size) return;
+  const { rows, entries, missed } = await _wfReadTicked();
+  if (!rows.length) return;
+  // no backup, no delete: a rule that could not be read cannot be brought back
+  if (missed.length) { _wfToast(false, `⚠ ${missed.length} of ${rows.length} workflow rules could not be read, so they cannot be backed up: nothing was deleted. Not read: ${missed.slice(0, 8).join(', ')}${missed.length > 8 ? ' …' : ''}`); return; }
+  const gate = await sftkOrgWriteGate(orgUrl);
+  const ok = await sftkConfirmDestructive({
+    title: `Delete ${sftkWfSelectedWords(rows.length)}`, icon: '🗑',
+    items: rows.map(r => ({ label: r.name, sub: `${r.object || 'workflow rule'} · ${r.active === true ? 'Active' : r.active === false ? 'Inactive' : 'state not read'}` })),
+    reversibility: 'permanent', confirmLabel: `🗑 Delete ${rows.length}`,
+    undoHint: 'A backup zip of these rules is downloaded before anything is deleted; Restore mode re-creates a rule from it, inactive. The actions a rule fires (field updates, email alerts, tasks, outbound messages) are separate components and stay in the org.',
+    production: gate.production ? { label: gate.label } : null,
+  });
+  if (!ok) return;
+  _wfDownloadZip(entries);
+  const journal = sftkHistoryBegin({ tool: 'Workflow rules', title: `🗑 ${sftkWfSelectedWords(rows.length)} deleted`, orgUrl });
+  const gone = [], kept = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i], id = String(r.id).replace(/[^A-Za-z0-9]/g, '');
+    showScanProgress(true, `🗑 Deleting workflow rules… ${i} / ${rows.length}`);
+    // confirmed-by: the sftkConfirmDestructive above (onWfDeleteClick)
+    const wr = await sftkWriteVerified({
+      describe: `Workflow rule ${r.object ? r.object + '.' : ''}${r.name}`, journal,
+      write: () => sendBg({ type: 'SF_TOOLING_DELETE', orgUrl, sid, sobject: 'WorkflowRule', id }),
+      verify: async () => {
+        const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true, query: `SELECT Id FROM WorkflowRule WHERE Id = '${id}'` });
+        if (!q || q.error || !Array.isArray(q.records)) throw new Error((q && q.error) || 'the re-read failed');
+        return { ok: q.records.length === 0 };
+      },
+    });
+    if (wr.ok || (wr.accepted && !wr.verified)) { gone.push(r); selectedWf.delete(r.id); } else kept.push(`${r.name}: ${wr.text}`);
+  }
+  showScanProgress(false);
+  await sftkHistoryEnd(journal, { undo: { none: 'a deleted workflow rule is re-created from its backup zip, in Restore mode' } });
+  await loadWorkflowRules(orgUrl, sid);
+  renderFlowList(); updateActionBar(); updateSelectionSummary();
+  if (kept.length) _wfToast(false, `⚠ ${kept.length} workflow rule${kept.length === 1 ? ' was' : 's were'} NOT deleted — ${kept.slice(0, 4).join(' · ')}`);
+  if (gone.length) _wfToast(true, `✅ ${sftkWfSelectedWords(gone.length)} deleted — the backup zip was downloaded first.`);
+}
+// Restore: one rule of a backup, created inactive. Throws with Salesforce's own words when it is refused.
+async function performWfRestore(f, journal) {
+  const body = sftkWfRestoreBody(f);
+  let newId = '';
+  // not-destructive: creates a new, inactive workflow rule; Salesforce refuses the create when a rule of that name
+  // exists on the object, so nothing in the org is overwritten
+  const wr = await sftkWriteVerified({
+    describe: `Workflow rule ${f.FullName}`, journal,
+    write: async () => { const r = await sendBg({ type: 'SF_REST_POST', orgUrl, sid, path: 'services/data/v62.0/tooling/sobjects/WorkflowRule', body }); newId = String((r && r.id) || ''); return r; },
+    verify: async () => {
+      if (!/^[A-Za-z0-9]{15,18}$/.test(newId)) throw new Error('Salesforce returned no id for the new rule');
+      const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true, query: `SELECT Id FROM WorkflowRule WHERE Id = '${newId}'` });
+      if (!q || q.error || !Array.isArray(q.records)) throw new Error((q && q.error) || 'the re-read failed');
+      return { ok: q.records.length === 1 };
+    },
+  });
+  if (!wr.accepted) throw new Error(String(wr.text).replace(/^.*?: refused — /, ''));
+  if (wr.verified && !wr.ok) throw new Error('Salesforce accepted the rule, but it is not in the org on re-read');
+  return wr;
 }
 
 // PURE. The managed package flows the list shows under the search and the kind tab picked.
@@ -2133,25 +2267,28 @@ function setupToolbarEvents() {
     // Select All ticked every flow of the org and Delete then took kinds that were not on screen). A flow of
     // another kind drawn inside a visible tree stays unticked: the safe side for a delete.
     const trigMap = (typeof DependencyMap.getDefinitionTriggerMap === 'function' && DependencyMap.getDefinitionTriggerMap()) || {};
-    for (const [label, versions] of Object.entries(flowGroups)) {
+    // …and the owner tab: under Package flows nothing of the org's own is on screen, and a package row has no tick box
+    for (const [label, versions] of Object.entries(_flowOwnTab === 'pkg' ? {} : flowGroups)) {
       if (search && !sftkFlowFilterHit(search, sftkFlowFilterKey(label, (versions[0] || {}).ApiName))) continue;
       if (!sftkFlowKindSelectable(_flowTypeFilter, { apiName: (versions[0] || {}).ApiName, versions }, trigMap)) continue;
       versions.forEach(v => selectedIds.add(v.Id));
     }
+    if (_flowOwnTab !== 'pkg' && !_flowUses) for (const r of sftkWfRulesShown(_wfRules, search, _flowTypeFilter)) if (sftkWfTickable(r)) selectedWf.add(r.id);
     renderFlowList();
     updateActionBar();
     updateSelectionSummary();
   });
 
   document.getElementById('deselectAllBtn').addEventListener('click', () => {
-    selectedIds.clear();
+    selectedIds.clear(); selectedWf.clear();
     renderFlowList();
     updateActionBar();
     updateSelectionSummary();
   });
 
-  document.getElementById('deleteBtn').addEventListener('click', onDeleteClick);
-  document.getElementById('backupBtn').addEventListener('click', onBackupClick);
+  // the workflow rules ticked go first (their own confirmation and result line), then the flows
+  document.getElementById('deleteBtn').addEventListener('click', async () => { if (selectedWf.size) await onWfDeleteClick(); await onDeleteClick(); });
+  document.getElementById('backupBtn').addEventListener('click', async () => { if (selectedWf.size) await onWfBackupClick(); await onBackupClick(); });
   document.getElementById('restoreActionBtn').addEventListener('click', onRestoreClick);
 
   // #scanSubflowBtn is owned by showScanOfferBar() since P1 — it rebuilds the
@@ -3027,8 +3164,9 @@ async function handleRestoreFile(file) {
 
   // Normalise to an array of flow objects
   let flows = [];
-  if (Array.isArray(backup.flows) && backup.flows.length > 0) {
-    flows = backup.flows;                       // new bundle format
+  const wfRows = sftkWfRestoreRows(backup);     // the workflow rules of the bundle, beside its flows
+  if ((Array.isArray(backup.flows) && backup.flows.length > 0) || wfRows.length) {
+    flows = (Array.isArray(backup.flows) ? backup.flows : []).concat(wfRows);   // new bundle format
   } else if (backup.flow && backup.flow.Metadata) {
     flows = [backup.flow];                      // legacy single-flow format
   } else {
@@ -3046,6 +3184,7 @@ function renderRestorePreview(backup, flows) {
 
   const date   = backup.backupDate ? new Date(backup.backupDate).toLocaleDateString() : 'Unknown date';
   const isBundle = Array.isArray(backup.flows);
+  const noun = n => flows.some(f => f._wf) ? `item${n !== 1 ? 's' : ''}` : `flow${n !== 1 ? 's' : ''}`;
 
   let itemsHtml = '';
   for (let i = 0; i < flows.length; i++) {
@@ -3057,7 +3196,7 @@ function renderRestorePreview(backup, flows) {
         <div class="restore-flow-item-info">
           <span class="restore-flow-name">${escHtml(f.MasterLabel)}</span>
           <span class="restore-flow-meta">
-            v${f.VersionNumber}
+            ${f._wf ? 'workflow rule' : 'v' + f.VersionNumber}
             <span class="badge ${statusCls}">${escHtml(f.Status)}</span>
             <span class="restore-api-name">${escHtml(f.ApiName || '')}</span>
           </span>
@@ -3070,7 +3209,7 @@ function renderRestorePreview(backup, flows) {
     <div class="restore-preview-header">
       <div class="restore-preview-title">
         ${isBundle ? '📦' : '📄'}
-        <strong>${flows.length} flow${flows.length !== 1 ? 's' : ''}</strong>
+        <strong>${flows.length} ${noun(flows.length)}</strong>
         <span class="restore-preview-date">· backed up ${escHtml(date)}</span>
       </div>
       <button class="btn btn-secondary btn-sm" id="restoreClearBtn">✕ Clear</button>
@@ -3080,7 +3219,7 @@ function renderRestorePreview(backup, flows) {
         <input type="checkbox" id="restoreSelectAll" checked>
         <span>Select all</span>
       </label>
-      <span class="restore-item-count">${flows.length} flow${flows.length !== 1 ? 's' : ''}</span>
+      <span class="restore-item-count">${flows.length} ${noun(flows.length)}</span>
     </div>
     <div class="restore-flow-items">${itemsHtml}</div>
   `;
@@ -3144,6 +3283,7 @@ async function onRestoreClick() {
   const errors    = [];
   const successes = [];
   let done = 0;
+  const wfJournal = toRestore.some(f => f._wf) ? sftkHistoryBegin({ tool: 'Workflow rules', title: `📥 ${sftkWfSelectedWords(toRestore.filter(f => f._wf).length)} restored from a backup`, orgUrl }) : null;
   showScanProgress(true, `📥 Restoring… ${done} / ${toRestore.length}`);
   for (const f of toRestore) {
     showScanProgress(true, `📥 Restoring… ${done} / ${toRestore.length}`);
@@ -3153,7 +3293,7 @@ async function onRestoreClick() {
       continue;
     }
     try {
-      await performRestore({ flow: f });
+      if (f._wf) await performWfRestore(f, wfJournal); else await performRestore({ flow: f });
       successes.push(f);
     } catch (e) {
       // Translate the raw deploy error; escaping happens ONCE at render time below.
@@ -3163,20 +3303,22 @@ async function onRestoreClick() {
     done++;
   }
   showScanProgress(false);
+  if (wfJournal) await sftkHistoryEnd(wfJournal, { undo: { none: 'a restored workflow rule is removed by ticking it and Delete' } });
 
   updateActionBar();
+  const wfOnly = successes.length > 0 && successes.every(f => f._wf);
 
   if (errors.length === 0) {
     sftkDialog({
       icon: `✅`,
-      title: `${successes.length} Flow${successes.length !== 1 ? 's' : ''} Restored`,
+      title: wfOnly ? `${sftkWfSelectedWords(successes.length)} restored` : `${successes.length} Flow${successes.length !== 1 ? 's' : ''} Restored`,
       sev: 'good',
       bodyHtml: `
         <ul class="modal-list">
-          ${successes.map(f => `<li>${escHtml(f.MasterLabel)} v${f.VersionNumber} → new Draft</li>`).join('')}
+          ${successes.map(f => f._wf ? `<li>${escHtml(f.ApiName)} → workflow rule, inactive</li>` : `<li>${escHtml(f.MasterLabel)} v${f.VersionNumber} → new Draft</li>`).join('')}
         </ul>
         <p style="margin-top:8px;font-size:11px;color:var(--subtext)">
-          Open Flow Builder to review and activate the restored flows.
+          ${wfOnly ? 'A restored workflow rule is inactive: open it in Setup to review and activate it.' : 'Open Flow Builder to review and activate the restored flows.'}
         </p>
       `,
       actions: [{ id: 'modalCancel', label: `Close`, kind: 'secondary' }],
@@ -3188,7 +3330,7 @@ async function onRestoreClick() {
     });
   } else {
     const errHtml  = errors.map(e => `<li style="word-break:break-word">${escHtml(e)}</li>`).join('');
-    const okHtml   = successes.map(f => `<li>${escHtml(f.MasterLabel)} v${f.VersionNumber}</li>`).join('');
+    const okHtml   = successes.map(f => f._wf ? `<li>${escHtml(f.ApiName)} (workflow rule)</li>` : `<li>${escHtml(f.MasterLabel)} v${f.VersionNumber}</li>`).join('');
     sftkDialog({
       icon: `⚠️`,
       title: `${successes.length} restored, ${errors.length} failed`,
@@ -3646,7 +3788,7 @@ function showResultToast(successCount, errors, unverified) {
 // Update UI helpers
 // ============================================================
 function updateActionBar() {
-  const count = selectedIds.size;
+  const count = selectedIds.size + selectedWf.size;
   const deleteBtn      = document.getElementById('deleteBtn');
   const backupBtn      = document.getElementById('backupBtn');
   const restoreActBtn  = document.getElementById('restoreActionBtn');
@@ -3666,7 +3808,9 @@ function updateActionBar() {
   } else {
     const rCount = restoreSelected.size;
     restoreActBtn.disabled    = rCount === 0;
-    restoreActBtn.textContent = `📥 Restore Selected (${rCount}) as Draft`;
+    // a workflow rule comes back inactive, not as a Draft: the words fit what is ticked
+    const rWf = [...restoreSelected].some(i => restoreBackupFlows[i] && restoreBackupFlows[i]._wf);
+    restoreActBtn.textContent = rWf ? `📥 Restore Selected (${rCount})` : `📥 Restore Selected (${rCount}) as Draft`;
   }
 }
 
@@ -3696,8 +3840,9 @@ function sftkFlowRestoreTargets(versions) {
 function updateSelectionSummary() {
   if (currentMode === 'restore') return; // restore mode sets its own summary text
   const el = document.getElementById('selectionSummary');
-  const count = selectedIds.size;
-  if (count === 0) { el.textContent = 'Nothing selected'; return; }
+  const count = selectedIds.size, wfWords = sftkWfSelectedWords(selectedWf.size);
+  if (count === 0 && !wfWords) { el.textContent = 'Nothing selected'; return; }
+  if (count === 0) { el.className = 'selection-summary'; el.textContent = `${wfWords} selected`; return; }
 
   const selectedFlows = allFlows.filter(f => selectedIds.has(f.Id));
   const uniqueLabels = new Set(selectedFlows.map(f => f.MasterLabel));
@@ -3712,7 +3857,7 @@ function updateSelectionSummary() {
   } else {
     el.className = 'selection-summary';
   }
-  el.textContent = text;
+  el.textContent = text + (wfWords ? ` · ${wfWords}` : '');
 }
 
 // A sidebar click can land on a tool tab before any Salesforce session exists
@@ -4734,6 +4879,7 @@ function resetOrgState() {
   allFlows           = [];
   flowGroups         = {};
   selectedIds        = new Set();
+  selectedWf         = new Set();
   orgFlowCount       = 0;
   metadataScanState  = 'none';
   restoreBackupFlows = [];
